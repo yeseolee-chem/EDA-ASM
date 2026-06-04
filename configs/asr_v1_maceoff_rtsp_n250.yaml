@@ -1,0 +1,57 @@
+# ASR v1 — MACE-OFF medium @ N=250 dipolar with RTSP (R, TS, P) input.
+# Same hyperparameters as asr_v1_maceoff_n250.yaml; differs only by feature
+# cache (3 tensors per reaction instead of 2) and head choice (B0_RTSP /
+# M1_RTSP). cv/ensemble seeds preserved so the same fold ids cleanly compare
+# to the 2-way medium baseline (overall MAE 9.41 at N=250).
+
+experiment_name: asr_v1_dipolar_poc_maceoff_rtsp_n250
+
+# ---- Data ----
+labels_parquet: ADF_250/adf_outputs/parsed/asr_labels.parquet
+dipolar_root: data/raw/dipolar_cycloaddition/extracted/full_dataset_profiles
+family: dipolar
+
+# ---- Backbone (frozen MACE-OFF23 medium) ----
+backbone:
+  kind: mace-off23
+  model_size: medium
+  default_dtype: float32
+  num_layers: -1
+
+# ---- Feature cache (RTSP) ----
+feature_cache: outputs/asr_v1/features_dipolar_maceoff_medium_rtsp_n250.pt
+
+# ---- Architectures (unchanged hyperparams; the RTSP head consumes 6× pooled
+# vector instead of 3× → head capacity stays modest because d_hidden / d_model
+# are kept at 64). ----
+baseline_b0:
+  d_hidden: 64
+  head_hidden: 32
+  dropout: 0.2
+
+model_m1:
+  d_model: 64
+  n_heads: 2
+  head_hidden: 32
+  dropout: 0.2
+
+# ---- Optimization ----
+train:
+  epochs: 300
+  batch_size: 16
+  lr: 1.0e-3
+  weight_decay: 1.0e-3
+  early_stop_patience: 30
+  device: auto
+
+# ---- Ensemble + CV (matches non-RTSP n250 config for fold parity) ----
+ensemble:
+  n_models: 5
+  base_seed: 0
+
+cv:
+  n_folds: 5
+  seed: 42
+
+# ---- Learning curve ----
+learning_curve_train_sizes: [32, 64, 96, 128, 160, 200]

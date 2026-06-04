@@ -1,0 +1,54 @@
+# ASR v1 — Dipolar POC head training config @ N=235 (post-2026-06-03 reparse).
+# Same hyperparameters as configs/asr_v1.yaml; only the feature_cache and the
+# learning-curve grid change. cv/ensemble seeds preserved so the apples-to-
+# apples invariant with the MACE-OFF n235 run holds (Spec §5).
+
+experiment_name: asr_v1_dipolar_poc_n235
+
+# ---- Data ----
+labels_parquet: ADF_250/adf_outputs/parsed/asr_labels.parquet
+dipolar_root: data/raw/dipolar_cycloaddition/extracted/full_dataset_profiles
+family: dipolar
+
+# ---- Backbone (frozen NequIP ep29) ----
+backbone:
+  config: NequIP/output/halo8_nequip_v1/training_run/config.yaml
+  checkpoint: NequIP/output/halo8_nequip_v1/training_run/best_model.pth
+
+# ---- Feature cache (new for N=235) ----
+feature_cache: outputs/asr_v1/features_dipolar_ep29_n235.pt
+
+# ---- Architectures ----
+baseline_b0:
+  d_hidden: 64
+  head_hidden: 32
+  dropout: 0.2
+
+model_m1:
+  d_model: 64
+  n_heads: 2
+  head_hidden: 32
+  dropout: 0.2
+
+# ---- Optimization ----
+train:
+  epochs: 300
+  batch_size: 16
+  lr: 1.0e-3
+  weight_decay: 1.0e-3
+  early_stop_patience: 30
+  device: auto
+
+# ---- Ensemble + CV (must match maceoff_n235 cfg for fold parity) ----
+ensemble:
+  n_models: 5
+  base_seed: 0
+
+cv:
+  n_folds: 5
+  seed: 42
+
+# ---- Learning curve ----
+# N_train ≤ train-fold size = ⌈235 × 4/5⌉ = 188. Grid extended past the old
+# 107 ceiling to detect saturation vs continued climb at the new N.
+learning_curve_train_sizes: [32, 64, 96, 128, 160, 188]

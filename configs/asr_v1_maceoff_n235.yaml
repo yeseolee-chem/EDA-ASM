@@ -1,0 +1,54 @@
+# ASR v1 — Backbone Comparison @ N=235: MACE-OFF (medium) head training cfg.
+# Same as configs/asr_v1_maceoff.yaml except feature_cache and LC grid; cv +
+# ensemble seeds match configs/asr_v1_n235.yaml so fold ids are byte-identical
+# across the two backbones (Spec §5 controlled-comparison invariant).
+
+experiment_name: asr_v1_dipolar_poc_maceoff_n235
+
+# ---- Data ----
+labels_parquet: ADF_250/adf_outputs/parsed/asr_labels.parquet
+dipolar_root: data/raw/dipolar_cycloaddition/extracted/full_dataset_profiles
+family: dipolar
+
+# ---- Backbone (frozen MACE-OFF23 medium) ----
+backbone:
+  kind: mace-off23
+  model_size: medium
+  default_dtype: float32
+  num_layers: -1
+
+# ---- Feature cache (new for N=235) ----
+feature_cache: outputs/asr_v1/features_dipolar_maceoff_medium_n235.pt
+
+# ---- Architectures ----
+baseline_b0:
+  d_hidden: 64
+  head_hidden: 32
+  dropout: 0.2
+
+model_m1:
+  d_model: 64
+  n_heads: 2
+  head_hidden: 32
+  dropout: 0.2
+
+# ---- Optimization ----
+train:
+  epochs: 300
+  batch_size: 16
+  lr: 1.0e-3
+  weight_decay: 1.0e-3
+  early_stop_patience: 30
+  device: auto
+
+# ---- Ensemble + CV (matches asr_v1_n235.yaml for fold parity) ----
+ensemble:
+  n_models: 5
+  base_seed: 0
+
+cv:
+  n_folds: 5
+  seed: 42
+
+# ---- Learning curve ----
+learning_curve_train_sizes: [32, 64, 96, 128, 160, 188]
