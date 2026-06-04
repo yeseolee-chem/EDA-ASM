@@ -1,0 +1,398 @@
+{% extends "_base.html" %}
+{% block title %}{{ rxn_id }} — Stage 5-A Review{% endblock %}
+{% block content %}
+<section class="rxn-header">
+  <a id="prev-link" class="nav-arrow">&larr; Prev</a>
+  <h2>{{ rxn_id }} <span id="status-pill"></span></h2>
+  <a id="next-link" class="nav-arrow">Next &rarr;</a>
+</section>
+
+<div class="review-grid">
+  <div class="viewers">
+    <div class="viewer-block">
+      <h3>R <span class="energy-tag" id="energy-R"></span></h3>
+      <div id="viewer-R" class="viewer3d"></div>
+    </div>
+    <div class="viewer-block">
+      <h3>TS <span class="energy-tag" id="energy-TS"></span></h3>
+      <div id="viewer-TS" class="viewer3d"></div>
+    </div>
+    <div class="viewer-block">
+      <h3>P <span class="energy-tag" id="energy-P"></span></h3>
+      <div id="viewer-P" class="viewer3d"></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <h3>Pattern</h3>
+    <div id="pattern-badge"></div>
+
+    <h3>Metadata</h3>
+    <table id="meta-table"><tbody></tbody></table>
+
+    <h3>Fragments</h3>
+    <table id="frag-table"><tbody></tbody></table>
+
+    <h3>Bond changes</h3>
+    <table id="bond-table"><tbody></tbody></table>
+
+    <h3>Legend</h3>
+    <div id="legend"></div>
+
+    <h3>Decision</h3>
+    <fieldset id="decision-form">
+      <label><input type="radio" name="dec" value="accepted"> Accept</label>
+      <label><input type="radio" name="dec" value="rejected"> Reject</label>
+      <label><input type="radio" name="dec" value="modified"> Needs modification</label>
+      <label><input type="radio" name="dec" value="bookmarked"> Bookmark</label>
+    </fieldset>
+
+    <div class="save-row">
+      <button id="save-stay">Save & stay</button>
+      <button id="save-next">Save &amp; next</button>
+    </div>
+    <div id="save-msg" class="save-msg"></div>
+  </div>
+</div>
+
+<script>
+const RXN = {{ rxn_id|tojson }};
+let DATA = null;
+let ALL_ROWS = null;
+
+// Stage 5-A role palette
+const ROLE_COLOUR = {
+  reactive_A:    '#1f77b4',   // blue
+  reactive_B:    '#ff7f0e',   // orange
+  reactive_C:    '#bcbd22',   // olive (P4 third product fragment)
+  reactive_D:    '#8c564b',   // brown (P4 fourth product fragment)
+  tether:        '#9467bd',   // purple
+  scaffold:      '#1f77b4',   // blue (P5 scaffold radical)
+  migrating_H:   '#d62728',   // red
+  migrating_F:   '#e377c2',   // pink
+  migrating_Cl:  '#17a2b8',   // teal
+  migrating_Br:  '#a52a2a',   // brown
+  migrating_I:   '#6a51a3',   // purple
+  whole:         '#7f7f7f',   // gray (ring-rearrangement fallback)
+  unassigned:    '#cccccc',
+};
+
+function roleColour(role) {
+  if (role in ROLE_COLOUR) return ROLE_COLOUR[role];
+  if (role && role.startsWith('migrating_')) return ROLE_COLOUR.migrating_H;
+  return ROLE_COLOUR.unassigned;
+}
+
+const PATTERN_COLOUR = {
+  P0_BIMOL: '#9467bd',
+  P1_OPEN: '#e377c2',
+  P2_CLOSED: '#1f77b4',
+  P3_TETHER: '#2ca02c',
+  P4_DISSOC: '#17becf',
+  P5_HSHIFT: '#ff7f0e',
+};
+
+const ELEM_SYMBOLS = {1:'H',6:'C',7:'N',8:'O',9:'F',14:'Si',15:'P',16:'S',17:'Cl',35:'Br',53:'I'};
+function elemOf(z) { return ELEM_SYMBOLS[z] || ('Z' + z); }
+
+async function init() {
+  const r = await fetch(`/api/stage5a/reaction/${RXN}`);
+  if (!r.ok) {
+    document.body.innerHTML = '<h2>not found</h2>';
+    return;
+  }
+  DATA = await r.json();
+  const all = await fetch('/api/stage5a/state').then(x => x.json());
+  ALL_ROWS = all.reactions;
+
+  populatePattern();
+  populateMeta();
+  populateFragments();
+  populateBonds();
+  populateLegend();
+  renderViewers();
+  bindForm();
+  syncPrevNext();
+}
+
+function populatePattern() {
+  const el = document.getElementById('pattern-badge');
+  const colour = PATTERN_COLOUR[DATA.pattern] || '#333';
+  el.innerHTML = `
+    <span class="pattern-pill" style="background:${colour}">${DATA.pattern}</span>
+    <span class="conf">confidence ${DATA.confidence.toFixed(2)}</span>
+    <div class="notes">${DATA.notes || ''}</div>
+  `;
+  document.getElementById('status-pill').textContent =
+    `[${DATA.pattern} / ${DATA.review.review_status}]`;
+}
+
+function populateMeta() {
+  const tbody = document.querySelector('#meta-table tbody');
+  const dbg = DATA.debug || {};
+  const rows = [
+    ['source', DATA.source],
+    ['n_atoms', DATA.n_atoms],
+    ['Ea (Halo8, eV)', DATA.activation_energy.toFixed(3)],
+    ['E_R / E_TS / E_P (eV)',
+     `${DATA.energy_R.toFixed(2)} / ${DATA.energy_TS.toFixed(2)} / ${DATA.energy_P.toFixed(2)}`],
+    ['n_bond_changes', `${DATA.n_bond_changes} `
+        + `(${DATA.bonds_broken.length} broken / ${DATA.bonds_formed.length} formed)`],
+    ['core_atoms', JSON.stringify(DATA.core_atoms)],
+  ];
+  // Migration detection
+  if (dbg.migrating_H_atoms !== undefined && dbg.migrating_H_atoms.length) {
+    rows.push(['migrating_H_atoms', JSON.stringify(dbg.migrating_H_atoms)]);
+  }
+  if (dbg.migrating_halogen_atoms !== undefined && dbg.migrating_halogen_atoms.length) {
+    rows.push(['<span style="color:#a52a2a">migrating_halogen_atoms</span>',
+      JSON.stringify(dbg.migrating_halogen_atoms)]);
+  }
+  if (dbg.polyvalent_migrating_atoms !== undefined && dbg.polyvalent_migrating_atoms.length) {
+    rows.push(['<span style="color:#b45309">polyvalent_migrating</span>',
+      JSON.stringify(dbg.polyvalent_migrating_atoms)
+      + ' (full partner swap on a polyvalent atom; not split out as own fragment)']);
+  }
+  if (dbg.rearranging_atoms !== undefined && dbg.rearranging_atoms.length) {
+    rows.push(['<span style="color:#6b7280">rearranging_atoms</span>',
+      JSON.stringify(dbg.rearranging_atoms)
+      + ' (polyvalent atoms with partial bond swap; carry-along in scaffold)']);
+  }
+  if (dbg.product_components !== undefined) {
+    rows.push(['product_components',
+      dbg.product_components.map(c => '[' + c.join(',') + ']').join('  ')]);
+  }
+  // Stretched skeleton bonds at TS — atoms that look "far" in the TS
+  // viewer but are still bonded in R∩P.
+  if (DATA.stretched_at_TS && DATA.stretched_at_TS.length) {
+    const desc = DATA.stretched_at_TS
+      .map(s => `${s.i}-${s.j} @ ${s.distance_TS} Å (${s.ratio}× cov-sum)`)
+      .join(';  ');
+    rows.push(['<span style="color:#b45309">stretched_at_TS</span>', desc]);
+  }
+  // TS connectivity — when the bond graph at TS has >1 component the
+  // molecule is geometrically in pieces at the saddle point.
+  if (DATA.ts_n_components && DATA.ts_n_components > 1) {
+    const desc = DATA.ts_components
+      .map(c => '[' + c.join(',') + ']').join('  ');
+    rows.push([
+      '<span style="color:#dc2626;font-weight:bold">ts_components</span>',
+      `${DATA.ts_n_components} disconnected pieces at TS: ${desc}`,
+    ]);
+  }
+  tbody.innerHTML = rows.map(([k, v]) =>
+    `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+function populateFragments() {
+  const tbody = document.querySelector('#frag-table tbody');
+  tbody.innerHTML = DATA.fragments.map(f => {
+    const colour = roleColour(f.role);
+    const caps = (f.cap_attachment || []).length;
+    return `<tr>
+      <td><span class="role-dot" style="background:${colour}"></span>${f.role}</td>
+      <td>${f.atom_indices.length} atoms</td>
+      <td>mult=${f.multiplicity}</td>
+      <td>${caps ? caps + ' cap H' : ''}</td>
+      <td><code>${JSON.stringify(f.atom_indices)}</code></td>
+    </tr>`;
+  }).join('');
+}
+
+function populateBonds() {
+  const tbody = document.querySelector('#bond-table tbody');
+  const rows = [
+    ['broken (red, R→P)', DATA.bonds_broken.map(b => b.join('-')).join('  ') || '(none)'],
+    ['formed (green, R→P)', DATA.bonds_formed.map(b => b.join('-')).join('  ') || '(none)'],
+  ];
+  tbody.innerHTML = rows.map(([k, v]) =>
+    `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+function populateLegend() {
+  const el = document.getElementById('legend');
+  el.innerHTML = `
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.reactive_A}"></span>reactive_A / scaffold</div>
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.reactive_B}"></span>reactive_B</div>
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.reactive_C}"></span>reactive_C (P4 third)</div>
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.tether}"></span>tether (P3 only)</div>
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.migrating_H}"></span>migrating_H (P5)</div>
+    <div><span class="role-dot" style="background:${ROLE_COLOUR.whole}"></span>whole (cut failed)</div>
+    <div><span class="bond-dash" style="background:#d62728"></span>bond broken (R→P)</div>
+    <div><span class="bond-dash" style="background:#2ca02c"></span>bond formed (R→P)</div>
+    <div><span class="bond-dash" style="background:#888888"></span>skeleton bond (present in R∩P)</div>
+    <div><span class="bond-dash" style="background:#f59e0b"></span>stretched at TS (≥ 1.5× covalent sum)</div>
+    <div><span class="role-dot" style="background:#fdd835;border:1px dashed #888"></span>cap-H (P3 only)</div>
+  `;
+}
+
+function buildXyz(coords) {
+  const lines = [coords.length.toString(), 'snapshot'];
+  for (let i = 0; i < coords.length; i++) {
+    const sym = elemOf(DATA.numbers[i]);
+    const p = coords[i];
+    lines.push(`${sym} ${p[0].toFixed(6)} ${p[1].toFixed(6)} ${p[2].toFixed(6)}`);
+  }
+  return lines.join('\n');
+}
+
+function renderViewers() {
+  document.getElementById('energy-R').textContent = `(${DATA.energy_R.toFixed(2)} eV)`;
+  document.getElementById('energy-TS').textContent = `(${DATA.energy_TS.toFixed(2)} eV)`;
+  document.getElementById('energy-P').textContent = `(${DATA.energy_P.toFixed(2)} eV)`;
+
+  const targets = [
+    {id: 'viewer-R',  coords: DATA.positions_R, frame: 'R'},
+    {id: 'viewer-TS', coords: DATA.positions_TS, frame: 'TS'},
+    {id: 'viewer-P',  coords: DATA.positions_P, frame: 'P'},
+  ];
+  for (const t of targets) {
+    const el = document.getElementById(t.id);
+    el.innerHTML = '';
+    const v = $3Dmol.createViewer(el, {backgroundColor: 'white'});
+    v.addModel(buildXyz(t.coords), 'xyz');
+    v.setStyle({}, {sphere: {scale: 0.25}, stick: {}});
+    // colour atoms by role
+    for (let i = 0; i < DATA.n_atoms; i++) {
+      const role = DATA.role_of_atom[i] || 'unassigned';
+      const c = roleColour(role);
+      v.setStyle({serial: i + 1}, {
+        sphere: {scale: 0.32, color: c},
+        stick:  {color: c},
+      });
+    }
+    // Explicit skeleton bonds (present in both R and P). 3Dmol's auto
+    // bond detection from XYZ misses heavily stretched spectator bonds
+    // at TS (e.g. an N–H dragged to 1.7 Å through the saddle point),
+    // so we draw them ourselves to keep the molecular topology visible.
+    const stretchedSet = new Set(
+      (DATA.stretched_at_TS || []).map(s => s.i + '-' + s.j)
+    );
+    for (const [i, j] of (DATA.bonds_skeleton || [])) {
+      const key = Math.min(i, j) + '-' + Math.max(i, j);
+      const isStretched = stretchedSet.has(key) && t.frame === 'TS';
+      addSolidBond(v, t.coords, i, j,
+                   isStretched ? '#f59e0b' : '#888888',
+                   isStretched ? 0.06 : 0.04);
+    }
+    // dashed reactive bonds at this frame
+    for (const [i, j] of DATA.bonds_broken) addDashedBond(v, t.coords, i, j, '#d62728');
+    for (const [i, j] of DATA.bonds_formed) addDashedBond(v, t.coords, i, j, '#2ca02c');
+    // For P3 (R-frame only) overlay cap H positions in yellow.
+    if (t.frame === 'R' && DATA.cap_h_positions) {
+      for (const p of DATA.cap_h_positions) {
+        v.addSphere({
+          center: {x: p[0], y: p[1], z: p[2]},
+          radius: 0.22,
+          color: '#fdd835',
+          opacity: 0.85,
+        });
+      }
+    }
+    // atom labels
+    for (let i = 0; i < DATA.n_atoms; i++) {
+      v.addLabel(`${i} ${elemOf(DATA.numbers[i])}`, {
+        fontSize: 11,
+        fontColor: 'white',
+        backgroundColor: 'black',
+        backgroundOpacity: 0.6,
+        borderThickness: 0.0,
+        inFront: true,
+        showBackground: true,
+        position: {x: t.coords[i][0], y: t.coords[i][1], z: t.coords[i][2]},
+      });
+    }
+    v.zoomTo();
+    v.render();
+  }
+}
+
+function addDashedBond(v, coords, i, j, color) {
+  const a = coords[i]; const b = coords[j];
+  v.addCylinder({
+    start: {x: a[0], y: a[1], z: a[2]},
+    end:   {x: b[0], y: b[1], z: b[2]},
+    radius: 0.06, fromCap: 1, toCap: 1,
+    color: color, dashed: true,
+  });
+}
+
+function addSolidBond(v, coords, i, j, color, radius) {
+  const a = coords[i]; const b = coords[j];
+  v.addCylinder({
+    start: {x: a[0], y: a[1], z: a[2]},
+    end:   {x: b[0], y: b[1], z: b[2]},
+    radius: radius, fromCap: 1, toCap: 1,
+    color: color,
+  });
+}
+
+function bindForm() {
+  document.getElementById('save-stay').addEventListener('click', () => save(false));
+  document.getElementById('save-next').addEventListener('click', () => save(true));
+}
+
+async function save(advance) {
+  const dec = document.querySelector('input[name="dec"]:checked');
+  if (!dec) { alert('Pick a decision first.'); return; }
+  const body = {
+    status: dec.value,
+  };
+  const r = await fetch(`/api/stage5a/decision/${RXN}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  const msg = document.getElementById('save-msg');
+  if (!r.ok) { msg.className = 'save-msg err'; msg.textContent = JSON.stringify(j); return; }
+  msg.className = 'save-msg ok'; msg.textContent = 'Saved.';
+  if (advance) {
+    const fresh = await (await fetch('/api/stage5a/state')).json();
+    // Skip bookmarked: user will revisit those in a second pass.
+    const next = fresh.reactions.find(x =>
+      x.review_status === 'not_reviewed'
+      && !x.bookmarked
+      && x.rxn_id !== RXN);
+    if (next) location.href = '/stage5a/' + next.rxn_id;
+    else alert('All non-bookmarked reactions reviewed. Bookmarks remain — go to dashboard to revisit them.');
+  } else {
+    DATA = await (await fetch(`/api/stage5a/reaction/${RXN}`)).json();
+    populatePattern();
+  }
+}
+
+function syncPrevNext() {
+  const ids = ALL_ROWS.map(r => r.rxn_id);
+  const idx = ids.indexOf(RXN);
+  const prevA = document.getElementById('prev-link');
+  const nextA = document.getElementById('next-link');
+  if (idx > 0) prevA.href = '/stage5a/' + ids[idx - 1];
+  else prevA.style.visibility = 'hidden';
+  if (idx >= 0 && idx < ids.length - 1) nextA.href = '/stage5a/' + ids[idx + 1];
+  else nextA.style.visibility = 'hidden';
+}
+
+document.addEventListener('keydown', e => {
+  if (['TEXTAREA','INPUT','SELECT'].includes(e.target.tagName)) return;
+  if (e.key === 'a') document.querySelector('input[value="accepted"]').click();
+  else if (e.key === 'r') document.querySelector('input[value="rejected"]').click();
+  else if (e.key === 'm') document.querySelector('input[value="modified"]').click();
+  else if (e.key === 'b') document.querySelector('input[value="bookmarked"]').click();
+  else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(true);
+  else if (e.key === 'ArrowRight') document.getElementById('next-link').click();
+  else if (e.key === 'ArrowLeft')  document.getElementById('prev-link').click();
+});
+
+init();
+</script>
+
+<style>
+.pattern-pill { color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+.conf { margin-left: 10px; color: #666; }
+.notes { color: #555; font-size: 12px; margin-top: 4px; }
+.role-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.bond-dash { display: inline-block; width: 18px; height: 3px; margin-right: 6px; vertical-align: middle; }
+#legend > div { margin: 2px 0; font-size: 12px; }
+#frag-table td, #bond-table td, #meta-table td { padding: 2px 6px; }
+</style>
+{% endblock %}

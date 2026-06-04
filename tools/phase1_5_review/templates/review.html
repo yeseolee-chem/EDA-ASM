@@ -1,0 +1,386 @@
+{% extends "_base.html" %}
+{% block title %}{{ rxn_id }} — Phase 1.5 Review{% endblock %}
+{% block content %}
+<section class="rxn-header">
+  <a id="prev-link" class="nav-arrow">&larr; Prev</a>
+  <h2>{{ rxn_id }} <span id="status-pill"></span></h2>
+  <a id="next-link" class="nav-arrow">Next &rarr;</a>
+</section>
+
+<div class="review-grid">
+  <div class="viewers">
+    <div class="viewer-block">
+      <h3>R <span class="energy-tag" id="energy-R"></span></h3>
+      <div id="viewer-R" class="viewer3d"></div>
+    </div>
+    <div class="viewer-block">
+      <h3>TS <span class="energy-tag" id="energy-TS"></span></h3>
+      <div id="viewer-TS" class="viewer3d"></div>
+    </div>
+    <div class="viewer-block">
+      <h3>P (last frame) <span class="energy-tag" id="energy-P"></span></h3>
+      <div id="viewer-P" class="viewer3d"></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <h3>Metadata</h3>
+    <table id="meta-table"><tbody></tbody></table>
+
+    <h3>Auto suggestion</h3>
+    <table id="auto-table"><tbody></tbody></table>
+
+    <h3>Current definition</h3>
+    <table id="curr-table"><tbody></tbody></table>
+
+    <h3>Decision</h3>
+    <fieldset id="decision-form">
+      <label><input type="radio" name="dec" value="accepted"> Accept</label>
+      <label><input type="radio" name="dec" value="modified"> Modify</label>
+      <label><input type="radio" name="dec" value="rejected"> Reject</label>
+      <label><input type="radio" name="dec" value="bookmarked"> Bookmark</label>
+    </fieldset>
+
+    <div id="modify-panel" style="display:none">
+      <p class="hint">Click atoms in any 3D viewer to toggle their fragment.</p>
+      <label>Frag 1 atoms <input type="text" id="f1-input"></label>
+      <label>Frag 2 atoms <input type="text" id="f2-input"></label>
+      <button id="apply-text-input">Apply text</button>
+      <button id="reset-auto">Reset to auto</button>
+      <button id="recompute">Re-validate</button>
+      <pre id="validation-result"></pre>
+    </div>
+
+    <label>Confidence (1=low, 5=high)
+      <select id="rx-confidence">
+        <option>--</option><option>1</option><option>2</option>
+        <option>3</option><option>4</option><option>5</option>
+      </select>
+    </label>
+
+    <label>Rationale
+      <textarea id="rx-rationale" rows="6" placeholder="Why this decision? (≥10 chars; ≥50 for reject)"></textarea>
+    </label>
+
+    <label>
+      <input type="checkbox" id="rx-override">
+      Override validation errors (use only when justified — extra rationale required)
+    </label>
+
+    <div class="save-row">
+      <button id="save-stay">Save & stay</button>
+      <button id="save-next">Save &amp; next</button>
+    </div>
+    <div id="save-msg" class="save-msg"></div>
+  </div>
+</div>
+
+<script>
+const RXN = {{ rxn_id|tojson }};
+let DATA = null;          // /api/structure response
+let MODIFY_MODE = false;
+let FRAG_OF = {};         // atom_idx -> 1 | 2
+let ALL_ROWS = null;      // dashboard list (used for prev/next)
+
+const PALETTE = {
+  1: '#1f77b4',  // blue (frag1)
+  2: '#ff7f0e',  // orange (frag2)
+  H: '#7f7f7f',
+};
+
+async function init() {
+  // Mark this open event so we have a start time.
+  fetch(`/api/open/${RXN}`, {method: 'POST'});
+
+  const r = await fetch(`/api/structure/${RXN}`);
+  DATA = await r.json();
+
+  const all = await fetch('/api/state').then(x => x.json());
+  ALL_ROWS = all.reactions;
+
+  populateMeta();
+  populateAuto();
+  syncPrevNext();
+
+  initFragMap();
+  renderViewers();
+  populateCurr();
+  bindForm();
+}
+
+function populateMeta() {
+  const tbody = document.querySelector('#meta-table tbody');
+  const m = [
+    ['source', DATA.source],
+    ['case', DATA.case],
+    ['n_atoms', DATA.n_atoms],
+    ['n_heavy_atoms', DATA.n_heavy_atoms],
+    ['formula', DATA.formula],
+    ['Ea (Halo8, eV)', DATA.activation_energy.toFixed(3)],
+    ['energies (5pt)', DATA.energies_5pts.map(e => e.toFixed(2)).join(', ')],
+    ['bonds_broken', JSON.stringify(DATA.bonds_broken)],
+    ['bonds_formed', JSON.stringify(DATA.bonds_formed)],
+    ['review_status', DATA.review_status],
+  ];
+  tbody.innerHTML = m.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  document.getElementById('status-pill').textContent = `[${DATA.case} / ${DATA.review_status}]`;
+}
+
+function populateAuto() {
+  const tbody = document.querySelector('#auto-table tbody');
+  const a = DATA.auto_suggestion;
+  if (!a) { tbody.innerHTML = '<tr><td colspan=2><i>none</i></td></tr>'; return; }
+  const rows = [
+    ['confidence', a.auto_confidence],
+    ['method', a.method],
+    ['frag1 atoms', JSON.stringify(a.frag1_atoms)],
+    ['frag1 SMILES', a.frag1_smiles || '–'],
+    ['frag2 atoms', JSON.stringify(a.frag2_atoms)],
+    ['frag2 SMILES', a.frag2_smiles || '–'],
+    ['salvage_used', !!a.salvage_used],
+    ['principal_bond', a.principal_bond ? a.principal_bond.join('-') : '–'],
+  ];
+  tbody.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+function populateCurr() {
+  const tbody = document.querySelector('#curr-table tbody');
+  const c = DATA.current_definition;
+  if (!c) { tbody.innerHTML = '<tr><td colspan=2><i>none — Case C scratch</i></td></tr>'; return; }
+  const f1 = []; const f2 = [];
+  for (const [a, k] of Object.entries(FRAG_OF)) (k === 1 ? f1 : f2).push(parseInt(a));
+  f1.sort((a, b) => a - b); f2.sort((a, b) => a - b);
+  const rows = [
+    ['frag1 atoms', JSON.stringify(f1)],
+    ['frag1 SMILES', c.frag1_smiles || '–'],
+    ['frag2 atoms', JSON.stringify(f2)],
+    ['frag2 SMILES', c.frag2_smiles || '–'],
+    ['h_caps', JSON.stringify(c.h_caps)],
+  ];
+  tbody.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  document.getElementById('f1-input').value = f1.join(',');
+  document.getElementById('f2-input').value = f2.join(',');
+}
+
+function initFragMap() {
+  FRAG_OF = {};
+  const c = DATA.current_definition;
+  if (c) {
+    for (const a of c.frag1_atoms) FRAG_OF[a] = 1;
+    for (const a of c.frag2_atoms) FRAG_OF[a] = 2;
+  }
+  // For atoms not assigned, default to fragment 1 so the picker has something.
+  for (let i = 0; i < DATA.n_atoms; i++) {
+    if (FRAG_OF[i] === undefined) FRAG_OF[i] = 1;
+  }
+}
+
+const ELEM_SYMBOLS = {1:'H',6:'C',7:'N',8:'O',9:'F',14:'Si',15:'P',16:'S',17:'Cl',35:'Br',53:'I'};
+
+function elemOf(i) { return ELEM_SYMBOLS[DATA.numbers[i]] || ('Z' + DATA.numbers[i]); }
+
+function buildXyz(coords) {
+  const lines = [coords.length.toString(), 'snapshot'];
+  for (let i = 0; i < coords.length; i++) {
+    const sym = elemOf(i);
+    const p = coords[i];
+    lines.push(`${sym} ${p[0].toFixed(6)} ${p[1].toFixed(6)} ${p[2].toFixed(6)}`);
+  }
+  return lines.join('\n');
+}
+
+function renderViewers() {
+  // Energy badges
+  document.getElementById('energy-R').textContent = `(${DATA.energy_R.toFixed(2)} eV)`;
+  document.getElementById('energy-TS').textContent = `(${DATA.energy_TS.toFixed(2)} eV)`;
+  document.getElementById('energy-P').textContent = DATA.coords_P
+    ? `(${DATA.energy_P.toFixed(2)} eV)`
+    : '(P not extracted)';
+
+  const targets = [
+    {id: 'viewer-R', coords: DATA.coords_5pts[0]},
+    {id: 'viewer-TS', coords: DATA.coords_5pts[4]},
+    {id: 'viewer-P', coords: DATA.coords_P || DATA.coords_5pts[4]},
+  ];
+  for (const t of targets) {
+    const el = document.getElementById(t.id);
+    el.innerHTML = '';
+    const v = $3Dmol.createViewer(el, {backgroundColor: 'white'});
+    const xyz = buildXyz(t.coords);
+    v.addModel(xyz, 'xyz');
+    // colour by current fragment assignment
+    v.setStyle({}, {sphere: {scale: 0.25}, stick: {}});
+    for (const [a, k] of Object.entries(FRAG_OF)) {
+      const aIdx = parseInt(a);
+      const colour = PALETTE[k];
+      v.setStyle({serial: aIdx + 1}, {
+        sphere: {scale: 0.32, color: colour},
+        stick: {color: colour},
+      });
+    }
+    // dashed reactive bonds
+    const dash_color = '#d62728';
+    for (const [i, j] of DATA.bonds_broken) addReactiveBond(v, t.coords, i, j, dash_color);
+    for (const [i, j] of DATA.bonds_formed) addReactiveBond(v, t.coords, i, j, '#2ca02c');
+    // atom labels: "<index> <symbol>", e.g. "0 O", "5 N", "8 Br"
+    for (let i = 0; i < DATA.n_atoms; i++) {
+      v.addLabel(`${i} ${elemOf(i)}`, {
+        fontSize: 12,
+        fontColor: 'white',
+        backgroundColor: 'black',
+        backgroundOpacity: 0.65,
+        borderThickness: 0.0,
+        inFront: true,
+        showBackground: true,
+        alignment: 'center',
+        position: {x: t.coords[i][0], y: t.coords[i][1], z: t.coords[i][2]},
+      });
+    }
+    // click handler
+    v.setClickable({}, true, function(atom) {
+      if (!MODIFY_MODE) return;
+      const idx = atom.serial - 1;
+      FRAG_OF[idx] = FRAG_OF[idx] === 1 ? 2 : 1;
+      renderViewers();
+      onFragmentChange();
+    });
+    v.zoomTo();
+    v.render();
+  }
+}
+
+function addReactiveBond(v, coords, i, j, color) {
+  const a = coords[i]; const b = coords[j];
+  v.addCylinder({
+    start: {x: a[0], y: a[1], z: a[2]},
+    end: {x: b[0], y: b[1], z: b[2]},
+    radius: 0.05, fromCap: 1, toCap: 1,
+    color: color, dashed: true,
+  });
+}
+
+function bindForm() {
+  document.querySelectorAll('input[name="dec"]').forEach(el => {
+    el.addEventListener('change', () => {
+      MODIFY_MODE = el.value === 'modified';
+      document.getElementById('modify-panel').style.display = MODIFY_MODE ? 'block' : 'none';
+      if (el.value === 'accepted') {
+        // reset frag map to auto
+        initFragMap();
+        renderViewers();
+        populateCurr();
+      }
+    });
+  });
+  document.getElementById('apply-text-input').addEventListener('click', () => {
+    const f1 = (document.getElementById('f1-input').value || '').split(',').map(s => parseInt(s.trim())).filter(n => !Number.isNaN(n));
+    const f2 = (document.getElementById('f2-input').value || '').split(',').map(s => parseInt(s.trim())).filter(n => !Number.isNaN(n));
+    FRAG_OF = {};
+    for (const a of f1) FRAG_OF[a] = 1;
+    for (const a of f2) FRAG_OF[a] = 2;
+    renderViewers();
+    onFragmentChange();
+  });
+  document.getElementById('reset-auto').addEventListener('click', () => {
+    initFragMap();
+    renderViewers();
+    onFragmentChange();
+  });
+  document.getElementById('recompute').addEventListener('click', onFragmentChange);
+  document.getElementById('save-stay').addEventListener('click', () => save(false));
+  document.getElementById('save-next').addEventListener('click', () => save(true));
+}
+
+async function onFragmentChange() {
+  const {f1, f2} = currentFrags();
+  const r = await fetch(`/api/recompute_caps/${RXN}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({frag1_atoms: f1, frag2_atoms: f2}),
+  });
+  const j = await r.json();
+  document.getElementById('validation-result').textContent = JSON.stringify(j, null, 2);
+  // also refresh current SMILES in the side panel
+  if (DATA.current_definition) {
+    DATA.current_definition.frag1_smiles = j.frag1_smiles;
+    DATA.current_definition.frag2_smiles = j.frag2_smiles;
+    DATA.current_definition.h_caps = j.h_caps;
+  } else {
+    DATA.current_definition = {h_caps: j.h_caps, frag1_smiles: j.frag1_smiles, frag2_smiles: j.frag2_smiles};
+  }
+  populateCurr();
+}
+
+function currentFrags() {
+  const f1 = []; const f2 = [];
+  for (const [a, k] of Object.entries(FRAG_OF)) (k === 1 ? f1 : f2).push(parseInt(a));
+  return {f1: f1.sort((a, b) => a - b), f2: f2.sort((a, b) => a - b)};
+}
+
+async function save(advance) {
+  const dec = document.querySelector('input[name="dec"]:checked');
+  if (!dec) { alert('Pick a decision first.'); return; }
+  const {f1, f2} = currentFrags();
+  const body = {
+    status: dec.value,
+    frag1_atoms: f1,
+    frag2_atoms: f2,
+    rationale: document.getElementById('rx-rationale').value,
+    confidence: parseInt(document.getElementById('rx-confidence').value) || null,
+    override: document.getElementById('rx-override').checked,
+  };
+  const r = await fetch(`/api/decision/${RXN}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  const msg = document.getElementById('save-msg');
+  if (!r.ok) {
+    msg.className = 'save-msg err'; msg.textContent = JSON.stringify(j);
+    return;
+  }
+  msg.className = 'save-msg ok';
+  msg.textContent = 'Saved.';
+  if (advance) {
+    // Refresh state so a freshly-bookmarked reaction is recognised.
+    const fresh = await (await fetch('/api/state')).json();
+    ALL_ROWS = fresh.reactions;
+    // Skip the current reaction AND any reaction that's already been
+    // touched (any non-not_reviewed status, OR bookmarked).
+    const next = ALL_ROWS.find(x =>
+      x.review_status === 'not_reviewed'
+      && !x.bookmarked
+      && x.rxn_id !== RXN
+    );
+    if (next) location.href = '/reaction/' + next.rxn_id;
+    else alert('All non-bookmarked reactions reviewed. Bookmarks remain — go to dashboard to revisit them.');
+  } else {
+    DATA = (await (await fetch(`/api/structure/${RXN}`)).json());
+    populateMeta();
+    populateAuto();
+    populateCurr();
+  }
+}
+
+function syncPrevNext() {
+  const ids = ALL_ROWS.map(r => r.rxn_id);
+  const idx = ids.indexOf(RXN);
+  const prevA = document.getElementById('prev-link');
+  const nextA = document.getElementById('next-link');
+  if (idx > 0) prevA.href = '/reaction/' + ids[idx - 1]; else prevA.style.visibility = 'hidden';
+  if (idx >= 0 && idx < ids.length - 1) nextA.href = '/reaction/' + ids[idx + 1]; else nextA.style.visibility = 'hidden';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'a') document.querySelector('input[value="accepted"]').click();
+  else if (e.key === 'm') document.querySelector('input[value="modified"]').click();
+  else if (e.key === 'r') document.querySelector('input[value="rejected"]').click();
+  else if (e.key === 'b') document.querySelector('input[value="bookmarked"]').click();
+  else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(true);
+  else if (e.key === 'ArrowRight') document.getElementById('next-link').click();
+  else if (e.key === 'ArrowLeft') document.getElementById('prev-link').click();
+});
+
+init();
+</script>
+{% endblock %}
