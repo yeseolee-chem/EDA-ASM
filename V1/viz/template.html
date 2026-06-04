@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>V1 Claisen ASR/EDA — 15 substrate 3D viewer</title>
+<script src="3Dmol-min.js"></script>
+<style>
+  body { font-family: -apple-system, sans-serif; background:#1a1a1a; color:#e0e0e0; margin:0; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px 0; }
+  .meta { color:#888; font-size:12px; margin-bottom:12px; }
+  .legend { font-size:12px; color:#aaa; margin-bottom:8px; padding:8px; background:#222; border-radius:4px; }
+  code { background:#333; padding:2px 4px; border-radius:2px; color:#e0e0e0; }
+  table { border-collapse:collapse; width:100%; }
+  thead th { background:#222; color:#bbb; font-size:11px; padding:6px; position:sticky; top:0; z-index:10; }
+  td { vertical-align:top; padding:4px; border-bottom:1px solid #2a2a2a; }
+  .id-cell { font-family: monospace; font-weight:bold; color:#7fb; padding:8px 12px; min-width:90px; }
+  .id-cell .R-tag { font-size:11px; color:#bbb; font-weight:normal; display:block; margin-top:2px; }
+  .energy { font-size:10px; color:#999; font-family:monospace; margin-top:6px; line-height:1.5; }
+  .viewer { width:340px; height:280px; position:relative; background:#0d0d0d; border-radius:4px; overflow:hidden; }
+  .viewer .err { color:#f88; padding:20px; font-size:11px; white-space:pre-wrap; }
+  .controls { margin-bottom:12px; padding:8px; background:#222; border-radius:4px; font-size:12px; }
+  .controls label { margin-right:16px; cursor:pointer; }
+  .controls input[type=checkbox] { vertical-align:middle; margin-right:4px; }
+  button { background:#333; color:#e0e0e0; border:1px solid #555; padding:4px 10px; border-radius:3px; cursor:pointer; font-size:11px; margin-right:4px; }
+  button:hover { background:#444; }
+  #status { font-size:11px; color:#7fb; margin-left:8px; }
+  #status.err { color:#f88; }
+</style>
+</head>
+<body>
+<h1>V1 Claisen ASR/EDA — 15 substrate 3D 뷰어</h1>
+<div class="meta">
+  반응: <code style="color:#9cf">CH2=C(R)-O-CH2-CH=CH2  →  R-C(=O)-CH2-CH2-CH=CH2</code> &nbsp; [3,3]-시그마트로픽 Claisen
+</div>
+
+<div class="controls">
+  <label><input type="checkbox" id="showHs" checked> H 보기</label>
+  <label><input type="checkbox" id="showSphere" checked> 원자 sphere</label>
+  <label><input type="checkbox" id="showLabels"> 원자 인덱스</label>
+  <button id="zoomAll">모두 zoom-to-fit</button>
+  <span id="status">초기화 중...</span>
+</div>
+
+<div class="legend">
+  Hammett σₚ 정렬: 위 = donor (σₚ ↓), 아래 = acceptor (σₚ ↑). 컬럼 4의 fragment A(주황) + B(파랑)는 TS에서의 두 allyl형 doublet 라디칼.
+</div>
+
+<table>
+<thead>
+<tr><th>id / R / EDA</th><th>Reactant (RDKit+MMFF)</th><th>TS (wB97X-3c/vDZP)</th><th>Fragments @ TS</th></tr>
+</thead>
+<tbody id="rows"></tbody>
+</table>
+
+<script>
+const SUBSTRATES = __SUBSTRATES__;
+const XYZ = __XYZ__;
+const viewers = [];
+
+function detectWebGL() {
+  try {
+    const c = document.createElement('canvas');
+    return !!(c.getContext('webgl') || c.getContext('experimental-webgl'));
+  } catch(e) { return false; }
+}
+
+function applyStyleTo(v) {
+  const showH = document.getElementById('showHs').checked;
+  const showSph = document.getElementById('showSphere').checked;
+  v.setStyle({}, {stick:{radius:0.15}});
+  if (showSph) v.addStyle({}, {sphere:{scale:0.25}});
+  if (!showH) v.setStyle({elem:'H'}, {sphere:{hidden:true}, stick:{hidden:true}});
+  v.removeAllLabels();
+  if (document.getElementById('showLabels').checked) {
+    const atoms = v.getModel().selectedAtoms({});
+    atoms.forEach(function(a, i) {
+      v.addLabel(String(i), {
+        position: {x:a.x, y:a.y, z:a.z},
+        fontSize: 9, fontColor: '#fff',
+        backgroundColor: '#000', backgroundOpacity: 0.55,
+        showBackground: true, useScreen: false
+      });
+    });
+  }
+  v.render();
+}
+
+function makeSingleViewer(divId, xyzText) {
+  const el = document.getElementById(divId);
+  if (!xyzText || xyzText.length < 10) {
+    el.innerHTML = '<div class="err">empty XYZ</div>';
+    return null;
+  }
+  try {
+    const v = $3Dmol.createViewer(el, {backgroundColor: '#0d0d0d'});
+    v.addModel(xyzText, "xyz");
+    applyStyleTo(v);
+    v.zoomTo();
+    v.render();
+    viewers.push(v);
+    return v;
+  } catch (e) {
+    console.error(divId, e);
+    el.innerHTML = '<div class="err">3Dmol error\n' + e.message + '</div>';
+    return null;
+  }
+}
+
+function makeFragmentViewer(divId, dataA, dataB) {
+  const el = document.getElementById(divId);
+  if (!dataA || !dataB || dataA.length < 10 || dataB.length < 10) {
+    el.innerHTML = '<div class="err">no fragment data</div>';
+    return null;
+  }
+  try {
+    const v = $3Dmol.createViewer(el, {backgroundColor: '#0d0d0d'});
+    v.addModel(dataA, "xyz");
+    v.setStyle({model: 0}, {stick: {radius: 0.16, color: 'orange'}});
+    v.addStyle({model: 0}, {sphere: {scale: 0.28, color: 'orange'}});
+    v.addModel(dataB, "xyz");
+    v.setStyle({model: 1}, {stick: {radius: 0.16, color: 'cyan'}});
+    v.addStyle({model: 1}, {sphere: {scale: 0.28, color: 'cyan'}});
+    v.zoomTo();
+    v.render();
+    viewers.push(v);
+    return v;
+  } catch (e) {
+    console.error(divId, e);
+    el.innerHTML = '<div class="err">3Dmol error\n' + e.message + '</div>';
+    return null;
+  }
+}
+
+function buildRow(s) {
+  const tr = document.createElement('tr');
+
+  const td0 = document.createElement('td');
+  td0.className = 'id-cell';
+  td0.innerHTML =
+    '<span style="color:#7fb">' + s.id + '</span>' +
+    '<span class="R-tag">R = ' + s.R + '<br>' +
+    'σ<sub>p</sub> = ' + (s.sigp >= 0 ? '+' : '') + s.sigp.toFixed(2) + '</span>' +
+    '<div class="energy">' +
+      'E<sub>a</sub> = ' + s.Ea.toFixed(1) + ' kcal/mol<br>' +
+      'imag = ' + s.imag + ' cm<sup>-1</sup><br><br>' +
+      '<span style="color:#7c7">strain ' + s.Estrain.toFixed(1) + '</span><br>' +
+      '<span style="color:#9cc">elst&nbsp;&nbsp; ' + s.Eelst.toFixed(1) + '</span><br>' +
+      '<span style="color:#fc7">Pauli&nbsp; ' + s.EPauli.toFixed(1) + '</span><br>' +
+      '<span style="color:#c9f">oi&nbsp;&nbsp;&nbsp;&nbsp; ' + s.Eoi.toFixed(1) + '</span><br>' +
+      '<span style="color:#aaa">disp&nbsp;&nbsp; ' + s.Edisp.toFixed(1) + '</span><br>' +
+      '<span style="color:#ddd">int&nbsp;&nbsp;&nbsp; ' + s.Eint.toFixed(1) + '</span>' +
+    '</div>';
+  tr.appendChild(td0);
+
+  ['R', 'TS', 'F'].forEach(function(col) {
+    const td = document.createElement('td');
+    const div = document.createElement('div');
+    div.className = 'viewer';
+    div.id = 'v_' + s.id + '_' + col;
+    td.appendChild(div);
+    tr.appendChild(td);
+  });
+  document.getElementById('rows').appendChild(tr);
+
+  makeSingleViewer('v_' + s.id + '_R',  XYZ[s.id].R);
+  makeSingleViewer('v_' + s.id + '_TS', XYZ[s.id].TS);
+  makeFragmentViewer('v_' + s.id + '_F', XYZ[s.id].fragA, XYZ[s.id].fragB);
+}
+
+function reStyleAll() { viewers.forEach(function(v) { applyStyleTo(v); }); }
+
+window.addEventListener('load', function() {
+  const status = document.getElementById('status');
+  if (!detectWebGL()) {
+    status.textContent = '오류: WebGL 미지원 브라우저 (about:gpu 확인)';
+    status.className = 'err';
+    return;
+  }
+  if (typeof $3Dmol === 'undefined') {
+    status.textContent = '오류: 3Dmol.js 로드 실패 (네트워크/스크립트 경로 확인)';
+    status.className = 'err';
+    return;
+  }
+  document.getElementById('showHs').addEventListener('change', reStyleAll);
+  document.getElementById('showSphere').addEventListener('change', reStyleAll);
+  document.getElementById('showLabels').addEventListener('change', reStyleAll);
+  document.getElementById('zoomAll').addEventListener('click', function() {
+    viewers.forEach(function(v) { v.zoomTo(); v.render(); });
+  });
+  try {
+    status.textContent = '렌더링 중...';
+    SUBSTRATES.forEach(buildRow);
+    status.textContent = '완료 — ' + viewers.length + '개 뷰어 활성';
+  } catch (e) {
+    console.error('build error:', e);
+    status.textContent = 'JS 에러: ' + e.message;
+    status.className = 'err';
+  }
+});
+</script>
+</body>
+</html>
