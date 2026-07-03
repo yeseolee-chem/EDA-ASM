@@ -61,9 +61,9 @@ OUT_TAG = os.environ.get("OUT_TAG", "lowlr")  # output dir suffix
 OUT_BASE = HERE / f"trackB_{OUT_TAG}_{BASELINE}" / "m1_delta"
 
 # === User-requested HP (low LR + very large budget per 2026-06-24 update) ===
-LR_LOW = 1.0e-5
-EPOCHS_MAX = 100_000      # 100k epochs (vs 3000 prior)
-PATIENCE = 10_000         # 10k patience (vs 500 prior)
+LR_LOW = float(os.environ.get("LR_LOW", 1.0e-5))
+EPOCHS_MAX = int(os.environ.get("EPOCHS_MAX", 100_000))   # 100k epochs
+PATIENCE = int(os.environ.get("PATIENCE", 10_000))        # 10k patience
 BATCH = 16
 WD = 1.0e-3
 
