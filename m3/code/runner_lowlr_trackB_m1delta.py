@@ -34,9 +34,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-ROOT = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent.parent  # m*/code -> m* -> repo root
+
+# Prefer the self-contained package shipped inside this m*/code/ folder;
+# fall back to the canonical shared library at repo-root src/.
+sys.path.insert(0, str(HERE / "scripts"))
+sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "src"))
-sys.path.insert(0, str(ROOT / "scripts/asr_v1"))
 
 from eda_asm.asr_v1.data import ASR_COMPONENTS
 from eda_asm.asr_v1.models_delta import ModelM1Delta
@@ -44,8 +49,6 @@ from eda_asm.asr_v1.baseline_physics import LinearBaseline
 from eda_asm.asr_v1.training_delta import (
     CachedFeatureBundleDelta, TrainConfigDelta, train_one_model_delta,
 )
-
-HERE = Path(__file__).resolve().parent
 # BASELINE selectable via env var: geom6 (no xTB) | xtb | xtb_geom6 (xTB+d1~d6)
 BASELINE = os.environ.get("BASELINE", "geom6")
 BUNDLE = HERE / "bundles" / f"features_v6_delta_{BASELINE}.pt"

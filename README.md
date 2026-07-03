@@ -8,13 +8,16 @@ E_a pipeline; complements Stage 2 (TS structure generation) in
 ## Layout
 
 ```
-labels/         789-reaction ADF + ORCA EDA-ASM labels (parquet)
-V1/             Claisen ASR-EDA v1 (spec, scripts, ADF/ORCA runs, viz)
-m1/             Δ-learner, geom6 baseline (5 folds × 5 members)
-m2/             Δ-learner, xtb_geom6 baseline (5 folds × 5 members)
-m3/             Δ-learner, xtb_geom6_plus_v2 baseline (5 folds × member 0)
-comparison/     m1 vs. m2 vs. m3 evaluation (figures + report)
-CLAUDE.md       upstream task spec (older 400-trajectory phase)
+labels/               789-reaction ADF + ORCA EDA-ASM labels (parquet)
+V1/                   Claisen ASR-EDA v1 (spec, scripts, ADF/ORCA runs, viz)
+m1/                   Δ-learner, geom6 baseline (5 folds × 5 members)
+m2/                   Δ-learner, xtb_geom6 baseline (5 folds × 5 members)
+m3/                   Δ-learner, xtb_geom6_plus_v2 baseline (5 folds × member 0)
+comparison/           m1 vs. m2 vs. m3 evaluation (figures + report)
+src/eda_asm/asr_v1/   shared model + backbone + training-loop code used by
+                      m1/m2/m3 runners (cross-attn Δ head, MACE-OFF backbone,
+                      LinearBaseline, delta training loop)
+CLAUDE.md             upstream task spec (older 400-trajectory phase)
 ```
 
 Each of `labels/`, `V1/`, `m1/`, `m2/`, `m3/`, `comparison/` has its
