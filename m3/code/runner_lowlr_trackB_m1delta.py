@@ -201,6 +201,12 @@ def run_one(args):
     y_true, y_pred, test_mae = evaluate_predictions(model, bundle, test_pos, baseline_all, args.device)
     test_rids_in_order = [bundle.reaction_ids[i] for i in test_pos]
 
+    # Spec (ASM identity): barrier = Σ_c y_c
+    barrier_true = y_true.sum(axis=1)
+    barrier_pred = y_pred.sum(axis=1)
+    barrier_mae = float(np.abs(barrier_pred - barrier_true).mean())
+    barrier_rmse = float(np.sqrt(np.mean((barrier_pred - barrier_true) ** 2)))
+
     result = {
         "fold": args.fold, "member": args.member, "seed": seed,
         "n_train": len(train_pos), "n_val": len(val_pos), "n_test": len(test_pos),
@@ -208,6 +214,10 @@ def run_one(args):
         "y_true": y_true.tolist(),
         "y_pred": y_pred.tolist(),
         "components": list(ASR_COMPONENTS),
+        "barrier_true": barrier_true.tolist(),
+        "barrier_pred": barrier_pred.tolist(),
+        "test_barrier_mae": barrier_mae,
+        "test_barrier_rmse": barrier_rmse,
         "val_mae_per_channel": list(map(float, fr.val_mae_per_component)),
         "val_mae_baseline_only": list(map(float, fr.val_mae_baseline_only)),
         "test_mae_per_channel": list(map(float, test_mae)),

@@ -4,11 +4,11 @@
 
 #SBATCH --job-name=m1_geom6
 #SBATCH --array=0-4%5
-#SBATCH --partition=gpu3,gpu4,gpu5
+#SBATCH --partition=gpu3
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
-#SBATCH --time=48:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=m1/logs/m1_geom6-%A_%a.out
 #SBATCH --error=m1/logs/m1_geom6-%A_%a.err
 
@@ -22,6 +22,11 @@ conda activate reactot
 export BASELINE=geom6
 export SUBSAMPLES_TAG=trackB_no_ood
 export OUT_TAG=lowlr_no_ood
+# Original m1 best_epoch was 404 with early_stop at 10404 (patience 10000).
+# The rebuild converges within a few thousand epochs; cap the budget so the
+# 25-cell array fits in a reasonable wall time on gpu3/4/5.
+export EPOCHS_MAX=15000
+export PATIENCE=1500
 
 # Symlinks are created by the smoke test — re-assert them defensively:
 BUNDLE_SRC=/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/bundles/features_v6_delta_geom6.pt

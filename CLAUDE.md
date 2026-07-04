@@ -1,272 +1,227 @@
 # CLAUDE.md — eda-asm-prediction
 
-## Project Overview
+## HPC ground rules (READ FIRST — non-negotiable)
 
-EDA (Energy Decomposition Analysis) and ASM (Activation Strain Model) based
-prediction of activation energies (E_a). This is **Stage 5–6** of an
-explainable E_a pipeline; **Stage 2** (TS structure generation via React-OT
-/ OT-FM) lives in `/home1/yeseo1ee/projects/ts-structure-prediction`.
+- **ALL non-trivial compute MUST run via `sbatch` on compute nodes.**
+  The login node `gate1.hpc` is **read-only** for us. No `python`,
+  no `xtb`, no matplotlib rendering, no MACE feature extraction on
+  login. Even a 15-row Hammett plot goes through sbatch.
+- **Every `sbatch` submission MUST use `#SBATCH --time=48:00:00`.**
+  No shorter walltimes. If the underlying work only needs a few
+  minutes, still ask for 48h — the extra time costs nothing while a
+  too-tight walltime silently kills long tails.
+- **All work must be idempotent on resubmit.** Each cell / shard /
+  batch must (a) write its output atomically and (b) skip work whose
+  output file already exists. If a 48h wall clips a partial cell,
+  losing that cell is acceptable — losing the *rest* is not.
+- **If a job hits the 48h wall, just re-`sbatch` the same script.**
+  Idempotency + `if out_path.exists(): return` in the runner makes
+  this safe.
+- **We may hold up to 10 concurrent SLURM jobs.** When designing
+  arrays or multi-model runs, distribute across partitions so total
+  concurrency stays ≤ 10. Prefer parallel across gpu3 / gpu4 / gpu5
+  over serialising on one partition.
+
+## Project overview
+
+EDA (Energy Decomposition Analysis) + ASM (Activation Strain Model)
+proxy prediction of 5-channel decomposed activation energies. Repo
+covers Stage 5 (label pipeline) + Stage 6 (Δ-learners over
+MACE-OFF23 features).
 
 Folder/distribution name: `eda-asm-prediction` (hyphenated).
-Python import name: `eda_asm` (hyphens are not valid in Python identifiers).
+Python import name: `eda_asm`.
 
-## Pipeline
-
-```
-Stage 1: Energy prediction (AIMNet2)
-Stage 2: TS structure (React-OT / OT-FM)            [external repo]
-Stage 5: EDA/ASM proxy decomposition                [this repo]
-Stage 6: GPR-ARD over decomposed components → E_a   [this repo]
-```
-
-Inputs: (R, TS, P) geometries — TS may come from Stage 2 predictions or
-DFT references. Outputs: per-reaction decomposed energy components and an
-E_a estimate with uncertainty.
-
-## Decomposition Components (target signature)
-
-ASM (two-fragment): ΔE‡ = ΔE_strain + ΔE_int
-
-EDA on ΔE_int (Morokuma / ALMO-style proxies, ADF NOCV-EDA):
-1. **Pauli repulsion** — `E_Pauli`
-2. **Electrostatic** — `E_elstat`
-3. **Orbital interaction** (charge transfer + polarization) — `E_orb`
-4. **Dispersion** — `E_disp`
-5. **Strain (preparation/distortion)** — `E_strain` = sum of fragment ΔE_prep
-
-These five channels feed Stage 6 GPR-ARD as features.
-
-> The first four are "interaction" channels from EDA on ΔE_int.
-> The fifth is the ASM strain term. Together with `E_int = E_Pauli +
-> E_elstat + E_orb + E_disp`, they reconstruct ΔE‡ = E_strain + E_int.
-
-## Cross-Repo Consistency Note
-
-The weighted-RMSD weighting used in Stage 5 must share the same continuous
-weight function (graph-distance / element / hierarchical kernel) as the FM
-loss weighting in Stage 2 (cb-* branches in `ts-structure-prediction`).
-Keep the weighting kernel definitions in sync.
-
----
-
-## Data: Halo8 reaction trajectories
-
-Source (read-only, mounted via symlink):
-```
-data/Halo8/   →  /home1/yeseo1ee/projects/ts_prediction_project/data/
-```
-Contents: `Halo_1.db` … `Halo_10.db` — ten ASE SQLite databases,
-~22M rows total. Each **row is one frame** of a reaction trajectory.
-
-### Trajectory key (very important)
-
-Frame-level identifier:           `row.data["dand_id"]`
-Examples:
-- `T1x_C2H2N2O_rxn00001_99`        (T1x family)
-- `Halogen_C4FH5N2O_rxn14045_17`   (Halogen family)
-
-The trailing `_<int>` is the **frame index** along the trajectory.
-The **trajectory id** is `dand_id.rsplit("_", 1)[0]`, e.g.
-`Halogen_C4FH5N2O_rxn14045`. Frame count per trajectory is typically
-200–500, indexed from 0.
-
-### Two reaction families
-
-Both prefixes are **case-sensitive** in the database:
-- `T1x_*` — Transition1x-derived reactions (organic, no halogens). The
-  user often refers to these as "t1x"; match with
-  `dand_id.lower().startswith("t1x")` to be robust.
-- `Halogen_*` — halogenated reactions (F/Cl/Br substituted). The user
-  often refers to these as "halo"; match with
-  `dand_id.lower().startswith("halo")`. Note: lowercase `halo` is a
-  prefix of lowercase `halogen`, so this match is correct.
-
-Do **not** filter by `old_dand_id` — that field uses different prefixes
-(`T1x_N_…`, `8F_N_…`, `567Br_…`) and is for cross-referencing to the
-original source datasets only.
-
-### Per-frame fields available (preserve all of these in outputs)
-
-`row.data` keys:
-```
-dand_id, old_dand_id,
-Mulliken_charges (list, len=natoms),
-Lowdin_charges    (list, len=natoms),
-Dipole_moment     (list[3]),
-Nuclear_repulsion_energy, Electronic_energy,
-One_electron_energy, Two_electron_energy,
-Exchange_energy, Correlation_energy, Dispersion_correction,
-HOMO_idx, HOMO_level, LUMO_idx, LUMO_level
-```
-`row` attributes: `positions (natoms,3)`, `forces (natoms,3)`,
-`energy` (total), `formula`, `natoms`, `charge`, `numbers`, `symbols`.
-
-`cell` is zero and `pbc` is False — these are isolated-molecule
-calculations. The TS frame for each trajectory is the **max-energy
-frame** along that trajectory (this is the convention; verify by
-checking that R = frame 0 and P = last frame have lower energy than
-the interior maximum before promoting it as TS).
-
----
-
-## Current task: ADF EDA-ASM on 400 trajectories
-
-Build a labeled dataset of decomposed activation energies for downstream
-GPR-ARD training. **ADF is not yet installed on this machine — setup is
-part of the task.**
-
-### Selection
-
-Sample **uniformly at random without replacement** from each family:
-- 200 trajectories whose `dand_id` matches `^T1x_` (case-insensitive).
-- 200 trajectories whose `dand_id` matches `^Halogen` (case-insensitive
-  — equivalent to lowercase `startswith("halo")`).
-
-Total: **400 trajectories**. Use a fixed `numpy.random.default_rng(seed)`
-with the seed recorded in the run config; persist the chosen trajectory
-ids to `data/selection/selected_trajectories.json` so the run is
-reproducible and incremental re-runs hit the same set.
-
-Sampling procedure:
-1. Stream all rows across `Halo_1.db` … `Halo_10.db`, group by trajectory
-   id (`dand_id.rsplit("_", 1)[0]`). Streaming + a dict keyed on traj id
-   is fine — the unique-trajectory count fits in memory even if the row
-   count does not.
-2. Bucket trajectory ids into `T1x` / `Halogen` (case-insensitive prefix).
-3. Drop trajectories shorter than some minimum (e.g. < 20 frames) or
-   missing a clear interior energy maximum — log how many were dropped.
-4. Sample 200 from each bucket with the seeded RNG.
-
-### Per-trajectory ADF input prep
-
-For each selected trajectory:
-1. Load all frames, sorted by frame index.
-2. Identify R = frame 0, P = last frame, TS = argmax of `row.energy`
-   over interior frames. Sanity-check `E(TS) > E(R)` and `E(TS) > E(P)`;
-   skip + log otherwise.
-3. Decide ASM fragmentation. These are mostly intramolecular reactions,
-   so two-fragment ASM is non-trivial. Default approach (override
-   per-reaction if needed):
-   - Run `ase.neighborlist` on R and on P.
-   - Take the symmetric difference of bond sets → reactive bonds.
-   - Cut the molecule along the bond(s) that change between R and P;
-     the two resulting connected components are fragment A / fragment B.
-   - If the cut produces > 2 components or 1 component (concerted ring
-     reactions, etc.), record the case and skip ASM for that trajectory
-     — still run a single-system EDA on the TS for diagnostics.
-4. Write ADF input decks to `runs/<trajectory_id>/`:
-   - `R.xyz`, `TS.xyz`, `P.xyz` — geometries.
-   - `frag_A.xyz`, `frag_B.xyz` — frozen fragment geometries at TS.
-   - `eda.run` — ADF EDA-NOCV input (single-point on TS with frags A/B).
-   - `strain_A.run`, `strain_B.run` — single-point ADF on each fragment
-     at TS geometry and at its R/P-relaxed geometry, for ΔE_prep.
-
-### ADF settings (default — record in config, document any deviation)
-
-- Functional: PBE0-D3(BJ) (or BLYP-D3 if matching DFT reference set).
-- Basis: TZ2P, all-electron, frozen core None for elements ≤ Ar.
-- Relativity: scalar ZORA only if Br is present in the formula.
-- Symmetry: NOSYM.
-- EDA scheme: NOCV / ETS-NOCV via ADF's `EDA` block; output the four
-  channels listed above.
-- Numerical quality: `Good`.
-
-### Output
-
-Write one row per trajectory to `data/processed/eda_asm_dataset.parquet`
-(or .json lines if parquet unavailable). Schema:
+## Repository layout (post-cleanup, 2026-07-03)
 
 ```
-trajectory_id          : str   # e.g. "Halogen_C4FH5N2O_rxn14045"
-family                 : str   # "T1x" | "Halogen"
-formula                : str
-natoms                 : int
-n_frames               : int
-ts_frame_idx           : int
-R_dand_id, TS_dand_id, P_dand_id : str
-R_positions, TS_positions, P_positions : (natoms,3) arrays
-R_forces, TS_forces, P_forces          : (natoms,3) arrays
-numbers, symbols       : list[int], list[str]
-charge                 : float
-
-# Reference (Halo8) per-frame fields, replicated for R/TS/P:
-{R,TS,P}_energy                       : float
-{R,TS,P}_Nuclear_repulsion_energy     : float
-{R,TS,P}_Electronic_energy            : float
-{R,TS,P}_One_electron_energy          : float
-{R,TS,P}_Two_electron_energy          : float
-{R,TS,P}_Exchange_energy              : float
-{R,TS,P}_Correlation_energy           : float
-{R,TS,P}_Dispersion_correction        : float
-{R,TS,P}_HOMO_idx, {R,TS,P}_HOMO_level: int, float
-{R,TS,P}_LUMO_idx, {R,TS,P}_LUMO_level: int, float
-{R,TS,P}_Mulliken_charges             : list[float]
-{R,TS,P}_Lowdin_charges               : list[float]
-{R,TS,P}_Dipole_moment                : list[float, 3]
-
-# ADF-derived (this is the new content):
-adf_total_E_TS          : float       # ADF SP energy at TS (full system)
-adf_total_E_fragA_TS    : float       # at TS geometry
-adf_total_E_fragB_TS    : float
-adf_total_E_fragA_R     : float       # relaxed-fragment ref energies
-adf_total_E_fragB_P     : float
-
-# EDA-ASM channels (the 5 features for Stage 6):
-E_Pauli                 : float
-E_elstat                : float
-E_orb                   : float
-E_disp                  : float
-E_strain                : float       # = ΔE_prep_A + ΔE_prep_B
-E_int                   : float       # = E_Pauli + E_elstat + E_orb + E_disp
-Ea_reconstructed        : float       # = E_strain + E_int  (sanity check)
-Ea_from_trajectory      : float       # = E_TS - E_R from Halo8 energies
-
-# Provenance:
-adf_version, adf_functional, adf_basis, adf_settings_hash : str
-fragmentation_method    : str         # "neighborlist_diff" | "manual" | ...
-fragA_atom_indices      : list[int]
-fragB_atom_indices      : list[int]
-seed                    : int
-run_timestamp           : str (ISO 8601)
-status                  : str         # "ok" | "skipped:<reason>" | "failed:<reason>"
+labels/                       789-reaction ADF + ORCA EDA-ASM labels + seed selection
+V1/                           Claisen 15-substrate ASR-EDA (spec + runs + Hammett analysis)
+m1/  m2/  m3/                 Δ-learner code + frozen results per baseline
+comparison/                   cross-model figures + REPORT.md
+src/eda_asm/                  canonical shared package
+  asr_v1/                     model / backbone / training / baseline_physics
+  datasets/                   dipolar_cycloaddition, qmrxn20 loaders
+  adf/                        ADF input builder + parser (legacy)
+  phase1/                     Halo8 sampling + fragment definition (legacy)
+  stage5a/                    ADF fragmentation pipeline (legacy)
+scripts/                      pipeline utilities (asr_v1 caching + trainers,
+                              screen_substituents.py, ...)
+pipeline_rebuild/spec_v1/     current spec-compliant rebuild (2026-07-03)
+reports/fragment_screen/      substituent decomposition (BRICS + Bemis-Murcko)
+backbone_ft/                  MACE-OFF23 fine-tune experiment (gitignored)
 ```
 
-Also keep raw ADF outputs under `runs/<trajectory_id>/adf_out/` — do
-**not** delete them after parsing; they are needed for audits and
-re-parsing if the EDA breakdown definition changes.
+## Datasets — where the geometries come from
 
-### ADF setup (not yet done — first task before any production run)
+The 789-reaction cohort spans four families. Raw data lives under
+`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/` (regenerable, gitignored).
 
-1. Decide deployment: HPC module (`module load adf/...`) vs local
-   install vs containerized. Record the chosen path in
-   `configs/adf.yaml`.
-2. License: ADF requires a valid license file. Confirm with the user
-   before downloading or activating.
-3. Provide a smoke-test driver `scripts/smoke_test_adf.py` that runs
-   one EDA-NOCV on a tiny system (e.g. ethane → 2 × methyl) and
-   verifies output parsing. CI / dev iterations should call this
-   first; do not launch the 400-job batch until it passes.
-4. Wrap ADF invocation behind `eda_asm.adf.AdfRunner` so that
-   alternative engines (PySCF EDA, Q-Chem ALMO-EDA) can be swapped
-   in later if license/throughput demands it. Same I/O contract.
+| family | count | source | archive | local extraction |
+|---|---|---|---|---|
+| dipolar | 193 | Stuyver / Jorner / Coley 2023 | figshare 21707888 v5 | `dipolar_cycloaddition/extracted/full_dataset_profiles/{idx}/` |
+| qmrxn20_e2 | 200 | von Rudorff 2020 | materialscloud 2020.55 (uuid `gkqvy-3vp74`) | `QMrxn20/transition-states/e2/{label}.xyz` + friends |
+| qmrxn20_sn2 | 196 | von Rudorff 2020 | (same) | `QMrxn20/transition-states/sn2/{label}.xyz` |
+| rgd1 | 200 | Zhao & Savoie 2023 | figshare 21066901 v6 | `rgd1/RGD1_CHNO.h5` (per-reaction R/TS/P extracted to `extracted_xyz/{rid}/{R,TS,P}.xyz`) |
 
-### Job orchestration
+Cohort membership: `labels/adf/adf_labels_v6_multifamily.parquet`
+(reaction_id column). Original selection artefacts (seed=42, Morgan-r2
++ Kennard–Stone) at `labels/seed_selection/`.
 
-400 trajectories × (1 EDA + 2 strain SPs + 2 fragment-relaxed SPs)
-≈ 2000 ADF jobs. Required:
-- One Slurm array job per family, `--array=0-199%<concurrency>`.
-- Idempotent: if `runs/<traj>/eda.out` exists and parses cleanly, skip.
-- Log failures to `runs/_failures.jsonl` with stderr tail.
-- Aggregator script that walks `runs/` and writes the parquet output.
+## MACE-OFF23 backbone
 
----
+Cached locally at `/home1/yeseo1ee/.cache/mace/MACE-OFF23_medium.model`
+(also small/large). Feature extraction goes through
+`src/eda_asm/asr_v1/backbone_maceoff.py:MACEOFFFeatureExtractor`.
+Per-atom invariant features, 256-d, float32.
+
+Precomputed R/TS/P features for all 789 reactions live at
+`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/mace_off23_medium/{rid}.pt`
+(regenerable via `pipeline_rebuild/stage2_mace_features.py`).
+
+## Spec-compliant model architecture (m1 / m2 / m3)
+
+All three share the same model + training loop; they differ only in
+the physics descriptor vector fed to the ridge baseline.
+
+```
+MACE-OFF23 features (256-d per atom, per state)
+  → InputStandardizer  (fit on train fold R+P only, TS excluded)
+  → SiLU + Dropout linear projection to 128-d
+  → 4 × Cross-attention blocks (LayerNorm-stabilised, 4 heads × 32-d):
+        h′(TS) = LN(h(TS) + ½ [CA_θ1(h(TS),h(R)) + CA_θ2(h(TS),h(P))])
+        h′(R)  = LN(h(R)  + CA_θ3(h(R), h(TS)))
+        h′(P)  = LN(h(P)  + CA_θ4(h(P), h(TS)))
+  → AttentionPool per state (learned query q_s, mask padding)
+  → z = [v_R || v_TS || v_P || v_TS-v_R || v_TS-v_P || v_P-v_R]  (768-d)
+  → MLP 768 → SiLU → 64 → SiLU → 64 → 5   (residual δ)
+
+Physics baseline b:  ridge (α=1) over z-score(d1..d_D) with intercept.
+Prediction:          ŷ = b + δ
+Loss:                mean over batch of  mean_c |ŷ_c − y_c| / σ_c
+                     (σ_c = per-channel std of train-fold labels)
+Optimiser:           Adam, lr = 1e-5, weight_decay = 1e-3
+Regularisation:      grad-clip 5.0, dropout 0.2
+Budget:              EPOCHS_MAX = 100 000, PATIENCE = 10 000, batch = 16
+```
+
+### Physics descriptors per model
+
+| model | dim | descriptors |
+|---|---|---|
+| m1 | 6 | d1..d6 — Kabsch RMSD × 2, Pauli/elst/disp pair-sums at TS, n_atoms |
+| m2 | 21 | d1..d6 + d7..d21 (GFN2-xTB energies, dipoles, HOMO/LUMO, fragA charge sum) |
+| m3 | 24 | d1..d21 + d22 = μ²/2η (Parr ω), d23 = Σq², d24 = Σ|WBO_{a∈A,b∈B}| |
+
+xTB descriptors come from three single-points at the TS geometry:
+complex, fragA, fragB. Fragment partition uses:
+- dipolar: atom-mapped SMILES + RDKit subgraph match on TS connectivity
+- qmrxn20 e2/sn2: connected components on R (R & TS share atom order)
+- rgd1: connected components on R (same)
+
+## Current spec-v1 rebuild pipeline
+
+Everything under `pipeline_rebuild/spec_v1/`. All sbatch scripts use
+`--time=48:00:00`; all output goes to
+`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/spec_v1_logs/`.
+
+| stage | script | what it does | output |
+|---|---|---|---|
+| 1 | `stage1_download.sh` + `stage1b_rgd1.sh` + `stage1d_qmrxn20_fixed.sh` | download source archives (dipolar, RGD1, QMrxn20) | raw XYZs under `/gpfs/tmp_cpu2/.../eda_asm_raw/` |
+| 2 | `stage2_mace.sh` | MACE-OFF23_medium features per (R/TS/P) per reaction | `mace_off23_medium/{rid}.pt` |
+| 3 | `stage3_array.sh` (8-way shards) | fragment partition + GFN2-xTB descriptors d1..d24 | `descriptors_v1.parquet` |
+| 4 | `stage4.sh` | assemble m1/m2/m3 bundles + 5-fold stratified splits | `bundles_v1/features_v6_delta_{m1,m2,m3}.pt`, `subsamples_v1/trackB_no_ood/fold*/…` |
+| 5 | `stage5_train_{m1,m2,m3}.sh` | 5×5 CV arrays on gpu3/gpu4/gpu5 (%3 each = 9 concurrent) | `m{1,2,3}/code/trackB_lowlr_no_ood_*/m1_delta/fold*/member*.json` |
+| 6 | `stage6_aggregate.py` | 3-way NMAE / RMSE bar + parity grid + REPORT.md | `comparison/spec_v1/{figures,results,REPORT.md}` |
+
+Idempotency contract:
+- Stage 2/3 shards check `_progress.jsonl` / existing rows before recompute.
+- Stage 5 runners skip a cell if the target `member{M}.json` exists.
+- If a 48h wall clips a shard/cell, re-`sbatch` the same script.
+  Anything already written is preserved; only the interrupted cell restarts.
+
+## Critical gotchas from the current rebuild (2026-07-03)
+
+- **tblite must be imported before torch.** Torch ships its own
+  `libgomp` without the `GOMP_5.0` symbol that tblite needs. Order:
+  `from tblite.interface import Calculator` at module top, then
+  everything else. Stage 3 dies with `ImportError: tblite C extension
+  unimportable` if this is violated.
+- **`tblite.Calculator.add()` does NOT accept "bond-orders" or "dipole".**
+  Only interaction terms (`electric-field`, `alpb-solvation`, …).
+  Bond orders and dipole are returned by `singlepoint()` by default.
+  Calling `add("bond-orders")` silently corrupts state so that dipole
+  is not computed → `TBLiteValueError: Molecular dipole was not
+  calculated`.
+- **QMrxn20 e2/sn2 products lose LG + proton atoms.** `d2 = kabsch_rmsd(P, TS)`
+  needs matching atom counts. Fallback: substitute TS for P when
+  `len(P) != len(TS)`, effectively setting d2 → 0 for those ~396
+  reactions. Documented in `stage3_xtb_and_descriptors.py`.
+- **SIZE_FULL = 509** is hardcoded in `runner_lowlr_trackB_m1delta.py`
+  (spec convention). Stage 4 must therefore emit `size_509.json` in
+  each fold dir even when the train pool is larger (subsample with a
+  per-fold RNG seed).
+- **Standardizer scope**: `InputStandardizer.fit_from()` on train R+P
+  only. TS is excluded per spec. The restored code included TS by
+  mistake — corrected in `training_delta.py` (2026-07-03).
+- **Loss**: σ_c-normalised L1, not raw `F.l1_loss`. σ_c comes from
+  train-fold labels, not global.
+
+## V1 Claisen 15-substrate ASR/EDA
+
+Independent side project under `V1/`. 15 para-substituents on a vinyl
+allyl ether, wB97X-3c geometry + ZORA-BLYP-D3(BJ)/TZ2P NOCV-EDA.
+Frozen 15-row parquet at `V1/outputs/v1_claisen_asr.parquet`.
+
+Downstream Hammett analysis under `V1/analysis/`:
+- `hammett_plot.py` — σₚ regressions per EDA channel + Swain–Lupton fit.
+- `submit_hammett.sh` — sbatch (48h) to cpu2.
+- Frozen figures + results/CSV committed.
+
+Headline: total ΔE‡ vs σₚ has R² ≈ 0.03 (barrier flat in σₚ), but
+individual EDA channels (Pauli, V_elst, strain) each correlate
+strongly with σₚ (R² ≈ 0.4–0.5) with signs that cancel in the total.
+This is the argument for treating EDA channels as separate features.
+
+## MACE-OFF23 fine-tune (`backbone_ft/` — gitignored)
+
+Live experiment fine-tuning MACE-OFF23_large on Halo8 R/TS/P frames.
+Uses:
+- Foundation model: `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/foundation/MACE-OFF23_large.model`
+- Splits + XYZs under `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/`
+- Scripts: `backbone_ft/scripts/run_ft_partial_freeze.py` (partial-freeze
+  wrapper around `mace_run_train`).
+- SLURM submitter: `backbone_ft/configs/slurm_ft.sh` — 48h, gpu3/4/5.
+
+**Not part of the m1/m2/m3 deliverable.** Kept out of git via
+`.gitignore` rule `/backbone_ft/`. Restart from the last MACE
+checkpoint if the 48h wall trips.
+
+## Halo8 reaction trajectories (legacy)
+
+Source DBs deleted 2026-06-12 to free quota (memory:
+`halo8_data_deleted.md`). The `data/Halo8/` symlink is broken; the
+dataset is no longer available on this cluster. Fine-tune uses the
+pre-processed XYZ splits at `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/`.
+
+## Environment
+
+- Conda env: `reactot` (Python 3.10, torch 2.2.1, mace, nequip,
+  tblite, rdkit, ase, pandas, matplotlib).
+- Activation: `source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh;
+  conda activate reactot`. Every sbatch script does this.
+- QM tools: ADF/AMS at `$HOME/ams2026.103/` (V1 only), ORCA 6.1.1
+  at `$HOME/orca_6_1_1_avx2/` (V1 only), GFN2-xTB via `tblite`
+  Python API (m2/m3).
 
 ## Conventions
 
-- Random seeds: always pass via config; never hard-code.
-- All energies in eV unless explicitly noted (ADF natively reports
-  hartree / kcal·mol⁻¹ — convert at parse time and store eV in the
-  parquet).
+- Random seeds always come from the config (default seed = 42 for
+  fold generation and RNG in stratification).
+- All energies stored in **kcal/mol** unless the column name says
+  otherwise (`_Eh` = hartree, `_h` = hartree).
 - Geometries in Å.
-- Never commit `data/` (gitignored) or `runs/` (add to `.gitignore`).
-- Symlinks under `data/` are fine and expected; treat them as read-only.
+- Never commit `/gpfs/tmp_cpu2/yeseo1ee/...` outputs. Bundles + raw
+  descriptors + logs live there and are gitignored.
+- Fresh per-cell training outputs (`m{1,2,3}/code/trackB_*/`) are
+  gitignored until a curated aggregation step promotes them.

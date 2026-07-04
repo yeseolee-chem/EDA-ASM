@@ -126,6 +126,7 @@ class TrainConfigDelta:
     early_stop_patience: int = 30
     device: str = "cpu"
     baseline_ridge_alpha: float = 1.0
+    grad_clip_norm: float = 5.0     # Spec: grad-clip 5.0
 
 
 @dataclass
@@ -171,13 +172,16 @@ def train_one_model_delta(
     # 2) Build the ML model.
     model = model_factory(bundle.feature_dim).to(cfg.device)
 
+    # Spec: μ_k, σ_k fit from train-fold R and P features only (TS excluded).
     if hasattr(model, "input_std"):
         train_features = (
             [bundle.R_features[i] for i in train_idx]
-            + [bundle.TS_features[i] for i in train_idx]
             + [bundle.P_features[i] for i in train_idx]
         )
         model.input_std.fit_from(train_features)
+
+    # Spec: per-channel σ_c from train-fold labels; loss = mean |ŷ_c − y_c| / σ_c
+    sigma_c = bundle.labels[train_idx].std(dim=0).clamp_min(1e-6).to(cfg.device)  # (5,)
 
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr,
                            weight_decay=cfg.weight_decay)
@@ -207,9 +211,11 @@ def train_one_model_delta(
             y = y.to(cfg.device); b = b.to(cfg.device)
             delta = model(R_feat, R_mask, T_feat, T_mask, P_feat, P_mask)
             pred = b + delta
-            loss = F.l1_loss(pred, y)
+            # Spec loss: per-channel σ_c-normalized L1 (mean over channels + batch)
+            loss = (pred - y).abs().div(sigma_c).mean()
             opt.zero_grad(set_to_none=True)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
             opt.step()
             ep_loss += loss.item() * y.shape[0]; n_seen += y.shape[0]
         train_mae = ep_loss / max(n_seen, 1)
