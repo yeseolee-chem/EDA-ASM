@@ -4,16 +4,16 @@
 - cond(XᵀX) mean: 6.267e+15
 - rank(X) per fold: [25, 25, 25, 25, 25]
 
-## α*_A (CV) / α*_B (GCV) per channel
+## α* (CV) per channel
 
-- **strain**: α*_A = 1.000e+02, α*_B (GCV) = 4.642e+00
-- **Pauli**: α*_A = 1.468e+00, α*_B (GCV) = 1.468e+00
-- **V_elst**: α*_A = 1.468e+00, α*_B (GCV) = 1.468e+00
-- **oi**: α*_A = 6.813e-01, α*_B (GCV) = 2.154e+00
-- **disp**: α*_A = 4.642e+00, α*_B (GCV) = 4.642e-01
-- **barrier**: α*_A = 1.468e+01, α*_B (GCV) = 6.813e+00
+- **strain**: α* = 1.000e+02
+- **Pauli**: α* = 1.468e+00
+- **V_elst**: α* = 1.468e+00
+- **oi**: α* = 6.813e-01
+- **disp**: α* = 4.642e+00
+- **barrier**: α* = 1.468e+01
 
-## Test NMAE at α ∈ {≈0, 1, α*_A} (mean ± std over 5 folds)
+## Test NMAE at α ∈ {≈0, 1, α*} (mean ± std over 5 folds)
 
 | channel | α ≈ 0 | α = 1 | α = α* |
 |---|---|---|---|

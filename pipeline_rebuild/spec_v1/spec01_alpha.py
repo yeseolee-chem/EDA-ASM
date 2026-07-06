@@ -3,10 +3,10 @@
 Per SPEC_01_ridge_alpha_optimization.md.
 
 Outputs (results/spec01_alpha/):
-  alpha_curves.png       6 panels (5 channels + barrier), NMAE vs α + GCV
+  alpha_curves.png       6 panels (5 channels + barrier), CV NMAE vs α
   ridge_trace.png        coefficient paths per channel
-  alpha_selection.csv    per-fold Test metrics at α ∈ {≈0, 1, α*_A}
-  summary.md             α*_A / α*_B per channel + cond(XᵀX) + rank
+  alpha_selection.csv    per-fold Test metrics at α ∈ {≈0, 1, α*}
+  summary.md             α* per channel + cond(XᵀX) + rank
 """
 from __future__ import annotations
 import json, sys
@@ -35,14 +35,6 @@ def add_int(X): return np.concatenate([X, np.ones((X.shape[0], 1))], axis=1)
 def ridge_fit(X, y, alpha):
     D = X.shape[1]; reg = np.eye(D) * alpha; reg[-1, -1] = 0.0
     return np.linalg.solve(X.T @ X + reg, X.T @ y)
-
-def gcv(X, y, alpha):
-    D = X.shape[1]; reg = np.eye(D) * alpha; reg[-1, -1] = 0.0
-    H = X @ np.linalg.solve(X.T @ X + reg, X.T)
-    n = X.shape[0]; resid = y - H @ y
-    num = float(np.mean(resid ** 2))
-    den = (1.0 - float(np.trace(H) / n)) ** 2
-    return num / den if den > 0 else np.nan
 
 def nmae(yt, yp):
     denom = float(np.mean(np.abs(yt - yt.mean())))
@@ -78,7 +70,6 @@ def main():
     alphas = np.logspace(-6, 4, 61)
     all_ch = CHANNELS + ["barrier"]
     curves_cv = {c: [] for c in all_ch}
-    curves_gcv = {c: [] for c in all_ch}
     cond_ls, rank_ls, metrics = [], [], []
 
     for f in range(5):
@@ -94,7 +85,6 @@ def main():
         for cidx, c in enumerate(CHANNELS):
             y_tr = Y[tr, cidx]; y_te = Y[te, cidx]
             curves_cv[c].append(kfold_cv(D[tr], y_tr, alphas))
-            curves_gcv[c].append(np.array([gcv(Xtri, y_tr, a) for a in alphas]))
             for lbl, a in [("alpha_0", 1e-6), ("alpha_1", 1.0)]:
                 W = ridge_fit(Xtri, y_tr, a); yp = Xtei @ W
                 metrics.append({"fold": f, "channel": c, "alpha_label": lbl, "alpha": a,
@@ -109,7 +99,6 @@ def main():
         # barrier
         y_tr_b = Y[tr].sum(axis=1); y_te_b = Y[te].sum(axis=1)
         curves_cv["barrier"].append(kfold_cv(D[tr], y_tr_b, alphas))
-        curves_gcv["barrier"].append(np.array([gcv(Xtri, y_tr_b, a) for a in alphas]))
         for lbl, a in [("alpha_0", 1e-6), ("alpha_1", 1.0)]:
             W = ridge_fit(Xtri, y_tr_b, a); yp = Xtei @ W
             metrics.append({"fold": f, "channel": "barrier", "alpha_label": lbl, "alpha": a,
@@ -126,14 +115,12 @@ def main():
     fig, axes = plt.subplots(2, 3, figsize=(13.5, 8), constrained_layout=True)
     for k, c in enumerate(all_ch):
         ax = axes[k // 3, k % 3]
-        cvm = np.mean(curves_cv[c], axis=0); gcvm = np.mean(curves_gcv[c], axis=0)
-        gcvn = gcvm / np.nanmin(gcvm) * np.nanmin(cvm)
-        a_A = alphas[np.argmin(cvm)]; a_B = alphas[np.nanargmin(gcvm)]
-        ax.semilogx(alphas, cvm, color=NAVY, lw=1.6, label="k-fold CV")
-        ax.semilogx(alphas, gcvn, color="#c25a5a", lw=1.2, ls="--", label="GCV (rescaled)")
+        cvm = np.mean(curves_cv[c], axis=0)
+        a_star = alphas[np.argmin(cvm)]
+        ax.semilogx(alphas, cvm, color=NAVY, lw=1.6, label="CV NMAE")
         ax.axvline(1.0, color="#999", lw=0.7, ls=":")
-        ax.axvline(a_A, color=NAVY, lw=0.7); ax.axvline(a_B, color="#c25a5a", lw=0.7)
-        ax.set_title(f"{c}   α*_A={a_A:.1e}  α*_B={a_B:.1e}", fontsize=10)
+        ax.axvline(a_star, color=NAVY, lw=0.7, label=f"α* = {a_star:.1e}")
+        ax.set_title(f"{c}   α* = {a_star:.1e}", fontsize=10)
         ax.set_xlabel("α"); ax.set_ylabel("NMAE"); ax.grid(alpha=0.3)
         if k == 0: ax.legend(fontsize=8)
     fig.savefig(OUT / "alpha_curves.png", dpi=150); plt.close(fig)
@@ -156,12 +143,11 @@ def main():
              "", f"- descriptor width: **24** (asserted)",
              f"- cond(XᵀX) mean: {np.mean(cond_ls):.3e}",
              f"- rank(X) per fold: {rank_ls}", "",
-             "## α*_A (CV) / α*_B (GCV) per channel", ""]
+             "## α* (CV) per channel", ""]
     for c in all_ch:
-        cvm = np.mean(curves_cv[c], axis=0); gcvm = np.mean(curves_gcv[c], axis=0)
-        lines.append(f"- **{c}**: α*_A = {float(alphas[np.argmin(cvm)]):.3e}, "
-                     f"α*_B (GCV) = {float(alphas[np.nanargmin(gcvm)]):.3e}")
-    lines += ["", "## Test NMAE at α ∈ {≈0, 1, α*_A} (mean ± std over 5 folds)",
+        cvm = np.mean(curves_cv[c], axis=0)
+        lines.append(f"- **{c}**: α* = {float(alphas[np.argmin(cvm)]):.3e}")
+    lines += ["", "## Test NMAE at α ∈ {≈0, 1, α*} (mean ± std over 5 folds)",
               "", "| channel | α ≈ 0 | α = 1 | α = α* |", "|---|---|---|---|"]
     for c in all_ch:
         r0 = sm[(sm.channel == c) & (sm.alpha_label == "alpha_0")].iloc[0]

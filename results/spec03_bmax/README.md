@@ -1,8 +1,20 @@
-# SPEC_03 — physics-only baseline maximization (m3, 24-d)
+# SPEC_03 — physics-only baseline maximization (m3, 24-d, 787-rxn cohort)
 
-Per `SPEC_03_b_only_maximization.md`. Benchmarks classical predictors
-on the 24-d m3 descriptor matrix and compares the best classical against
-the full neural m3 (M_bδ).
+Per `SPEC_03_b_only_maximization.md`. Benchmarks **four** classical
+predictors on the 24-d m3 descriptor matrix and compares the best
+classical against the full neural m3 (M_bδ).
+
+## Method set
+
+Reduced (per user directive) to a single boosting model + three linear
+regularisers:
+
+| id | model | tuned hyperparameters | CV |
+|---|---|---|---|
+| `ridge` | Ridge (linear)     | α = 1 (fixed)                       | — |
+| `lasso` | Lasso (linear)     | λ                                  | 5-fold |
+| `enet`  | ElasticNet         | λ + l1_ratio ∈ {.1,.3,.5,.7,.9}     | 5-fold |
+| `xgb`   | XGBoostRegressor   | n_estimators, max_depth, learning_rate, subsample, colsample_bytree | 5-fold GridSearch |
 
 ## Reproduce
 
@@ -10,30 +22,72 @@ the full neural m3 (M_bδ).
 sbatch results/spec03_bmax/code/spec03.sh
 ```
 
-Uses the same bundle + fold splits as SPEC_01/02/04:
+The sbatch script installs `xgboost` (via `pip install --user`) on
+first run if the reactot env doesn't already have it. Everything else
+comes from the standard reactot conda env.
+
+Inputs (identical to SPEC_01/02/04):
 - Bundle: `/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/bundles_v1/features_v6_delta_m3.pt`
-- Splits: `pipeline_rebuild/spec_v1/artefacts/subsamples_v1/trackB_no_ood/`
-- Seed = 42 for all stochastic tuners
-- 5-fold CV grid tuning for lasso, enet, KRR, GBM, RF (ridge fixed α=1)
+- Fold splits: `pipeline_rebuild/spec_v1/artefacts/subsamples_v1/trackB_no_ood/`
+- Seeds: 42 for all stochastic components
 
 ## Contents
 
-| file | description |
-|---|---|
-| `code/spec03_bmax.py` | benchmark + comparison script |
-| `code/spec03.sh` | SLURM submitter (cpu1/cpu2, 48h, 8 cpus) |
-| `baseline_leaderboard.csv` | method × channel × {NMAE,RMSE,R²,slope} per fold |
-| `barrier_routes.csv` | Σ-of-channels vs direct barrier per fold + method |
-| `baseline_bars.png` | NMAE per channel, all 6 methods |
-| `best_vs_neural.png` | best classical vs M_bδ (m3), Δ annotated |
-| `summary.md` | best-method-per-channel + verdict |
+```
+results/spec03_bmax/
+├── code/
+│   ├── spec03_bmax.py
+│   └── spec03.sh
+├── baseline_leaderboard.csv  method × channel × {NMAE,RMSE,R²,slope} per fold
+├── barrier_routes.csv        Σ-of-channels vs direct barrier per fold + method
+├── baseline_bars.png         NMAE per channel, 4 methods side-by-side
+├── best_vs_neural.png        best classical vs M_bδ, Δ (pp) annotated
+├── summary.md                headline table
+└── weights/                  <— fitted models, joblib-serialised
+    ├── scaler_fold{0..4}.joblib   per-fold StandardScaler
+    ├── ridge/fold{0..4}/{strain,Pauli,V_elst,oi,disp,barrier_direct}.joblib
+    ├── lasso/fold{0..4}/…same layout
+    ├── enet/fold{0..4}/…same layout
+    └── xgb/fold{0..4}/…same layout
+```
 
-## "Weights"
+## Reload a fitted model
 
-All tuned hyperparameters are recorded in `baseline_leaderboard.csv`
-(implicitly via the metrics — the script logs the exact grid). Fitted
-sklearn model objects are **not** serialised, because the script's
-deterministic seed + tuned hyperparameters + tuning grid + standardised
-inputs reproduce the exact fitted models on rerun. If explicit
-persistence is required, augment `spec03_bmax.py:main` with a
-`joblib.dump(model, ...)` inside the fit loop.
+```python
+import joblib, torch, numpy as np, json
+from pathlib import Path
+
+REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
+bundle = torch.load(str(REPO / "pipeline_rebuild/spec_v1/artefacts/bundles/features_v6_delta_m3.pt"),
+                    map_location="cpu", weights_only=False)
+D = bundle["descriptors"].numpy()
+Y = bundle["labels"].numpy()
+rids = {r: i for i, r in enumerate(bundle["reaction_ids"])}
+
+fold = 0
+te = np.array([rids[r] for r in json.load(
+    open(REPO / f"pipeline_rebuild/spec_v1/artefacts/subsamples_v1/trackB_no_ood/fold{fold}/test_rids.json")
+) if r in rids])
+
+sc = joblib.load(REPO / f"results/spec03_bmax/weights/scaler_fold{fold}.joblib")
+model = joblib.load(REPO / f"results/spec03_bmax/weights/xgb/fold{fold}/strain.joblib")
+
+Xte = sc.transform(D[te])
+y_pred_strain = model.predict(Xte)
+```
+
+The scaler + model tuple is sufficient to reproduce every number in
+`baseline_leaderboard.csv` byte-for-byte.
+
+## Headline (summary.md)
+
+XGBoost wins on every channel and the summed barrier route:
+
+| channel | best | best NMAE | M_bδ NMAE | Δ (pp) |
+|---|---|---|---|---|
+| strain | xgb | 0.759 | 0.798 | −3.9 |
+| Pauli  | xgb | 0.654 | 0.755 | −10.0 |
+| V_elst | xgb | 0.686 | 0.765 | −7.9 |
+| oi     | xgb | 0.676 | 0.797 | −12.1 |
+| disp   | xgb | 0.249 | 0.286 | −3.7 |
+| barrier| xgb | (see summary.md) |

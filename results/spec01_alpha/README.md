@@ -25,10 +25,10 @@ Both scripts point at the same inputs:
 |---|---|
 | `code/spec01_alpha.py` | analysis script |
 | `code/spec01.sh` | SLURM submitter (cpu1/cpu2, 48h) |
-| `alpha_curves.png` | 6-panel k-fold CV + GCV curves |
+| `alpha_curves.png` | 6-panel CV NMAE curves + α* marker |
 | `ridge_trace.png` | β̂(α) coefficient paths per channel |
-| `alpha_selection.csv` | test NMAE/RMSE/R²/slope at α ∈ {≈0, 1, α*_A} |
-| `summary.md` | α*_A (CV) and α*_B (GCV) per channel + rank/cond |
+| `alpha_selection.csv` | test NMAE/RMSE/R²/slope at α ∈ {≈0, 1, α*} |
+| `summary.md` | α* (CV) per channel + rank/cond |
 
 ## "Weights"
 
