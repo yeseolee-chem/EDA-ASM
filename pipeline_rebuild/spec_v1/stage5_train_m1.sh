@@ -4,7 +4,7 @@
 
 #SBATCH --job-name=sv1_m1
 #SBATCH --array=0-4%3
-#SBATCH --partition=gpu3
+#SBATCH --partition=gpu1,gpu3,gpu6
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=20G
