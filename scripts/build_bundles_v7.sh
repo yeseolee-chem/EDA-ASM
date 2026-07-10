@@ -13,4 +13,7 @@ set -euo pipefail
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
 cd /gpfs/home1/yeseo1ee/projects/eda-asm-prediction
+# Merge stage3_v7 shards into descriptors_v7.parquet (idempotent).
+python scripts/stage3_v7_merge.py
+# Build bundles from descriptors_v7 + labels_v7 + MACE features.
 python scripts/build_bundles_v7.py

@@ -19,7 +19,7 @@ REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
 sys.path.insert(0, str(REPO / "src"))
 
 FEAT_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/mace_off23_medium")
-DESC_PQ = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/descriptors_v1.parquet")
+DESC_PQ = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/descriptors_v7.parquet")
 LABELS_V7 = REPO / "labels/orca/orca_eda_labels_v7.parquet"
 BUNDLE_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/bundles_v7")
 SPLIT_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/subsamples_v7/trackB_no_ood")
@@ -77,23 +77,18 @@ def main():
 
     # Build per-model bundles
     def build(desc_cols, tag):
-        # Get descriptor rows in same order
         X = desc.loc[rids, desc_cols].to_numpy(dtype=np.float32)
-        bundle = dict(
-            reaction_id=list(rids),
-            family=list(families),
-            desc=torch.as_tensor(X),
-            y=torch.as_tensor(y),
-            feat_R=feats_R,
-            feat_TS=feats_TS,
-            feat_P=feats_P,
-            feature_dim=256,
-            desc_cols=desc_cols,
-            label_cols=LABEL_COLS,
-        )
+        bundle = {
+            "reaction_ids": list(rids),
+            "R_features":  feats_R,
+            "TS_features": feats_TS,
+            "P_features":  feats_P,
+            "labels":      torch.as_tensor(y),
+            "descriptors": torch.as_tensor(X),
+            "feature_dim": 256,
+        }
         out = BUNDLE_DIR / f"features_v7_delta_{tag}.pt"
         torch.save(bundle, out)
-        # Compatibility: also write ".families.json" that some runners load.
         fam_json = BUNDLE_DIR / f"features_v7_delta_{tag}.families.json"
         fam_json.write_text(json.dumps(dict(zip(rids.tolist(), families.tolist()))))
         print(f"  wrote {out.name}  ({len(rids)} rxns, desc={X.shape[1]})")
