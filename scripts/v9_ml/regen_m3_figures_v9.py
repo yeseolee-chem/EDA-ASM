@@ -25,9 +25,9 @@ import numpy as np
 import pandas as pd
 
 REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
-CELL_ROOT = REPO / "m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m3_delta"
-FIG = REPO / "m3/figures"
-RES = REPO / "m3/results"
+CELL_ROOT = REPO / "models/m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m3_delta"
+FIG = REPO / "models/m3/figures"
+RES = REPO / "models/m3/results"
 FIG.mkdir(parents=True, exist_ok=True)
 RES.mkdir(parents=True, exist_ok=True)
 
@@ -175,8 +175,8 @@ Delta-learner over MACE-OFF23_medium features with a 24-d physics baseline
 `scripts/v9_ml/regen_m3_figures_v9.py` (submitted via `regen_m3_figures_v9.sh`).
 Idempotent: overwrites existing outputs.
 """
-    (REPO / "m3/README.md").write_text(body)
-    print(f"[md]  {REPO / 'm3/README.md'}")
+    (REPO / "models/m3/README.md").write_text(body)
+    print(f"[md]  {REPO / 'models/m3/README.md'}")
 
 
 def main():

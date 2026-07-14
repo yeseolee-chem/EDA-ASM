@@ -138,7 +138,7 @@ METHODS = {
 
 def load_neural_m3():
     """Pull m3 v9 test-pred and y_true across all completed member*.json."""
-    root = REPO / "m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m1_delta"
+    root = REPO / "models/m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m3_delta"
     if not root.exists(): return None
     per_ch = {c: {"yt": [], "yp": []} for c in CHANNELS}
     barrier = {"yt": [], "yp": []}

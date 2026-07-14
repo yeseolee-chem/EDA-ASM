@@ -37,8 +37,9 @@ Python import name: `eda_asm`.
 ```
 labels/                       789-reaction ADF + ORCA EDA-ASM labels + seed selection
 V1/                           Claisen 15-substrate ASR-EDA (spec + runs + Hammett analysis)
-m1/  m2/  m3/                 Δ-learner code + frozen results per baseline
-comparison/                   cross-model figures + REPORT.md
+models/                       parent for delta-learner deliverables
+  m1/  m2/  m3/               Δ-learner code + frozen cells + per-model figures/results per baseline
+  comparison/                 cross-model aggregates (current: comparison/v9/)
 src/eda_asm/                  canonical shared package
   asr_v1/                     model / backbone / training / baseline_physics
   datasets/                   dipolar_cycloaddition, qmrxn20 loaders
@@ -131,8 +132,8 @@ Everything under `pipeline_rebuild/spec_v1/`. All sbatch scripts use
 | 2 | `stage2_mace.sh` | MACE-OFF23_medium features per (R/TS/P) per reaction | `mace_off23_medium/{rid}.pt` |
 | 3 | `stage3_array.sh` (8-way shards) | fragment partition + GFN2-xTB descriptors d1..d24 | `descriptors_v1.parquet` |
 | 4 | `stage4.sh` | assemble m1/m2/m3 bundles + 5-fold stratified splits | `bundles_v1/features_v6_delta_{m1,m2,m3}.pt`, `subsamples_v1/trackB_no_ood/fold*/…` |
-| 5 | `stage5_train_{m1,m2,m3}.sh` | 5×5 CV arrays on gpu3/gpu4/gpu5 (%3 each = 9 concurrent) | `m{1,2,3}/code/trackB_lowlr_no_ood_*/m1_delta/fold*/member*.json` |
-| 6 | `stage6_aggregate.py` | 3-way NMAE / RMSE bar + parity grid + REPORT.md | `comparison/spec_v1/{figures,results,REPORT.md}` |
+| 5 | `stage5_train_{m1,m2,m3}.sh` | 5×5 CV arrays on gpu3/gpu4/gpu5 (%3 each = 9 concurrent) | `models/m{1,2,3}/code/trackB_lowlr_no_ood_*/m{1,2,3}_delta/fold*/member*.json` |
+| 6 | `stage6_aggregate.py` | 3-way NMAE / RMSE bar + parity grid + REPORT.md | `models/comparison/spec_v1/{figures,results,REPORT.md}` |
 
 Idempotency contract:
 - Stage 2/3 shards check `_progress.jsonl` / existing rows before recompute.

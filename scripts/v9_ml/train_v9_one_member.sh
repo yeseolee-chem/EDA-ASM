@@ -27,14 +27,14 @@ esac
 
 BROOT=/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/bundles_v9
 SROOT=/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/subsamples_v9
-mkdir -p "$MK/code/bundles" outputs/asr_v1/phase3/subsamples
-ln -sf "$BROOT/features_v6_delta_${MK}.pt" "$MK/code/bundles/features_v6_delta_${BASELINE}.pt"
-ln -sf "$BROOT/features_v6_delta_${MK}.families.json" "$MK/code/bundles/features_v6_delta_${BASELINE}.families.json"
+mkdir -p "models/$MK/code/bundles" outputs/asr_v1/phase3/subsamples
+ln -sf "$BROOT/features_v6_delta_${MK}.pt" "models/$MK/code/bundles/features_v6_delta_${BASELINE}.pt"
+ln -sf "$BROOT/features_v6_delta_${MK}.families.json" "models/$MK/code/bundles/features_v6_delta_${BASELINE}.families.json"
 ln -sfn "$SROOT" outputs/asr_v1/phase3/subsamples/v9_all
 export BASELINE SUBSAMPLES_TAG=v9_all OUT_TAG=lowlr_v9 EPOCHS_MAX=100000 PATIENCE=10000 LR_LOW=1e-5 SIZE_FULL=0
 
-OUT="$MK/code/trackB_${OUT_TAG}_${BASELINE}/m1_delta/fold${FOLD}/member${MEMBER}.json"
+OUT="models/$MK/code/trackB_${OUT_TAG}_${BASELINE}/m1_delta/fold${FOLD}/member${MEMBER}.json"
 if [ -f "$OUT" ]; then echo "SKIP (already done)"; exit 0; fi
 
 echo "[$(date +%H:%M:%S)] START $MK fold=$FOLD member=$MEMBER on $(hostname -s)"
-python -u "$MK/code/runner_lowlr_trackB_m1delta.py" --fold "$FOLD" --member "$MEMBER"
+python -u "models/$MK/code/runner_lowlr_trackB_m1delta.py" --fold "$FOLD" --member "$MEMBER"

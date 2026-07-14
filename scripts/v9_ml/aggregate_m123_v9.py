@@ -25,16 +25,16 @@ import numpy as np
 import pandas as pd
 
 REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
-OUT = REPO / "comparison" / "v9"
+OUT = REPO / "models" / "comparison" / "v9"
 FIG = OUT / "figures"
 RES = OUT / "results"
 FIG.mkdir(parents=True, exist_ok=True)
 RES.mkdir(parents=True, exist_ok=True)
 
 MODELS = [
-    ("m1", "m1/code/trackB_lowlr_v9_geom6/m1_delta",              "#1f2b6b"),
-    ("m2", "m2/code/trackB_lowlr_v9_xtb_geom6/m2_delta",          "#227b8f"),
-    ("m3", "m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m3_delta",  "#c26f6b"),
+    ("m1", "models/m1/code/trackB_lowlr_v9_geom6/m1_delta",              "#1f2b6b"),
+    ("m2", "models/m2/code/trackB_lowlr_v9_xtb_geom6/m2_delta",          "#227b8f"),
+    ("m3", "models/m3/code/trackB_lowlr_v9_xtb_geom6_plus_v2/m3_delta",  "#c26f6b"),
 ]
 CHANNELS = ["strain", "Pauli", "Velst", "oi", "disp"]
 CHANNELS_BAR = CHANNELS + ["barrier"]
