@@ -216,7 +216,6 @@ def main():
         ax.set_ylabel("CV NMAE")
         ax.legend(fontsize=7); ax.grid(alpha=0.3)
         core_by_ch[ch] = fs_order[ch][:elbow]
-    fig.suptitle("SPEC_04 - XGB forward-selection saturation (m3 v9, fold-0 train)", y=1.02)
     fig.tight_layout()
     fig.savefig(OUT_FIG / "saturation_curves.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

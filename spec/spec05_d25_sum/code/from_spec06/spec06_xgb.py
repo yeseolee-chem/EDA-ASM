@@ -193,8 +193,6 @@ def main():
     ax.axhline(1.0, color="gray", ls="--", lw=0.8, label="mean-predictor")
     ax.set_xticks(x); ax.set_xticklabels(channels_plot)
     ax.set_ylabel("NMAE (5-fold pooled OOF)")
-    ax.set_title("SPEC_06 - Channel-matched proxies d26 (elst) / d27 (Pauli) / d28 (oi)\n"
-                 "on m3 v9 XGB per-channel")
     ax.legend(fontsize=8, loc="upper right", ncol=2); ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(OUT_FIG / "channel_proxy_bars.png", dpi=150, bbox_inches="tight")
@@ -211,7 +209,6 @@ def main():
     ax.axhline(0, color="black", lw=0.5)
     ax.set_xticks(x); ax.set_xticklabels(channels_plot)
     ax.set_ylabel("delta NMAE vs base_24d (negative = better)")
-    ax.set_title("SPEC_06 - Improvement over base_24d per channel")
     ax.legend(fontsize=8, ncol=2); ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(OUT_FIG / "channel_proxy_deltas.png", dpi=150, bbox_inches="tight")

@@ -84,7 +84,6 @@ def bar_plot(per_cell_df, metric, ylabel, title, path):
     ax.set_xticks(x)
     ax.set_xticklabels(CHANNELS_BAR)
     ax.set_ylabel(ylabel)
-    ax.set_title(title)
     ax.grid(alpha=0.25, axis="y")
     fig.tight_layout()
     fig.savefig(path, dpi=160)
@@ -128,8 +127,6 @@ def parity_grid(cells, path):
             ax.set_ylabel("y_pred", fontsize=9)
         ax.set_xlabel("y_true (kcal/mol)", fontsize=8)
         ax.grid(alpha=0.25, lw=0.4)
-    fig.suptitle(f"m3 (v9, n={N}) - parity (pooled member-0 across 5 folds)",
-                 y=1.02, fontsize=12)
     fig.tight_layout()
     fig.savefig(path, dpi=160, bbox_inches="tight")
     plt.close(fig)

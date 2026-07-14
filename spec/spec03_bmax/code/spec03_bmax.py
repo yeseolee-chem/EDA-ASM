@@ -243,18 +243,10 @@ def main():
         vals = [lb[(lb.model == m_) & (lb.channel == ch)].NMAE.iloc[0] for ch in channels_plot]
         ax.bar(x + (i - len(methods_plot) / 2) * width, vals, width, label=m_,
                edgecolor="white", lw=0.4)
-    if neu is not None:
-        vals = []
-        for ch in channels_plot:
-            k = "barrier" if ch == "barrier_sum" else ch
-            row_ = neu[neu.channel == k]
-            vals.append(row_.NMAE.iloc[0] if len(row_) else np.nan)
-        ax.plot(x, vals, "k*", ms=12, label="M_bdelta (neural)")
     ax.axhline(1.0, color="gray", ls="--", lw=0.8, label="mean-predictor")
     ax.set_xticks(x); ax.set_xticklabels(channels_plot)
     ax.set_ylabel("NMAE (5-fold CV)")
     ax.legend(fontsize=8, loc="upper right"); ax.grid(alpha=0.3, axis="y")
-    ax.set_title("SPEC_03 - Classical baselines vs neural M_bdelta (m3, 783 rxn v9)")
     fig.tight_layout()
     fig.savefig(OUT_FIG / "baseline_bars.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

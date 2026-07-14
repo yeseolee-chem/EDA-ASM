@@ -113,7 +113,7 @@ def main():
         ax.bar(x + (i-0.5)*width, vals, width, label=var, color=COLORS[var],
                edgecolor="black", linewidth=0.5)
     ax.set_xticks(x); ax.set_xticklabels(CHo)
-    ax.set_ylabel("NMAE"); ax.set_title("SPEC 5 - base 24d vs +d25/26/27/28 (v9, 783 rxns)")
+    ax.set_ylabel("NMAE")
     ax.axhline(1.0, ls="--", c="gray", alpha=0.5, label="mean-predictor")
     ax.legend(); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout(); fig.savefig(OUT_FIG/"compare_2way_NMAE.png", dpi=140)
@@ -124,7 +124,7 @@ def main():
         ax.bar(x + (i-0.5)*width, vals, width, label=var, color=COLORS[var],
                edgecolor="black", linewidth=0.5)
     ax.set_xticks(x); ax.set_xticklabels(CHo)
-    ax.set_ylabel("RMSE (kcal/mol)"); ax.set_title("SPEC 5 - base 24d vs +d25/26/27/28 (v9, 783 rxns)")
+    ax.set_ylabel("RMSE (kcal/mol)")
     ax.legend(); ax.grid(axis="y", alpha=0.3)
     fig.tight_layout(); fig.savefig(OUT_FIG/"compare_2way_RMSE.png", dpi=140)
 
@@ -154,7 +154,6 @@ def main():
             if col == 0: ax.set_ylabel(f"{var}\ny_pred", fontsize=10)
             if row == 1: ax.set_xlabel("y_true (kcal/mol)", fontsize=9)
             ax.grid(alpha=0.3, lw=0.4)
-    fig.suptitle("SPEC 5 - Parity: base 24d vs all extras (v9, 783 rxns, 5-fold pooled OOF)", y=1.005)
     fig.tight_layout(); fig.savefig(OUT_FIG/"compare_2way_parity.png", dpi=130, bbox_inches="tight")
     print(f"wrote figures: compare_2way_NMAE.png, _RMSE.png, _parity.png")
 

@@ -223,7 +223,6 @@ def main():
         ax.set_ylabel("val NMAE")
         if ch == channels_plot[0]:
             ax.legend(fontsize=7, loc="upper left")
-    fig.suptitle("SPEC_01 - Ridge alpha curves (m3, 5-fold on 783 rxn v9)", y=1.02)
     fig.tight_layout()
     fig.savefig(OUT_FIG / "alpha_curves.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -255,7 +254,6 @@ def main():
         ax.grid(alpha=0.3)
         df_alpha.append({"channel": ch, "df_at_a_1": float(eff_df[np.abs(alphas-1).argmin()]),
                          "df_at_a_star": float(eff_df[curves[ch]["cv"].argmin()])})
-    fig.suptitle("SPEC_01 - Ridge trace (m3, fold-0 train)", y=1.02)
     fig.tight_layout()
     fig.savefig(OUT_FIG / "ridge_trace.png", dpi=150, bbox_inches="tight")
     plt.close(fig)

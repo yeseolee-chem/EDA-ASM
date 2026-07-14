@@ -329,9 +329,6 @@ def main():
     ax.axhline(1.0, color="gray", ls="--", lw=0.8, label="mean-predictor")
     ax.set_xticks(x); ax.set_xticklabels(channels_plot)
     ax.set_ylabel("NMAE (5-fold pooled)")
-    ax.set_title(f"SPEC_05 - XGB 2x2 ablation (m3 v9, 783 rxns)\n"
-                 f"M2 tuned (lambda,eps)=({tune_M2['lambda']},{tune_M2['eps']}); "
-                 f"M3 tuned=({tune_M3['lambda']},{tune_M3['eps']})")
     ax.legend(fontsize=9, loc="upper right"); ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(OUT_FIG / "2x2_nmae.png", dpi=150, bbox_inches="tight")
