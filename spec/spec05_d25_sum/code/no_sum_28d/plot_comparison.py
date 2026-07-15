@@ -76,7 +76,6 @@ def bar_figure(df, metric, out_path):
     else:
         ax.set_ylabel(f"{metric} (kcal/mol, fold-0 test)")
     ax.set_xticks(x); ax.set_xticklabels(CHANNELS_PLOT)
-    ax.set_title(f"{metric}: 24-d vs 28-d for XGB & Ridge (fold-0, no sum-consistency)")
     ax.legend(fontsize=8, loc="upper right"); ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
