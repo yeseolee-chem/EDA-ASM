@@ -97,6 +97,45 @@ def bar_plot(per_cell_df, metric, ylabel, path, ymean_hline=None):
     print(f"[fig] {path}")
 
 
+def bar_plot_split_disp(per_cell_df, metric, ylabel, path):
+    """Bar plot with `disp` isolated on its own y-axis panel.
+
+    Layout preserves channel order [strain, Pauli, Velst, oi | disp | barrier]
+    across 3 subplots. `disp` gets its own y-scale because its RMSE is
+    ~40x smaller than Pauli/Velst and would otherwise be invisible.
+    """
+    groups = [
+        ["strain", "Pauli", "Velst", "oi"],
+        ["disp"],
+        ["barrier"],
+    ]
+    fig, axes = plt.subplots(
+        1, 3, figsize=(12, 5.5),
+        gridspec_kw={"width_ratios": [len(g) for g in groups], "wspace": 0.28},
+    )
+    w = 0.27
+    for ax, chans in zip(axes, groups):
+        x = np.arange(len(chans))
+        for i, (name, _, color) in enumerate(MODELS):
+            means, stds = [], []
+            for ch in chans:
+                sub = per_cell_df[(per_cell_df.model == name) & (per_cell_df.channel == ch)]
+                means.append(sub[metric].mean() if len(sub) else np.nan)
+                stds.append(sub[metric].std() if len(sub) else 0)
+            ax.bar(x + (i - 1) * w, means, w, yerr=stds, label=name,
+                   color=color, capsize=3, edgecolor="white", linewidth=0.4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(chans)
+        ax.grid(alpha=0.25, axis="y")
+    axes[0].set_ylabel(ylabel)
+    axes[1].set_title("(independent y-scale)", fontsize=9, color="gray")
+    axes[0].legend(loc="upper right", framealpha=0.9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
+    print(f"[fig] {path}")
+
+
 def parity_grid(all_cells, path):
     fig, axes = plt.subplots(len(MODELS), len(CHANNELS_BAR),
                              figsize=(3.4 * len(CHANNELS_BAR), 3.2 * len(MODELS)))
@@ -229,7 +268,7 @@ def main():
 
     bar_plot(df, "NMAE", "NMAE = MAE / MAD(y_true)",
              FIG / "nmae_bar.png", ymean_hline=1.0)
-    bar_plot(df, "RMSE", "RMSE (kcal/mol)", FIG / "rmse_bar.png")
+    bar_plot_split_disp(df, "RMSE", "RMSE (kcal/mol)", FIG / "rmse_bar.png")
     parity_grid(all_cells, FIG / "parity_grid.png")
     write_readme(summary, counts)
 

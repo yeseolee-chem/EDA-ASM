@@ -206,23 +206,18 @@ def main():
 
     # ============================ Fig 1: alpha curves ==========================
     channels_plot = CHANNELS + ["barrier"]
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
     for ax, ch in zip(axes.flat, channels_plot):
-        cv_c = curves[ch]["cv"]; gcv_c = curves[ch]["gcv"]
-        # Normalize GCV to match NMAE scale visually: rescale to [min, 1] mapping cv range
-        gcv_norm = (gcv_c - gcv_c.min()) / (gcv_c.max() - gcv_c.min() + 1e-12)
-        gcv_norm = gcv_norm * (cv_c.max() - cv_c.min()) + cv_c.min()
+        cv_c = curves[ch]["cv"]
         ax.plot(alphas, cv_c, "-", color=NAVY, lw=1.6, label="5-fold CV NMAE")
-        ax.plot(alphas, gcv_norm, "--", color="#c05e2b", lw=1.2, label="GCV (rescaled)")
-        a_star = alphas[cv_c.argmin()]
-        ax.axvline(a_star, color="green", lw=0.8, ls=":", label=f"a*_CV={a_star:.2e}")
         ax.axvline(1.0, color="gray", lw=0.6, ls=":", label="a=1")
         ax.set_xscale("log")
         ax.set_title(ch); ax.grid(alpha=0.3)
         ax.set_xlabel("alpha (log)")
         ax.set_ylabel("val NMAE")
+        ax.tick_params(axis="x", labelbottom=True)
         if ch == channels_plot[0]:
-            ax.legend(fontsize=7, loc="upper left")
+            ax.legend(fontsize=8, loc="upper left")
     fig.tight_layout()
     fig.savefig(OUT_FIG / "alpha_curves.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
