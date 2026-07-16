@@ -74,76 +74,48 @@ baseline_cells = load_cells(str(grid_dir / best_tag / "fold0/member*.json"))
 best_alpha = float(best_tag[1:].replace("p", "."))
 
 # ---------------------------------------------------------------------------
-# Figure 1 — per-channel MAE (each channel in its own subplot / y-axis)
+# Figure 1 — per-channel MAE bar (3 modes)
 variants = [
     (f"ŷ = b  (α* = {best_alpha:g})", baseline_cells, "#1f77b4"),
     ("ŷ = δ",                          delta_cells,     "#d62728"),
     ("ŷ = b + δ",                      full_cells,      "#2ca02c"),
 ]
 labels = COMPS + ["barrier"]
+x = np.arange(len(labels))
+w = 0.26
 
-# Precompute per-variant heights + errs to draw one bar-triplet per channel.
-per_variant = []
-for name, cells, color in variants:
+fig, ax = plt.subplots(figsize=(10, 5.2))
+for i, (name, cells, color) in enumerate(variants):
     mu_c, sd_c, mu_b, sd_b, _, _ = channel_stats(cells)
-    per_variant.append(dict(
-        name=name, color=color,
-        heights=np.concatenate([mu_c, [mu_b]]),
-        errs=np.concatenate([sd_c, [sd_b]]),
-    ))
-
-n_panels = len(labels)  # 6
-ncols = 3
-nrows = 2
-fig, axes = plt.subplots(nrows, ncols, figsize=(3.3 * ncols, 3.2 * nrows))
-axes_flat = axes.flatten()
-
-bar_x = np.arange(len(variants))
-bar_w = 0.7
-for ci, chan in enumerate(labels):
-    ax = axes_flat[ci]
-    heights = [pv["heights"][ci] for pv in per_variant]
-    errs = [pv["errs"][ci] for pv in per_variant]
-    colors = [pv["color"] for pv in per_variant]
-    ax.bar(bar_x, heights, bar_w, yerr=errs, capsize=3,
-           color=colors, edgecolor="black", linewidth=0.4)
-    ax.set_xticks(bar_x)
-    ax.set_xticklabels(["b", "δ", "b+δ"], fontsize=9)
-    ax.set_title(chan, fontsize=10)
-    ax.set_ylabel("MAE (kcal/mol)", fontsize=9)
-    ax.grid(axis="y", alpha=0.3, ls=":")
-    ax.tick_params(labelsize=8)
-    # give each panel some headroom so error bars don't touch the top
-    top = max(h + e for h, e in zip(heights, errs))
-    ax.set_ylim(0, top * 1.20)
-
-# single legend at figure level
-handles = [plt.Rectangle((0, 0), 1, 1, color=pv["color"], ec="black", lw=0.4)
-           for pv in per_variant]
-names = [pv["name"] for pv in per_variant]
-fig.legend(handles, names, loc="upper center", ncol=len(variants),
-           bbox_to_anchor=(0.5, 1.02), frameon=False, fontsize=10)
-fig.tight_layout(rect=(0, 0, 1, 0.96))
+    heights = np.concatenate([mu_c, [mu_b]])
+    errs = np.concatenate([sd_c, [sd_b]])
+    ax.bar(x + (i - 1) * w, heights, w, yerr=errs, capsize=3,
+           label=name, color=color, edgecolor="black", linewidth=0.4)
+ax.set_xticks(x)
+ax.set_xticklabels(labels)
+ax.set_ylabel("test MAE (kcal/mol)")
+ax.axvline(len(COMPS) - 0.5, color="grey", ls="--", lw=0.8, alpha=0.6)
+ax.legend()
+ax.grid(axis="y", alpha=0.3, ls=":")
+fig.tight_layout()
 p1 = FIG_DIR / "mae_bar_ablation.png"
-fig.savefig(p1, dpi=150, bbox_inches="tight")
+fig.savefig(p1, dpi=150)
 plt.close(fig)
 
 # ---------------------------------------------------------------------------
-# Figure 2 — per-channel NMAE (single shared y-axis; already normalized)
+# Figure 2 — per-channel NMAE (MAE / MAD(y_true)) bar
 mad_ref = label_mad_from_full(full_cells)   # per-channel + barrier
 mad_ref = np.where(mad_ref < 1e-9, 1.0, mad_ref)
 
-x_full = np.arange(len(labels))
-w = 0.26
 fig, ax = plt.subplots(figsize=(10, 5.2))
 for i, (name, cells, color) in enumerate(variants):
     mu_c, sd_c, mu_b, sd_b, _, _ = channel_stats(cells)
     heights = np.concatenate([mu_c, [mu_b]]) / mad_ref
     errs = np.concatenate([sd_c, [sd_b]]) / mad_ref
-    ax.bar(x_full + (i - 1) * w, heights, w, yerr=errs, capsize=3,
+    ax.bar(x + (i - 1) * w, heights, w, yerr=errs, capsize=3,
            label=name, color=color, edgecolor="black", linewidth=0.4)
 ax.axhline(1.0, color="grey", ls="--", lw=0.8, alpha=0.6, label="mean-predictor")
-ax.set_xticks(x_full)
+ax.set_xticks(x)
 ax.set_xticklabels(labels)
 ax.set_ylabel("NMAE = MAE / MeanAD(y_true)")
 ax.axvline(len(COMPS) - 0.5, color="grey", ls="--", lw=0.8, alpha=0.6)
