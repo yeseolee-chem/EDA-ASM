@@ -76,9 +76,9 @@ best_alpha = float(best_tag[1:].replace("p", "."))
 # ---------------------------------------------------------------------------
 # Figure 1 — per-channel MAE bar (3 modes)
 variants = [
-    ("baseline_only (α*)", baseline_cells, "#1f77b4"),
-    ("delta_only",         delta_cells,     "#d62728"),
-    ("full (b + δ)",       full_cells,      "#2ca02c"),
+    (f"ŷ = b  (α* = {best_alpha:g})", baseline_cells, "#1f77b4"),
+    ("ŷ = δ",                          delta_cells,     "#d62728"),
+    ("ŷ = b + δ",                      full_cells,      "#2ca02c"),
 ]
 labels = COMPS + ["barrier"]
 x = np.arange(len(labels))
@@ -178,9 +178,9 @@ plt.close(fig)
 # ---------------------------------------------------------------------------
 # Figure 4 — parity grid (3 rows: baseline_only, delta_only, full)
 rows = [
-    ("baseline_only (α*)", baseline_cells, "#1f77b4"),
-    ("delta_only",         delta_cells,    "#d62728"),
-    ("full (b + δ)",       full_cells,     "#2ca02c"),
+    (f"ŷ = b  (α* = {best_alpha:g})", baseline_cells, "#1f77b4"),
+    ("ŷ = δ",                          delta_cells,    "#d62728"),
+    ("ŷ = b + δ",                      full_cells,     "#2ca02c"),
 ]
 n_col = len(COMPS) + 1  # 5 channels + barrier
 fig, axes = plt.subplots(len(rows), n_col, figsize=(3.2 * n_col, 3.0 * len(rows)))
