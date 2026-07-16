@@ -29,12 +29,13 @@ def channel_stats(cells: list[dict]) -> tuple[np.ndarray, np.ndarray, float, flo
 
 
 def label_mad_from_full(cells: list[dict]) -> np.ndarray:
-    """Compute MAD(y_true) across pooled test predictions of these cells,
-    so NMAE = MAE / MAD is comparable across variants."""
+    """Mean absolute deviation from the mean of y_true — the MAE of a
+    mean-predictor. Matches the NMAE convention used by SPEC_05 (compute_variant.py)
+    so the dashed line at 1.0 truly is the mean-predictor baseline."""
     yt = np.concatenate([np.array(c["y_true"]) for c in cells], axis=0)
     bt = np.concatenate([np.array(c["barrier_true"]) for c in cells], axis=0)
-    mad_c = np.median(np.abs(yt - np.median(yt, axis=0)), axis=0)
-    mad_bar = float(np.median(np.abs(bt - np.median(bt))))
+    mad_c = np.mean(np.abs(yt - yt.mean(axis=0)), axis=0)
+    mad_bar = float(np.mean(np.abs(bt - bt.mean())))
     return np.concatenate([mad_c, [mad_bar]])
 
 
@@ -116,7 +117,7 @@ for i, (name, cells, color) in enumerate(variants):
 ax.axhline(1.0, color="grey", ls="--", lw=0.8, alpha=0.6, label="mean-predictor")
 ax.set_xticks(x)
 ax.set_xticklabels(labels)
-ax.set_ylabel("NMAE = MAE / MAD(y_true)")
+ax.set_ylabel("NMAE = MAE / MeanAD(y_true)")
 ax.axvline(len(COMPS) - 0.5, color="grey", ls="--", lw=0.8, alpha=0.6)
 ax.legend()
 ax.grid(axis="y", alpha=0.3, ls=":")
