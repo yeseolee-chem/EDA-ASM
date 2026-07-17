@@ -1,20 +1,26 @@
-"""SPEC_06 — pool the 5-fold OOF JSONs → metrics + bootstrap CIs + parity + summary.
+"""SPEC_06 — pool the 25-cell OOF JSONs → 2-arm comparison vs xgb_28d base-only.
 
-Reads:  spec/spec06_2step_xgb28_delta/oof/xgb28_delta/fold*/member*.json
+Two arms only (per user request):
+  - xgb_28d          : per-channel XGB on the 28-d descriptor set (base, no δ)
+                       computed in-place using the same outer_folds.json (5-fold
+                       stratified) so both arms cover the identical 783-rxn OOF.
+  - xgb28_delta      : this spec — b (xgb_28d cross-fit OOF) + δ (MACE-OFF23 CA),
+                       averaged over 5 members per fold.
 
 Writes:
-  results/pooled_oof.parquet
-  results/metrics.csv         per (arm, channel, metric)
-  results/head_to_head.csv    NMAE deltas vs xgb_28d, xgb_24d+δ, ridge+δ,
-                              m3-neural baselines (from spec02, spec03, spec05)
-  results/leaderboard.csv     wide NMAE table across all pooled OOFs
-  results/summary.md          human-readable summary
-  figures/nmae_bars.png       per-channel + barrier NMAE bars with 95% CI
-  figures/rmse_bars.png       per-channel + barrier RMSE bars with 95% CI
-  figures/parity_grid.png     per-channel + barrier scatter
+  results/pooled_oof.parquet     (xgb28_delta pooled OOF, per rxn)
+  results/xgb_28d_oof.parquet    (xgb_28d base-only pooled OOF, per rxn)
+  results/metrics.csv            per (arm, channel, metric) with 95% CI
+  results/head_to_head.csv       NMAE(xgb28_delta) − NMAE(xgb_28d)
+  results/leaderboard.csv        wide NMAE table
+  results/summary.md             report
+  figures/nmae_bars.png          per-channel + barrier NMAE bars w/ 95% CI
+  figures/rmse_bars.png          per-channel + barrier RMSE bars w/ 95% CI
+  figures/parity_grid.png        per-channel + barrier scatter (2 rows)
 """
 from __future__ import annotations
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -22,9 +28,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 
 REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
 SPEC = REPO / "spec/spec06_2step_xgb28_delta"
+sys.path.insert(0, str(SPEC / "code"))
+sys.path.insert(0, str(REPO / "spec/spec02_abc_ablation/code"))
+from descriptors28 import build_X28  # noqa: E402
+from baselines import fit_xgb, predict_xgb  # noqa: E402
+
+BUNDLE_PT = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/bundles_v9/features_v6_delta_m3.pt")
+FOLDS_JSON = SPEC / "splits/outer_folds.json"
 OOF_ROOT = SPEC / "oof"
 OUT_RES = SPEC / "results"
 OUT_FIG = SPEC / "figures"
@@ -32,14 +46,8 @@ OUT_RES.mkdir(parents=True, exist_ok=True)
 OUT_FIG.mkdir(parents=True, exist_ok=True)
 
 CHANNELS = ["strain", "Pauli", "elst", "oi", "disp"]
-ARM_COLORS = {
-    "xgb28_delta": "#a83232",
-    "xgb_28d":     "#4b779a",
-    "xgb_24d":     "#7d9db8",
-    "xgb_delta":   "#c05e2b",
-    "ridge_delta": "#1f4e79",
-    "m3_neural":   "#3e8548",
-}
+ARM_COLORS = {"xgb_28d": "#4b779a", "xgb28_delta": "#a83232"}
+ARM_LABELS = {"xgb_28d": "xgb_28d (base)", "xgb28_delta": "xgb28 + δ (this spec)"}
 B_BOOT = 1000
 SEED = 42
 
@@ -64,24 +72,14 @@ def slope(yt, yp):
     return float(np.sum(a * b) / d) if d > 0 else float("nan")
 
 
-def cancellation(yt, yp):
-    err = yp - yt
-    bar_err = np.abs(err.sum(axis=1))
-    abs_sum = np.sum(np.abs(err), axis=1)
-    return float(np.mean(bar_err / np.maximum(abs_sum, 1e-12)))
-
-
 def bootstrap_ci(yt, yp, mad, metric="NMAE", B=B_BOOT, seed=SEED):
     rng = np.random.default_rng(seed)
     n = len(yt); stats = []
     for _ in range(B):
         idx = rng.integers(0, n, size=n)
-        if metric == "NMAE":
-            stats.append(nmae(yt[idx], yp[idx], mad))
-        elif metric == "RMSE":
-            stats.append(rmse(yt[idx], yp[idx]))
-        elif metric == "R2":
-            stats.append(r2(yt[idx], yp[idx]))
+        if metric == "NMAE": stats.append(nmae(yt[idx], yp[idx], mad))
+        elif metric == "RMSE": stats.append(rmse(yt[idx], yp[idx]))
+        elif metric == "R2":   stats.append(r2(yt[idx], yp[idx]))
     stats = np.sort(stats)
     lo, hi = float(stats[int(0.025 * B)]), float(stats[int(0.975 * B) - 1])
     if metric == "NMAE": point = nmae(yt, yp, mad)
@@ -105,6 +103,7 @@ def bootstrap_pairwise(yt, yp1, yp2, mad, B=B_BOOT, seed=SEED):
 # ---------- data loaders ----------
 
 def load_xgb28_delta():
+    """Pool spec06 OOF JSONs across (fold, member); average members per rxn."""
     subdir = OOF_ROOT / "xgb28_delta"
     rows = []
     for f in subdir.glob("fold*/member*.json"):
@@ -126,64 +125,47 @@ def load_xgb28_delta():
     return rids, yt, yp
 
 
-def load_spec02_arm(arm_name):
-    """Load spec02 arm (ridge_delta, xgb_delta) for head-to-head."""
-    subdir = REPO / "spec/spec02_abc_ablation/oof" / arm_name
-    if not subdir.exists():
-        return None
+def compute_xgb28_baseonly_oof():
+    """Compute xgb_28d base-only pooled OOF over the SAME outer_folds.json so
+    both arms are on identical 783-rxn coverage. Emits per-rxn parquet."""
+    b = torch.load(str(BUNDLE_PT), weights_only=False, map_location="cpu")
+    rids = np.asarray(b["reaction_ids"])
+    X24 = b["descriptors"].numpy().astype(np.float64)
+    Y = b["labels"].numpy().astype(np.float64)
+    X28, _ok = build_X28(rids, X24)
+    r2i = {r: i for i, r in enumerate(rids)}
+    folds = json.load(open(FOLDS_JSON))
+
     rows = []
-    for f in subdir.glob("fold*/member*.json"):
-        d = json.load(open(f))
-        for i, r in enumerate(d["reaction_ids"]):
-            row = {"reaction_id": r, "fold": d["fold"], "member": d["member"]}
-            for c in CHANNELS:
-                row[f"y_true_{c}"] = float(d[f"y_true_{c}"][i])
-                row[f"y_pred_{c}"] = float(d[f"y_pred_{c}"][i])
+    for fkey in sorted(folds, key=int):
+        tr = np.array([r2i[r] for r in folds[fkey]["train"]])
+        te = np.array([r2i[r] for r in folds[fkey]["test"]])
+        m = fit_xgb(X28[tr], Y[tr])
+        yp = predict_xgb(m, X28[te])
+        for i_te, idx in enumerate(te):
+            row = {"reaction_id": rids[idx], "fold": int(fkey)}
+            for i_c, c in enumerate(CHANNELS):
+                row[f"y_true_{c}"] = float(Y[idx, i_c])
+                row[f"y_pred_{c}"] = float(yp[i_te, i_c])
             rows.append(row)
-    if not rows:
-        return None
     df = pd.DataFrame(rows)
-    df = df.groupby(["fold", "reaction_id"], as_index=False).mean(numeric_only=True)
-    rids = df["reaction_id"].tolist()
-    yt = df[[f"y_true_{c}" for c in CHANNELS]].to_numpy()
-    yp = df[[f"y_pred_{c}" for c in CHANNELS]].to_numpy()
-    return rids, yt, yp
+    df.to_parquet(OUT_RES / "xgb_28d_oof.parquet", index=False)
+    return (df["reaction_id"].tolist(),
+            df[[f"y_true_{c}" for c in CHANNELS]].to_numpy(),
+            df[[f"y_pred_{c}" for c in CHANNELS]].to_numpy())
 
 
-def load_spec02_arm_A():
-    """spec02 arm A: xgb_direct 24-d (single OOF parquet)."""
-    p = REPO / "spec/spec02_abc_ablation/oof/oof_A.parquet"
-    if not p.exists():
-        return None
-    df = pd.read_parquet(p)
-    rids = df["reaction_id"].tolist()
-    yt = df[[f"y_true_{c}" for c in CHANNELS]].to_numpy()
-    yp = df[[f"y_pred_{c}" for c in CHANNELS]].to_numpy()
-    return rids, yt, yp
-
-
-# ---------- alignment + reporting ----------
-
-def align(reference, others):
-    """reference : (rids, yt, yp)   others : dict[name -> (rids,yt,yp)]
-
-    Return yt_common (from reference) + dict[name -> (yt, yp)] aligned on
-    reference rid ordering. Any 'others' missing a rid is dropped from that
-    arm only.
-    """
+def align_two(reference, other):
+    """Align 'other' arm to 'reference' rid ordering."""
     ref_rids, ref_yt, ref_yp = reference
-    out = {"__reference__": (ref_yt, ref_yp)}
-    for name, arm in others.items():
-        if arm is None:
-            continue
-        rids, yt, yp = arm
-        r2i = {r: i for i, r in enumerate(rids)}
-        idx = np.array([r2i[r] for r in ref_rids if r in r2i])
-        if len(idx) != len(ref_rids):
-            print(f"[align] {name}: only {len(idx)}/{len(ref_rids)} rids match, skipping")
-            continue
-        out[name] = (yt[idx], yp[idx])
-    return ref_yt, out
+    rids, yt, yp = other
+    r2i = {r: i for i, r in enumerate(rids)}
+    idx = np.array([r2i[r] for r in ref_rids if r in r2i])
+    if len(idx) != len(ref_rids):
+        raise RuntimeError(
+            f"align: only {len(idx)}/{len(ref_rids)} rids match — cohort mismatch")
+    return ref_yt, {"xgb28_delta": (ref_yt, ref_yp),
+                    "xgb_28d":     (yt[idx], yp[idx])}
 
 
 def make_metric_rows(arm_name, yt, yp, mad_c, mad_bar):
@@ -203,86 +185,59 @@ def make_metric_rows(arm_name, yt, yp, mad_c, mad_bar):
     rows.append({"arm": arm_name, "channel": "barrier", "metric": "slope",
                  "point": slope(yt.sum(1), yp.sum(1)),
                  "ci_low": np.nan, "ci_high": np.nan})
-    rows.append({"arm": arm_name, "channel": "barrier", "metric": "rho_cancellation",
-                 "point": cancellation(yt, yp), "ci_low": np.nan, "ci_high": np.nan})
     return rows
-
-
-def load_spec05_xgb28_fold0():
-    """The base-only xgb_28d single-fold reference (fold0)."""
-    p = REPO / "spec/spec05_d25_sum/results/no_sum_28d/xgb_28d_fold0.json"
-    if not p.exists():
-        return None
-    d = json.load(open(p))
-    return {
-        "strain": d["channels"]["strain"]["NMAE"],
-        "Pauli":  d["channels"]["Pauli"]["NMAE"],
-        "elst":   d["channels"]["elst"]["NMAE"],
-        "oi":     d["channels"]["oi"]["NMAE"],
-        "disp":   d["channels"]["disp"]["NMAE"],
-        "barrier": d["barrier"]["NMAE"],
-    }
 
 
 def bar_plot(df, metric, ylabel, path, arms_plot):
     channels_plot = CHANNELS + ["barrier"]
-    x = np.arange(len(channels_plot)); w = 0.85 / max(len(arms_plot), 1)
-    fig, ax = plt.subplots(figsize=(12, 5.5))
+    x = np.arange(len(channels_plot)); w = 0.36
+    fig, ax = plt.subplots(figsize=(11, 5))
     for i, arm_name in enumerate(arms_plot):
         pts, los, his = [], [], []
         for ch in channels_plot:
-            row = df[(df.arm == arm_name) & (df.channel == ch) & (df.metric == metric)]
-            if not len(row):
-                pts.append(np.nan); los.append(0); his.append(0); continue
-            row = row.iloc[0]
+            row = df[(df.arm == arm_name) & (df.channel == ch) & (df.metric == metric)].iloc[0]
             pts.append(row.point)
             los.append(max(row.point - row.ci_low, 0))
             his.append(max(row.ci_high - row.point, 0))
-        ax.bar(x + (i - (len(arms_plot) - 1) / 2) * w, pts, w,
-               yerr=[los, his], capsize=3, label=arm_name,
-               color=ARM_COLORS.get(arm_name, "#888"), edgecolor="white", lw=0.4)
+        ax.bar(x + (i - 0.5) * w, pts, w, yerr=[los, his], capsize=4,
+               label=ARM_LABELS[arm_name], color=ARM_COLORS[arm_name],
+               edgecolor="white", lw=0.5)
     if metric == "NMAE":
         ax.axhline(1.0, color="gray", ls="--", lw=0.8, label="mean-predictor")
     ax.set_xticks(x); ax.set_xticklabels(channels_plot)
     ax.set_ylabel(f"{ylabel} (pooled OOF, 95% CI)")
-    ax.legend(fontsize=9, loc="best"); ax.grid(alpha=0.3, axis="y")
+    ax.legend(fontsize=10, loc="best"); ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def parity_grid(aligned, mad_c, mad_bar, path):
-    arms_plot = [n for n in aligned if n != "__reference__"]
-    arms_plot = ["__reference__"] + arms_plot  # keep our arm first
-    # rename __reference__ back to xgb28_delta for the title
-    rename = {"__reference__": "xgb28_delta"}
+    arms_plot = ["xgb_28d", "xgb28_delta"]
     channels_plot = CHANNELS + ["barrier"]
     fig, axes = plt.subplots(len(arms_plot), len(channels_plot),
                              figsize=(3.4 * len(channels_plot), 3.4 * len(arms_plot)))
-    if len(arms_plot) == 1:
-        axes = np.array([axes])
     for r_i, arm_name in enumerate(arms_plot):
         yt, yp = aligned[arm_name]
-        disp_name = rename.get(arm_name, arm_name)
-        colr = ARM_COLORS.get(disp_name, "#888")
+        colr = ARM_COLORS[arm_name]
         for c_i, ch in enumerate(channels_plot):
-            ax = axes[r_i, c_i] if len(arms_plot) > 1 else axes[c_i]
+            ax = axes[r_i, c_i]
             if ch == "barrier":
                 a = yt.sum(1); b = yp.sum(1); mad = mad_bar
             else:
                 i_ = CHANNELS.index(ch); a = yt[:, i_]; b = yp[:, i_]; mad = mad_c[i_]
-            ax.scatter(a, b, s=6, c=colr, alpha=0.55, edgecolor="none")
+            ax.scatter(a, b, s=8, c=colr, alpha=0.6, edgecolor="none")
             lo = float(min(a.min(), b.min())); hi = float(max(a.max(), b.max()))
             ax.plot([lo, hi], [lo, hi], "--", color="gray", lw=0.6)
             ax.text(0.03, 0.97,
-                    f"NMAE={nmae(a, b, mad):.2f}\nR²={r2(a, b):.2f}\nslope={slope(a, b):.2f}",
-                    transform=ax.transAxes, va="top", ha="left", fontsize=7)
+                    f"NMAE={nmae(a, b, mad):.3f}\nR²={r2(a, b):.2f}\nslope={slope(a, b):.2f}",
+                    transform=ax.transAxes, va="top", ha="left", fontsize=8)
             if r_i == 0:
-                ax.set_title(ch, fontsize=10)
+                ax.set_title(ch, fontsize=11)
             if c_i == 0:
-                ax.set_ylabel(f"{disp_name}\ny_pred", fontsize=9)
+                ax.set_ylabel(f"{ARM_LABELS[arm_name]}\ny_pred", fontsize=10)
             if r_i == len(arms_plot) - 1:
-                ax.set_xlabel("y_true", fontsize=8)
+                ax.set_xlabel("y_true", fontsize=9)
     fig.tight_layout()
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -292,59 +247,47 @@ def main():
     ours = load_xgb28_delta()
     if ours is None:
         raise SystemExit("no spec06 OOF JSONs found — nothing to aggregate")
-    ref_rids, yt, yp = ours
-    n_rxn = len(ref_rids)
-    print(f"[spec06] pooled OOF: {n_rxn} rxns", flush=True)
+    print(f"[spec06] pooled OOF: {len(ours[0])} rxns", flush=True)
 
-    others = {
-        "ridge_delta": load_spec02_arm("ridge_delta"),
-        "xgb_delta":   load_spec02_arm("xgb_delta"),
-        "xgb_24d":     load_spec02_arm_A(),
-    }
+    print("[spec06] computing xgb_28d base-only OOF over same folds…", flush=True)
+    base = compute_xgb28_baseonly_oof()
 
-    yt_ref, aligned = align((ref_rids, yt, yp), others)
+    yt_ref, aligned = align_two(ours, base)
     mad_c = np.array([np.mean(np.abs(yt_ref[:, i] - yt_ref[:, i].mean())) for i in range(5)])
     mad_bar = float(np.mean(np.abs(yt_ref.sum(1) - yt_ref.sum(1).mean())))
 
-    # per-arm metric rows
+    # per-arm metrics
     all_rows = []
-    for name, (yt_a, yp_a) in aligned.items():
-        arm_name = "xgb28_delta" if name == "__reference__" else name
+    for arm_name, (yt_a, yp_a) in aligned.items():
         all_rows.extend(make_metric_rows(arm_name, yt_a, yp_a, mad_c, mad_bar))
     df = pd.DataFrame(all_rows)
     df.to_csv(OUT_RES / "metrics.csv", index=False)
 
-    # head-to-head deltas: reference vs each aligned other
+    # head-to-head: xgb28_delta vs xgb_28d
+    yt_delta, yp_delta = aligned["xgb28_delta"]
+    yt_base,  yp_base  = aligned["xgb_28d"]
     delta_rows = []
-    ref_yt, ref_yp = aligned["__reference__"]
-    for name, (yt_a, yp_a) in aligned.items():
-        if name == "__reference__":
-            continue
-        for i, ch in enumerate(CHANNELS):
-            pt, lo, hi = bootstrap_pairwise(ref_yt[:, i], ref_yp[:, i], yp_a[:, i], mad_c[i])
-            delta_rows.append({"delta": f"NMAE(xgb28_delta) - NMAE({name})",
-                               "channel": ch, "point": pt, "ci_low": lo, "ci_high": hi})
-        pt, lo, hi = bootstrap_pairwise(ref_yt.sum(1), ref_yp.sum(1), yp_a.sum(1), mad_bar)
-        delta_rows.append({"delta": f"NMAE(xgb28_delta) - NMAE({name})",
-                           "channel": "barrier", "point": pt, "ci_low": lo, "ci_high": hi})
+    for i, ch in enumerate(CHANNELS):
+        pt, lo, hi = bootstrap_pairwise(yt_delta[:, i], yp_delta[:, i], yp_base[:, i], mad_c[i])
+        delta_rows.append({"delta": "NMAE(xgb28_delta) - NMAE(xgb_28d)",
+                           "channel": ch, "point": pt, "ci_low": lo, "ci_high": hi})
+    pt, lo, hi = bootstrap_pairwise(yt_delta.sum(1), yp_delta.sum(1), yp_base.sum(1), mad_bar)
+    delta_rows.append({"delta": "NMAE(xgb28_delta) - NMAE(xgb_28d)",
+                       "channel": "barrier", "point": pt, "ci_low": lo, "ci_high": hi})
     pd.DataFrame(delta_rows).to_csv(OUT_RES / "head_to_head.csv", index=False)
 
     # leaderboard (wide NMAE)
     lb_rows = []
-    for name in ["xgb28_delta"] + [n for n in aligned if n != "__reference__"]:
+    for name in ["xgb_28d", "xgb28_delta"]:
         row = {"arm": name}
         for ch in CHANNELS + ["barrier"]:
             m = df[(df.arm == name) & (df.channel == ch) & (df.metric == "NMAE")]
             row[ch] = float(m.iloc[0].point) if len(m) else np.nan
         lb_rows.append(row)
-    # append spec05 base-only fold0 reference (not aligned to pooled, but useful anchor)
-    xgb28_ref = load_spec05_xgb28_fold0()
-    if xgb28_ref is not None:
-        lb_rows.append({"arm": "xgb_28d(base_fold0)", **xgb28_ref})
     pd.DataFrame(lb_rows).to_csv(OUT_RES / "leaderboard.csv", index=False)
 
     # plots
-    arms_plot = ["xgb28_delta"] + [n for n in aligned if n != "__reference__"]
+    arms_plot = ["xgb_28d", "xgb28_delta"]
     bar_plot(df, "NMAE", "NMAE", OUT_FIG / "nmae_bars.png", arms_plot)
     bar_plot(df, "RMSE", "RMSE (kcal/mol)", OUT_FIG / "rmse_bars.png", arms_plot)
     parity_grid(aligned, mad_c, mad_bar, OUT_FIG / "parity_grid.png")
@@ -354,61 +297,48 @@ def main():
         r = df[(df.arm == arm) & (df.channel == ch) & (df.metric == met)]
         return r.iloc[0] if len(r) else None
     lines = [
-        "# SPEC_06 — 2-step xgb28 + δ — summary",
+        "# SPEC_06 — 2-arm comparison: xgb_28d (base) vs xgb28 + δ",
         "",
-        f"- Cohort: {n_rxn} rxns (v9 in-distribution m3, family-stratified 5-fold)",
+        f"- Cohort: {len(yt_ref)} rxns (v9 in-distribution m3, family-stratified 5-fold, identical split for both arms)",
         f"- Bootstrap: B={B_BOOT}, seed={SEED}, reaction-level resampling",
         f"- Descriptor set: 28-d = m3 (d1..d24) ⊕ d25 ⊕ d26 ⊕ d27 ⊕ d28 (spec05 no_sum_28d)",
-        f"- Delta model: ModelM1Delta (MACE-OFF23 medium + 4-block CA + AttnPool + MLP)",
-        f"- Fixed hp: LR={1e-5}, WD={1e-3}, EPOCHS_MAX={EPOCHS_MAX_STR}, PATIENCE={PATIENCE_STR}, batch=16",
+        f"- xgb28_delta: 5 members averaged per (fold, rxn); ModelM1Delta (MACE-OFF23 medium + 4-block CA + AttnPool + MLP)",
         "",
         "## Pooled OOF NMAE (95% CI)",
         "",
+        "| channel | xgb_28d (base) | xgb28 + δ | Δ NMAE (δ − base) |",
+        "|---|---|---|---|",
     ]
-    header = "| channel | " + " | ".join(arms_plot) + " |"
-    sep = "|---" * (len(arms_plot) + 1) + "|"
-    lines += [header, sep]
-    for ch in CHANNELS + ["barrier"]:
-        cells = []
-        for arm_name in arms_plot:
-            row = get(arm_name, ch, "NMAE")
-            cells.append("n/a" if row is None
-                         else f"{row.point:.3f} [{row.ci_low:.3f}, {row.ci_high:.3f}]")
-        lines.append(f"| {ch} | " + " | ".join(cells) + " |")
-
-    lines += ["", "## Head-to-head vs other arms (NMAE delta, 95% CI)", ""]
     ht = pd.read_csv(OUT_RES / "head_to_head.csv")
-    for other in [n for n in aligned if n != "__reference__"]:
-        lines.append(f"### xgb28_delta − {other}")
-        lines.append("")
-        lines.append("| channel | Δ NMAE | 95% CI |")
-        lines.append("|---|---|---|")
-        for ch in CHANNELS + ["barrier"]:
-            rr = ht[(ht.delta == f"NMAE(xgb28_delta) - NMAE({other})") & (ht.channel == ch)]
-            if not len(rr):
-                lines.append(f"| {ch} | n/a | n/a |"); continue
-            d = rr.iloc[0]
-            crosses = (d.ci_low < 0) and (d.ci_high > 0)
-            mark = "" if crosses else ("✓ (better)" if d.point < 0 else "✗ (worse)")
-            lines.append(f"| {ch} | {d.point:+.3f} | [{d.ci_low:+.3f}, {d.ci_high:+.3f}] {mark} |")
-        lines.append("")
-
-    if xgb28_ref is not None:
-        lines += ["## Reference: spec05 xgb_28d base-only (fold0)", ""]
-        lines += ["| channel | NMAE (base fold0) |", "|---|---|"]
-        for ch in CHANNELS + ["barrier"]:
-            lines.append(f"| {ch} | {xgb28_ref[ch]:.3f} |")
-
-    lines += ["",
-              "## Files",
-              "- pooled_oof.parquet, metrics.csv, head_to_head.csv, leaderboard.csv",
+    for ch in CHANNELS + ["barrier"]:
+        rb = get("xgb_28d", ch, "NMAE"); rd = get("xgb28_delta", ch, "NMAE")
+        rr = ht[ht.channel == ch].iloc[0]
+        crosses = (rr.ci_low < 0) and (rr.ci_high > 0)
+        mark = "  " if crosses else (" ✓" if rr.point < 0 else " ✗")
+        lines.append(
+            f"| {ch} | {rb.point:.3f} [{rb.ci_low:.3f}, {rb.ci_high:.3f}] "
+            f"| {rd.point:.3f} [{rd.ci_low:.3f}, {rd.ci_high:.3f}] "
+            f"| {rr.point:+.3f} [{rr.ci_low:+.3f}, {rr.ci_high:+.3f}]{mark} |"
+        )
+    lines += [
+        "",
+        "## Pooled OOF RMSE (kcal/mol, 95% CI)",
+        "",
+        "| channel | xgb_28d (base) | xgb28 + δ |",
+        "|---|---|---|",
+    ]
+    for ch in CHANNELS + ["barrier"]:
+        rb = get("xgb_28d", ch, "RMSE"); rd = get("xgb28_delta", ch, "RMSE")
+        lines.append(
+            f"| {ch} | {rb.point:.3f} [{rb.ci_low:.3f}, {rb.ci_high:.3f}] "
+            f"| {rd.point:.3f} [{rd.ci_low:.3f}, {rd.ci_high:.3f}] |"
+        )
+    lines += ["", "## Files",
+              "- pooled_oof.parquet (xgb28_delta), xgb_28d_oof.parquet (base)",
+              "- metrics.csv, head_to_head.csv, leaderboard.csv",
               "- figures/nmae_bars.png, figures/rmse_bars.png, figures/parity_grid.png"]
     (OUT_RES / "summary.md").write_text("\n".join(lines))
     print(f"wrote {OUT_RES / 'summary.md'}", flush=True)
-
-
-EPOCHS_MAX_STR = "100000"
-PATIENCE_STR = "10000"
 
 
 if __name__ == "__main__":
