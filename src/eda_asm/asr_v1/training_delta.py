@@ -128,6 +128,10 @@ class TrainConfigDelta:
     device: str = "cpu"
     baseline_ridge_alpha: float = 1.0
     grad_clip_norm: float = 5.0     # Spec: grad-clip 5.0
+    # Convex-blend weights (spec07_lambda_contribution). Defaults reproduce the
+    # additive ŷ = b + δ used by m1/m2/m3 and spec06 exactly.
+    w_base: float = 1.0
+    w_delta: float = 1.0
 
 
 @dataclass
@@ -211,7 +215,7 @@ def train_one_model_delta(
             P_feat, P_mask = P_feat.to(cfg.device), P_mask.to(cfg.device)
             y = y.to(cfg.device); b = b.to(cfg.device)
             delta = model(R_feat, R_mask, T_feat, T_mask, P_feat, P_mask)
-            pred = b + delta
+            pred = cfg.w_base * b + cfg.w_delta * delta
             # Spec loss: per-channel σ_c-normalized L1 (mean over channels + batch)
             loss = (pred - y).abs().div(sigma_c).mean()
             opt.zero_grad(set_to_none=True)
@@ -230,7 +234,7 @@ def train_one_model_delta(
                 P_feat, P_mask = P_feat.to(cfg.device), P_mask.to(cfg.device)
                 b = b.to(cfg.device)
                 delta = model(R_feat, R_mask, T_feat, T_mask, P_feat, P_mask)
-                pred = b + delta
+                pred = cfg.w_base * b + cfg.w_delta * delta
                 val_preds.append(pred.cpu()); val_targs.append(y)
         vp = torch.cat(val_preds, dim=0); vt = torch.cat(val_targs, dim=0)
         per_comp = _component_mae(vp, vt)
@@ -264,7 +268,8 @@ def train_one_model_delta(
             P_feat, P_mask = P_feat.to(cfg.device), P_mask.to(cfg.device)
             b = b.to(cfg.device)
             val_preds.append(
-                (b + model(R_feat, R_mask, T_feat, T_mask, P_feat, P_mask)).cpu()
+                (cfg.w_base * b
+                 + cfg.w_delta * model(R_feat, R_mask, T_feat, T_mask, P_feat, P_mask)).cpu()
             )
             val_targs.append(y)
     vp = torch.cat(val_preds, dim=0); vt = torch.cat(val_targs, dim=0)
