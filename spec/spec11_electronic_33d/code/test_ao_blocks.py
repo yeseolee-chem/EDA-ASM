@@ -76,16 +76,33 @@ def main():
     partitions = json.loads(PART_V9.read_text())
     charges = pd.read_parquet(CHARGES_V9).set_index("reaction_id")
 
-    # pick first rxn that has a partition and charges
+    # Open-shell count over the whole cohort (should be 0 today; if >0 the
+    # spin-inference path in compute_d29_d33 will surface each such row).
+    open_shell_mask = ((charges["fragment_mult_a"] > 1) |
+                       (charges["fragment_mult_b"] > 1))
+    n_open = int(open_shell_mask.sum())
+    print(f"[cohort] open-shell rxns: {n_open}/{len(charges)}")
+    if n_open:
+        fam_counts = (charges[open_shell_mask]["reaction_id"]
+                      .str.split("_").str[0].value_counts()
+                      if "reaction_id" in charges.columns else "n/a")
+        print(f"[cohort] open-shell per family: {fam_counts}")
+
+    # Pick the first rxn with a partition, charges, AND a closed-shell
+    # (singlet) fragment pair - so the probe stays on well-defined ground.
     ok = False
     for _, row in labels.iterrows():
         rid = row.reaction_id
-        if rid in partitions and rid in charges.index:
-            part = partitions[rid]
-            if "frag_A_indices" in part and part["frag_A_indices"]:
-                probe_rid = rid; ok = True; break
+        if rid not in partitions or rid not in charges.index:
+            continue
+        part = partitions[rid]
+        if "frag_A_indices" not in part or not part["frag_A_indices"]:
+            continue
+        ch = charges.loc[rid]
+        if int(ch["fragment_mult_a"]) == 1 and int(ch["fragment_mult_b"]) == 1:
+            probe_rid = rid; ok = True; break
     if not ok:
-        print("Gate-B FAIL: no usable reaction to probe")
+        print("Gate-B FAIL: no singlet+singlet reaction available to probe")
         sys.exit(1)
     print(f"[case] probing rid={probe_rid}")
 
@@ -95,10 +112,7 @@ def main():
     ch = charges.loc[probe_rid]
     q_tot = int(ch["total_charge"])
     m_A = int(ch["fragment_mult_a"]); m_B = int(ch["fragment_mult_b"])
-    m_tot = 1 if (m_A == 1 and m_B == 1) else None
-    if m_tot is None:
-        raise RuntimeError(f"probe rxn {probe_rid} has open-shell fragment "
-                           f"(m_A={m_A}, m_B={m_B}); pick another")
+    m_tot = 1  # enforced closed-shell by selection loop above
 
     TS_at = load_ts_atoms(probe_rid)
     Z = np.array(TS_at.get_atomic_numbers())
