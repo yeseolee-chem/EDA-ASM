@@ -21,6 +21,36 @@
   arrays or multi-model runs, distribute across partitions so total
   concurrency stays ≤ 10. Prefer parallel across gpu3 / gpu4 / gpu5
   over serialising on one partition.
+- **NO long-running processes on the login node — ever.** This is
+  a stricter reading of the "login is read-only" rule and includes
+  everything below, not just python/xtb/MACE:
+    - No `nohup … &` on gate1.hpc for any purpose.
+    - No shell loops (`while true; do sbatch …; sleep …; done`),
+      no launchers, no pollers, no watchers, no `tail -F` daemons,
+      no `screen` / `tmux` sessions used for background work.
+    - A one-shot `sbatch script.sh` command is fine (it returns
+      immediately). Anything that stays resident past that submit
+      is not.
+    - The precedent in `spec/spec09_.../chain_family_b1.sh` that
+      says *"Run under nohup on login node (shell loop only)"* is
+      **wrong** and must not be imitated. CLAUDE.md overrides any
+      in-repo comment that contradicts it.
+- **If you need automated / throttled job submission, use one of
+  these — never a login-node daemon:**
+    1. **SLURM job array with a concurrency cap.** `sbatch
+       --array=0-N%K script.sh` runs at most `K` array tasks at a
+       time. `K = 10` matches our concurrency limit. This is
+       almost always the right answer and needs no launcher.
+    2. **Submit the launcher itself as an sbatch job** on a small
+       cpu partition (`--time=48:00:00`, `--mem=2G`, `--cpus-per-task=1`,
+       e.g. cpu2). The launcher's polling + `sbatch` calls then
+       run on a compute node, not the login node. Idempotent
+       runners make this safe to restart at the 48h wall.
+    3. **`--dependency=afterany:<jid>` chains** for strict
+       ordering — one job releases the next when it finishes,
+       with no polling needed.
+  If none of these fit the task, stop and ask before doing
+  anything that would leave a process on gate1.hpc.
 
 ## Project overview
 
