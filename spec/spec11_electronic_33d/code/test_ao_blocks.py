@@ -94,12 +94,17 @@ def main():
     idx_B = np.array(part["frag_B_indices"], dtype=int)
     ch = charges.loc[probe_rid]
     q_tot = int(ch["total_charge"])
+    m_A = int(ch["fragment_mult_a"]); m_B = int(ch["fragment_mult_b"])
+    m_tot = 1 if (m_A == 1 and m_B == 1) else None
+    if m_tot is None:
+        raise RuntimeError(f"probe rxn {probe_rid} has open-shell fragment "
+                           f"(m_A={m_A}, m_B={m_B}); pick another")
 
     TS_at = load_ts_atoms(probe_rid)
     Z = np.array(TS_at.get_atomic_numbers())
     pos_ang = TS_at.get_positions()
 
-    rc = run_xtb_extended(Z, pos_ang, charge=q_tot, mult=1, want_matrices=True)
+    rc = run_xtb_extended(Z, pos_ang, charge=q_tot, mult=m_tot, want_matrices=True)
     S = rc["overlap"]; H0 = rc["hamiltonian"]
     n_orb = S.shape[0]
     print(f"[case] n_atoms={len(Z)}  n_orb={n_orb}  H0.max={np.max(np.abs(H0)):.3f}")

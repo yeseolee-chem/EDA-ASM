@@ -154,6 +154,20 @@ def main():
             q_A_c, m_A = int(ch["fragment_charge_a"]), int(ch["fragment_mult_a"])
             q_B_c, m_B = int(ch["fragment_charge_b"]), int(ch["fragment_mult_b"])
 
+            # Complex spin: charges parquet has no total_mult column, but the
+            # complex is derivable when both fragments are closed-shell singlets
+            # (m_A = m_B = 1 => complex closed-shell singlet, m_tot = 1).
+            # If either fragment is open-shell we bail out - a radical +
+            # radical complex can be singlet OR triplet and there is no
+            # single-truth column to disambiguate.
+            if m_A == 1 and m_B == 1:
+                m_tot = 1
+            else:
+                raise RuntimeError(
+                    f"open-shell fragment (m_A={m_A}, m_B={m_B}): complex spin "
+                    f"cannot be inferred from charges parquet; add a total_mult "
+                    f"column to disambiguate")
+
             TS_at = load_ts_atoms(rid)
             Z = np.array(TS_at.get_atomic_numbers())
             pos_ang = TS_at.get_positions()
@@ -174,7 +188,7 @@ def main():
             d33 = compute_d33(rA["gradient"], rB["gradient"])
 
             # -------- pass beta: complex --------
-            rc = run_xtb_extended(Z, pos_ang, charge=q_tot, mult=1,
+            rc = run_xtb_extended(Z, pos_ang, charge=q_tot, mult=m_tot,
                                   want_matrices=True)
             row_out["scf_ok_beta"] = True
 
