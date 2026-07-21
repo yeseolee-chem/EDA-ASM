@@ -3,8 +3,8 @@
 # Idempotent: existing member{M}.json is skipped.
 # CLAUDE.md: --time=48:00:00, <=10 concurrent, spread gpu3/gpu4/gpu5.
 #SBATCH --job-name=s11_x33d
-#SBATCH --array=0-4%3
-#SBATCH --partition=gpu3,gpu4,gpu5
+#SBATCH --array=0-4
+#SBATCH --partition=gpu1,gpu2,gpu3,gpu4,gpu5,gpu6
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
