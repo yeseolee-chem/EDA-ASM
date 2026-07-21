@@ -36,18 +36,7 @@ CH_COLORS = {
 }
 
 
-def _get_spec06_ref():
-    """Pull spec06 (b+δ additive, unconstrained) barrier NMAE if aggregated."""
-    p = REPO / "spec/spec06_2step_xgb28_delta/results/metrics.csv"
-    if not p.exists():
-        return None
-    df = pd.read_csv(p)
-    r = df[(df.arm == "xgb28_delta") & (df.channel == "barrier")
-           & (df.metric == "NMAE")]
-    return float(r.iloc[0].point) if len(r) else None
-
-
-def plot_metric_curve(curve_df, metric, ylabel, path, ref_barrier=None):
+def plot_metric_curve(curve_df, metric, ylabel, path):
     lambdas = sorted(curve_df["lambda"].unique())
     fig, ax = plt.subplots(figsize=(9, 5.5))
     for ch in CHANNELS + ["barrier"]:
@@ -63,23 +52,8 @@ def plot_metric_curve(curve_df, metric, ylabel, path, ref_barrier=None):
         ax.fill_between(lambdas, lo, hi, color=CH_COLORS[ch], alpha=alpha_band,
                         linewidth=0)
 
-    # λ* for barrier (dashed vertical)
-    star_json = OUT_RES / "lambda_star.json"
-    if star_json.exists():
-        st = json.loads(star_json.read_text())
-        if "barrier" in st:
-            lb = st["barrier"]["lambda"]
-            ax.axvline(lb, color="#333", ls="--", lw=0.8,
-                       label=f"λ*(barrier)={lb:.2f}")
-
-    if metric == "NMAE":
-        ax.axhline(1.0, color="gray", ls=":", lw=0.7, label="mean-predictor")
-        if ref_barrier is not None:
-            ax.axhline(ref_barrier, color="#a83232", ls="--", lw=0.7,
-                       label=f"spec06 barrier (b+δ)={ref_barrier:.3f}")
-
     ax.set_xlabel("λ  (0 = pure δ, 1 = pure b)")
-    ax.set_ylabel(f"{ylabel} (pooled OOF, 95% CI band)")
+    ax.set_ylabel(ylabel)
     ax.grid(alpha=0.3)
     ax.legend(fontsize=8, loc="best", ncol=2)
     fig.tight_layout()
@@ -131,11 +105,8 @@ def parity_at_lamstar(pooled_df, path):
 def main():
     curve_df = pd.read_csv(OUT_RES / "lambda_curve.csv")
     pooled = pd.read_parquet(OUT_RES / "pooled_oof.parquet")
-    ref = _get_spec06_ref()
-    plot_metric_curve(curve_df, "NMAE", "NMAE",
-                      OUT_FIG / "lambda_nmae.png", ref_barrier=ref)
-    plot_metric_curve(curve_df, "RMSE", "RMSE (kcal/mol)",
-                      OUT_FIG / "lambda_rmse.png", ref_barrier=None)
+    plot_metric_curve(curve_df, "NMAE", "NMAE", OUT_FIG / "lambda_nmae.png")
+    plot_metric_curve(curve_df, "RMSE", "RMSE", OUT_FIG / "lambda_rmse.png")
     parity_at_lamstar(pooled, OUT_FIG / "parity_at_lamstar.png")
     print(f"wrote figures under {OUT_FIG}")
 
