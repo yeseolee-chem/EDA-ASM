@@ -86,16 +86,20 @@ def missing_report(only_member: int | None):
 
 
 def summarise(df: pd.DataFrame) -> pd.DataFrame:
+    # Group by size_target only — size_actual can vary within a target
+    # (stratified subsampling rounding, e.g. sn2 at N=150 gets folds of
+    # 149 and 150) and splitting on it fragments the fold aggregation.
     metric_cols = [c for c in df.columns
                    if any(c.startswith(m + "_") for m in METRICS)]
-    keys = ["family", "size_target", "size_actual", "arm"]
-    agg = (df.groupby(keys)[metric_cols]
-             .agg(["mean", "std", "count"])
-             .reset_index())
+    keys = ["family", "size_target", "arm"]
+    agg_dict = {c: ["mean", "std", "count"] for c in metric_cols}
+    agg_dict["size_actual"] = ["mean"]
+    agg = df.groupby(keys).agg(agg_dict).reset_index()
     agg.columns = [
         "_".join([c for c in col if c]).rstrip("_")
         for col in agg.columns.to_flat_index()
     ]
+    agg = agg.rename(columns={"size_actual_mean": "size_actual"})
     return agg
 
 
