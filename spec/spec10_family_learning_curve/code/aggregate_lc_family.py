@@ -128,12 +128,10 @@ def plot_family(summary: pd.DataFrame, family: str, out_path: Path):
             yerr = s[scol].values if scol in s.columns else None
             ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3,
                         label=arm, color=colors.get(arm))
-        ax.set_title(f"NMAE — {ch}")
         ax.set_xlabel("train size (actual)")
         ax.set_ylabel("NMAE")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
-    fig.suptitle(f"SPEC_10 within-family LC  •  {family}", y=1.02)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
@@ -163,12 +161,10 @@ def plot_all_barrier(summary: pd.DataFrame, families: list, out_path: Path):
                     if "nmae_barrier_std" in s.columns else None)
             ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3,
                         label=arm, color=colors.get(arm))
-        ax.set_title(f"{fam} — barrier NMAE")
         ax.set_xlabel("train size (actual)")
         ax.set_ylabel("barrier NMAE")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
-    fig.suptitle("SPEC_10 within-family LC  •  barrier NMAE across families", y=1.02)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
