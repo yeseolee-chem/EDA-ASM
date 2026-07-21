@@ -121,12 +121,10 @@ def plot_curves(summary: pd.DataFrame, out_path: Path):
             yerr = sub[scol].values if scol in sub.columns else None
             ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3,
                         label=arm, color=colors.get(arm))
-        ax.set_title(f"NMAE — {ch}")
         ax.set_xlabel("train size (target N; sizes ≥ 700 cap at ~626)")
         ax.set_ylabel("NMAE")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
-    fig.suptitle("SPEC_08 whole-dataset LC  •  xgb28 base vs xgb28+δ", y=1.02)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
