@@ -28,9 +28,10 @@ WAVE_N="${WAVE_N:-1}"
 # 1200 jobs / 10-per-wave = ~120 waves; cap at 300 gives full retry headroom.
 # The pending-not-decreasing check still halts stuck runs.
 WAVE_CAP="${WAVE_CAP:-300}"
-ARRAY_SIZE="${ARRAY_SIZE:-5}"    # Match actual SLURM running-cap available to us
-                                  # (5 slots free while other 5 are held by GPU jobs).
-                                  # Wave-of-5 minimises straggler wait vs wave-of-10.
+ARRAY_SIZE="${ARRAY_SIZE:-10}"   # Wave 10 > concurrency 5 → within-wave pipelining:
+                                  # as short tasks finish, queued tasks slide into the
+                                  # freed slot without waiting for the wave barrier.
+                                  # Reverted from 5 after empirical throughput drop.
 NPROCS="${NPROCS:-4}"
 MAXCORE_MB="${MAXCORE_MB:-3500}"
 
