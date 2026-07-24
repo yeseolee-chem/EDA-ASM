@@ -25,7 +25,9 @@ GATES_LOG="$STAGE/logs/gates.log"
 mkdir -p "$WAVE_DIR"
 
 WAVE_N="${WAVE_N:-1}"
-WAVE_CAP="${WAVE_CAP:-6}"
+# 1200 jobs / 10-per-wave = ~120 waves; cap at 300 gives full retry headroom.
+# The pending-not-decreasing check still halts stuck runs.
+WAVE_CAP="${WAVE_CAP:-300}"
 ARRAY_SIZE="${ARRAY_SIZE:-10}"   # ≤ 11 to stay under 12-cap (this sweep uses the 11th slot)
 NPROCS="${NPROCS:-4}"
 MAXCORE_MB="${MAXCORE_MB:-3500}"
@@ -51,7 +53,8 @@ for r in rows:
         pass
     if not done:
         pending.append(r)
-w = csv.DictWriter(sys.stdout, fieldnames=rows[0].keys())
+# lineterminator="\n" — csv default is \r\n which corrupts downstream awk parsing.
+w = csv.DictWriter(sys.stdout, fieldnames=rows[0].keys(), lineterminator="\n")
 w.writeheader()
 for r in pending:
     w.writerow(r)

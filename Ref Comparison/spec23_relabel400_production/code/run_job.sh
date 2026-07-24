@@ -20,8 +20,10 @@ NPROCS="${NPROCS:-4}"
 MAXCORE_MB="${MAXCORE_MB:-3500}"
 IDX="${SLURM_ARRAY_TASK_ID:?not a SLURM array task}"
 
-# CSV: reaction_id, sub_source, reaction_number, jobtype, workdir, input, out
-row=$(awk -F',' -v i=$((IDX + 2)) 'NR==i' "$MANIFEST")
+# CSV: reaction_id, sub_source, reaction_number, jobtype, workdir, input, out.
+# Strip any \r that snuck in from a CRLF-emitting CSV writer (wave manifests
+# from Python's csv.DictWriter default to \r\n).
+row=$(awk -F',' -v i=$((IDX + 2)) 'NR==i' "$MANIFEST" | tr -d '\r')
 if [[ -z "$row" ]]; then
   echo "[error] no row at index $IDX in $MANIFEST" >&2
   exit 1
