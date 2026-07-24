@@ -1,0 +1,31 @@
+=== spec18r1 verify ===
+[env] python=3.10.14 pandas=2.3.3 numpy=1.26.4
+[reload] /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/Ref Comparison/spec18r1_espley_s1_labels_fix/results/labels_2ch_400dipolar.pkl
+[reload] artifact shape=(400, 9); source shape=(400, 24)
+[G-A PASS] n=400, dict-shape errors=0, None values=0, key-format errors=0, prefix mismatches=0, max|sum(dict) − sum_distortion|=1.000e-03 (tol 5e-03)
+[G-A-dtypes PASS] dtypes={'reaction_number': 'int32', 'e_barrier_dft': 'float64', 'sum_distortion_energies_dft': 'float64', 'interaction_energies_dft': 'float64', 'distortion_contributions_dft': 'object'}
+[G-B INFO] artifact of record: labels_2ch_400dipolar.pkl size=41509 bytes
+[G-B-artifact PASS] suffix '.pkl' and file exists
+[G-B-inspection PASS] inspection parquet dict-column-free, size=23494 bytes
+[G-C PASS] |interaction_dft + resum| max=2.000e-02 mean=5.225e-03 p99=2.000e-02
+[G-D-distribution INFO] n=400.0000, min=0.0000, median=0.0000, mean=0.0052, p95=0.0100, p99=0.0200, max=0.0200
+[G-D-locked_778 INFO] n=192.0000, median=0.0100, mean=0.0057, p95=0.0100, max=0.0200
+[G-D-spec16 INFO] n=208.0000, median=0.0000, mean=0.0048, p95=0.0100, max=0.0200
+[G-D-outliers INFO] n_outliers_above_0.1kcal=0 written to asm_residual_outliers.csv
+[G-D PASS] max residual 0.0200 < 0.05 — source rounding floor confirmed
+[G-E-clean-rxnum PASS] reaction_number == 0..399 on expanded frame
+[G-E-clean-sum PASS] (distortion_energy_1_dft+distortion_energy_2_dft) matches sum_distortion within 5e-03 (max diff 1.000e-03)
+[G-E-runner PASS] all dft targets survive _manual_runner (4 cols kept)
+[G-E-deviation6 INFO] _gfn2 columns dropped as predicted (['e_barrier_gfn2', 'interaction_energies_gfn2']) — Deviation #6 (f_select.py line 226 patch) confirmed necessary at Stage 3
+[G-F-sort PASS] reaction_number == 0..399 under sort by reaction_id
+[G-F-rebuild PASS] pickle sha256 stable across rebuilds: 30b61b47c8092d7b…
+[G-G INFO] flagged rows total: 174  (anomaly_triage.csv)
+[G-G-interaction_lt_0 INFO] n=8 by sub_source={'locked_778': 5, 'spec16': 3}  (with G-D residual>0.05: 0)
+[G-G-e_barrier_lt_0 INFO] n=138 by sub_source={'locked_778': 64, 'spec16': 74}  (with G-D residual>0.05: 0)
+[G-G-e_barrier_lt_neg20 INFO] n=7 by sub_source={'locked_778': 3, 'spec16': 4}  (with G-D residual>0.05: 0)
+[G-G-sum_distortion_gt_100 INFO] n=29 by sub_source={'locked_778': 7, 'spec16': 22}  (with G-D residual>0.05: 0)
+[REG-sd-positive PASS] sum_distortion > 0 in all rows
+[REG-identity-tautology INFO] max|e_barrier − (sum_dist − int)|=0.000e+00  (guard, not evidence — algebraic identity by construction)
+[REG-interaction-positive-fraction INFO] interaction > 0 in 392/400 rows (0.9800)  (physical, not tautological)
+
+=== SUMMARY: 0 FAIL, 0 WARN ===
