@@ -39,8 +39,28 @@ echo "=== [$(date -Is)] wave $WAVE_N / cap $WAVE_CAP ==="
 
 # --- Classify --------------------------------------------------------------
 python3 - <<PY > "$WAVE_DIR/pending_wave_${WAVE_N}.csv"
-import csv, os, sys
+import csv, os, sys, pickle
 manifest = "$JOB_MANIFEST"
+# Load per-reaction n_atoms from spec19 manifest for size-based wave sorting.
+# Grouping similar-sized jobs into one wave eliminates the mixed-wave idle
+# waste (fast slots sitting idle while a straggler holds the wave open).
+try:
+    with open("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/Ref Comparison/spec19_espley_s2_structures/results/manifest.pkl", "rb") as f:
+        s19 = pickle.load(f)
+    natoms_by_rxn = {r["reaction_id"]: r["natoms"] for _, r in s19.iterrows()}
+except Exception:
+    natoms_by_rxn = {}
+
+def job_size(r):
+    n = natoms_by_rxn.get(r["reaction_id"])
+    if not n:
+        return 0
+    jt = r["jobtype"]
+    if jt == "eda":       return n["ts"]
+    if jt == "fragA_opt": return n["r_A"]
+    if jt == "fragB_opt": return n["r_B"]
+    return n["ts"]
+
 with open(manifest) as f:
     rows = list(csv.DictReader(f))
 pending = []
@@ -56,6 +76,12 @@ for r in rows:
         pass
     if not done:
         pending.append(r)
+
+# Sort DESCENDING by expected size — bigger jobs first, so waves are
+# progressively smaller (helps throughput planning + gets long jobs
+# started early). Idempotent skip handles any ordering.
+pending.sort(key=job_size, reverse=True)
+
 # lineterminator="\n" — csv default is \r\n which corrupts downstream awk parsing.
 w = csv.DictWriter(sys.stdout, fieldnames=rows[0].keys(), lineterminator="\n")
 w.writeheader()
