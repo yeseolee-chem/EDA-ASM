@@ -75,6 +75,20 @@ def last_fspe(path: Path) -> float | None:
     return last
 
 
+def first_fspe(path: Path) -> float | None:
+    """FIRST FINAL SINGLE POINT ENERGY = energy at starting geometry
+    (before any geometry step). For an opt job, `first - last` = relaxation
+    energy (positive if opt went downhill, as it should)."""
+    if not path.exists():
+        return None
+    with open(path) as f:
+        for line in f:
+            m = FSPE_RE.search(line)
+            if m:
+                return float(m.group(1))
+    return None
+
+
 def parse_eda_channels(path: Path) -> dict | None:
     """Return the 6-channel breakdown in kcal/mol from the summary block."""
     if not path.exists():
@@ -144,6 +158,10 @@ def main() -> int:
                        if row["reaction_id"] == rid and row["jobtype"] == "fragB_opt"][0])
         e_ra = last_fspe(opt_a)
         e_rb = last_fspe(opt_b)
+        # relax energies: E(fragment at STARTING geom) - E(fragment at OPT geom).
+        # Positive = optimisation lowered the energy (as it must). Used by G23-H.
+        e_ra_start = first_fspe(opt_a)
+        e_rb_start = first_fspe(opt_b)
 
         if None in (e_ts, e_da, e_db, e_ra, e_rb) or chans is None:
             failed.append({"reaction_id": rid, "jobtype": "parse",
@@ -158,6 +176,11 @@ def main() -> int:
         # channels — orb_kcal = orb_raw + xc (paper convention)
         orb = chans["orb_raw_kcal"] + chans["xc_kcal"]
         int_eda = chans["pauli_kcal"] + chans["elst_kcal"] + orb + chans["disp_kcal"]
+
+        relax_A_kcal = ((e_ra_start - e_ra) * HARTREE_TO_KCAL
+                        if e_ra_start is not None else None)
+        relax_B_kcal = ((e_rb_start - e_rb) * HARTREE_TO_KCAL
+                        if e_rb_start is not None else None)
 
         labels.append({
             "reaction_id":     rid,
@@ -174,11 +197,15 @@ def main() -> int:
             "strain_B_kcal":   strain_B,
             "strain_kcal":     strain,
             "act_kcal":        act,
+            "relax_A_kcal":    relax_A_kcal,   # G23-H: >= 0 expected
+            "relax_B_kcal":    relax_B_kcal,
             "E_TS_hartree":    e_ts,
             "E_DA_hartree":    e_da,
             "E_DB_hartree":    e_db,
             "E_RA_hartree":    e_ra,
             "E_RB_hartree":    e_rb,
+            "E_RA_start_hartree": e_ra_start,
+            "E_RB_start_hartree": e_rb_start,
             "bond_energy_kcal_from_orca": chans["bond_kcal"],
         })
 
