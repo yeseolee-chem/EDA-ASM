@@ -1,40 +1,36 @@
 #!/usr/bin/env python3
 """
-Parse ORCA outputs from spec23_paper_setup/ into 2-channel DFT labels.
+Parse ORCA outputs (spec23_paper_setup) into paper-compliant DIAS labels.
 
-Uses geometries/dipolar_XXXX/meta.json (produced by 20_prepare_geometries.py) to
-correctly identify which ORCA .out file corresponds to reactant_1 (FRAG1) vs
-reactant_2 (FRAG2), because for ~50 rxns the ORCA filename naming (spe_R_A vs
-spe_R_B) does not match the actual fragment content.
+Uses Espley 2024 (Digital Discovery 3:2479) DIAS formula VERBATIM:
+    strain_1        = E(spe_d1) − E(spe_R_1)
+    strain_2        = E(spe_d2) − E(spe_R_2)
+    distortion_dft  = strain_1 + strain_2
+    barrier_dft     = E(TS)     − E(spe_R_1) − E(spe_R_2)
+    interaction_dft = barrier_dft − distortion_dft            (simple subtraction)
 
-Reads for each rxn:
-  spe_R_A/spe_R_A.out    → FINAL SPE  (may hold FRAG1 or FRAG2 depending on swap)
-  spe_R_B/spe_R_B.out    → FINAL SPE
-  cpcm_extra/spe_dA.out  → FINAL SPE  (always FRAG1 distorted, per eda.inp tags)
-  cpcm_extra/spe_dB.out  → FINAL SPE  (always FRAG2 distorted)
-  eda/eda.out            → 5-channel EDA-NOCV (Pauli, Orb, Elstat, XC, Disp, CPCM) + Bond Energy
+All 5 SPEs in CPCM(water) at wB97X-D3BJ/def2-TZVP (ORCA 6.1.1).
 
-Outputs (all in kcal/mol):
-  labels/labels_2ch_paper.parquet          Grayson 2-channel targets
-    distortion_dft, interaction_dft, e_barrier_dft
-  labels/labels_2ch_paper.csv              same (CSV)
-  labels/labels_5channel_paper.parquet     full audit
-    distortion_dipole, distortion_dipolarophile,
-    pauli_kcal, elstat_kcal, orb_kcal, xc_kcal, disp_kcal, cpcm_kcal,
-    strain_1_kcal, strain_2_kcal (matched to correct fragment)
-    e_R_1_hartree, e_R_2_hartree, e_d_1_hartree, e_d_2_hartree
-    bond_vs_sum_residual_kcal
+E(TS) is read from eda.out (final SCF energy of the TS complex), NOT from ORCA
+EDA-NOCV "Bond Energy" which is a fundamentally different quantity and gave
+non-physical negative barriers in prior label runs (see D2 diagnostic).
 
-Definitions (paper Espley 2024, ds3 reproduction):
-  distortion_dft            = strain_1 + strain_2               = total distortion
-  distortion_dipole         = strain of the fragment that is dipole
-  distortion_dipolarophile  = strain of the fragment that is dipolarophile
-  interaction_dft           = pauli + elstat + orb + xc + disp + cpcm (kcal/mol)
-                              = "Bond Energy" as reported by ORCA EDA-NOCV
-  e_barrier_dft             = distortion_dft + interaction_dft
+The 5-channel EDA-NOCV decomposition (Pauli/elstat/orb/xc/disp/CPCM) is
+extracted for audit only, into labels_5channel_audit_paper.parquet. It is NOT
+used as a target — paper's interaction is a scalar subtraction, not a sum of
+EDA channels.
+
+Fragment 1 (=ORCA eda.inp FRAG1) vs Fragment 2 identity is resolved via
+meta.json's orca_filename_swap flag written by 20_prepare_geometries.py.
+
+Outputs:
+  labels/labels_2ch_paper.parquet          reaction_number, reaction_id,
+                                           distortion_dft, interaction_dft, e_barrier_dft
+  labels/labels_2ch_paper.csv              same, CSV
+  labels/labels_5channel_audit_paper.parquet  5 EDA channels for audit ONLY
+  labels/label_schema.json                 protocol + ranges + provenance
 """
 from __future__ import annotations
-
 import argparse
 import json
 import re
@@ -75,8 +71,7 @@ def parse_eda_channels(eda_out_path: Path) -> dict[str, float]:
     for line in eda_out_path.read_text().splitlines():
         m = RE_EDA_LINE.match(line)
         if m:
-            key = EDA_KEYS[m.group(1)]
-            out[key] = float(m.group(3))
+            out[EDA_KEYS[m.group(1)]] = float(m.group(3))
     missing = set(EDA_KEYS.values()) - set(out.keys())
     if missing:
         raise ValueError(f"missing EDA channels in {eda_out_path}: {missing}")
@@ -85,90 +80,82 @@ def parse_eda_channels(eda_out_path: Path) -> dict[str, float]:
 
 def parse_one_rxn(rid: str, workdir: Path, geom_root: Path) -> dict:
     rxn_dir = workdir / rid
-
-    # Load meta.json produced by 20_prepare_geometries.py — tells us which ORCA
-    # file has FRAG1 relaxed vs FRAG2 relaxed (may be swapped from filename)
     meta_path = geom_root / rid / "meta.json"
     if not meta_path.exists():
-        raise FileNotFoundError(
-            f"{meta_path} missing — run 20_prepare_geometries.py first"
-        )
+        raise FileNotFoundError(f"{meta_path} missing — run 20_prepare_geometries.py first")
     meta = json.loads(meta_path.read_text())
 
-    swap = meta["orca_filename_swap"]  # 'no_swap' or 'swap'
+    swap = meta["orca_filename_swap"]
     if swap == "no_swap":
         R_1_out = rxn_dir / "spe_R_A" / "spe_R_A.out"
         R_2_out = rxn_dir / "spe_R_B" / "spe_R_B.out"
     else:
-        R_1_out = rxn_dir / "spe_R_B" / "spe_R_B.out"  # actual FRAG1 relaxed
+        R_1_out = rxn_dir / "spe_R_B" / "spe_R_B.out"
         R_2_out = rxn_dir / "spe_R_A" / "spe_R_A.out"
 
-    # spe_dA is always FRAG1 distorted, spe_dB is always FRAG2 distorted
     d_1_out = rxn_dir / "cpcm_extra" / "spe_dA.out"
     d_2_out = rxn_dir / "cpcm_extra" / "spe_dB.out"
+    eda_out = rxn_dir / "eda" / "eda.out"
 
-    e_R_1_h = parse_final_spe(R_1_out)
-    e_R_2_h = parse_final_spe(R_2_out)
-    e_d_1_h = parse_final_spe(d_1_out)
-    e_d_2_h = parse_final_spe(d_2_out)
-    eda = parse_eda_channels(rxn_dir / "eda" / "eda.out")
+    # Energies (Hartree → kcal/mol)
+    e_R_1 = parse_final_spe(R_1_out) * HARTREE_TO_KCAL
+    e_R_2 = parse_final_spe(R_2_out) * HARTREE_TO_KCAL
+    e_d_1 = parse_final_spe(d_1_out) * HARTREE_TO_KCAL
+    e_d_2 = parse_final_spe(d_2_out) * HARTREE_TO_KCAL
+    e_TS  = parse_final_spe(eda_out) * HARTREE_TO_KCAL
 
-    strain_1_kcal = (e_d_1_h - e_R_1_h) * HARTREE_TO_KCAL
-    strain_2_kcal = (e_d_2_h - e_R_2_h) * HARTREE_TO_KCAL
-    distortion_total_kcal = strain_1_kcal + strain_2_kcal
+    # Paper DIAS formula (verbatim)
+    strain_1        = e_d_1 - e_R_1
+    strain_2        = e_d_2 - e_R_2
+    distortion_dft  = strain_1 + strain_2
+    e_barrier_dft   = e_TS - e_R_1 - e_R_2
+    interaction_dft = e_barrier_dft - distortion_dft
 
-    # Assign strain by type (dipole vs dipolarophile)
-    r1_type = meta["reactant_1_type"]  # 'dipole' or 'dipolarophile'
+    # Per-type distortion (dipole vs dipolarophile)
+    r1_type = meta["reactant_1_type"]
     r2_type = meta["reactant_2_type"]
     if r1_type == "dipole":
-        distortion_dipole = strain_1_kcal
-        distortion_dipolarophile = strain_2_kcal
+        distortion_dipole, distortion_dipolarophile = strain_1, strain_2
     elif r1_type == "dipolarophile":
-        distortion_dipole = strain_2_kcal
-        distortion_dipolarophile = strain_1_kcal
+        distortion_dipole, distortion_dipolarophile = strain_2, strain_1
     else:
         raise ValueError(f"{rid}: unexpected reactant_1_type {r1_type}")
 
-    interaction_kcal = eda["bond_kcal"]
-    interaction_sum = (
-        eda["orb_kcal"] + eda["elstat_kcal"] + eda["pauli_kcal"]
-        + eda["xc_kcal"] + eda["disp_kcal"] + eda["cpcm_kcal"]
-    )
-    bond_residual = abs(interaction_sum - interaction_kcal)
-
-    barrier_kcal = distortion_total_kcal + interaction_kcal
-
-    return {
+    # 5-channel EDA decomposition — AUDIT ONLY, not a target
+    eda_ch = parse_eda_channels(eda_out)
+    audit = {
         "reaction_id": rid,
         "reaction_number": meta["reaction_number"],
-        # PAPER 2-CHANNEL TARGETS
-        "distortion_dft": distortion_total_kcal,
-        "interaction_dft": interaction_kcal,
-        "e_barrier_dft": barrier_kcal,
-        # PAPER 3-target audit (per-fragment)
+        "bond_kcal_orca":    eda_ch["bond_kcal"],
+        "pauli_kcal_orca":   eda_ch["pauli_kcal"],
+        "elstat_kcal_orca":  eda_ch["elstat_kcal"],
+        "orb_kcal_orca":     eda_ch["orb_kcal"],
+        "xc_kcal_orca":      eda_ch["xc_kcal"],
+        "disp_kcal_orca":    eda_ch["disp_kcal"],
+        "cpcm_kcal_orca":    eda_ch["cpcm_kcal"],
+        "diff_bond_vs_interaction_dias": eda_ch["bond_kcal"] - interaction_dft,
+    }
+
+    label = {
+        "reaction_id": rid,
+        "reaction_number": meta["reaction_number"],
+        "distortion_dft":  distortion_dft,
+        "interaction_dft": interaction_dft,
+        "e_barrier_dft":   e_barrier_dft,
         "distortion_dipole": distortion_dipole,
         "distortion_dipolarophile": distortion_dipolarophile,
-        # 5-channel audit
-        "pauli_kcal": eda["pauli_kcal"],
-        "elstat_kcal": eda["elstat_kcal"],
-        "orb_kcal": eda["orb_kcal"],
-        "xc_kcal": eda["xc_kcal"],
-        "disp_kcal": eda["disp_kcal"],
-        "cpcm_kcal": eda["cpcm_kcal"],
-        # per-fragment strain (correctly paired via meta.json)
-        "strain_1_kcal": strain_1_kcal,
-        "strain_2_kcal": strain_2_kcal,
+        "strain_1_kcal": strain_1,
+        "strain_2_kcal": strain_2,
         "reactant_1_type": r1_type,
         "reactant_2_type": r2_type,
-        # raw energies
-        "e_R_1_hartree": e_R_1_h,
-        "e_R_2_hartree": e_R_2_h,
-        "e_d_1_hartree": e_d_1_h,
-        "e_d_2_hartree": e_d_2_h,
-        # consistency
-        "bond_vs_sum_residual_kcal": bond_residual,
+        "e_R_1_hartree": e_R_1 / HARTREE_TO_KCAL,
+        "e_R_2_hartree": e_R_2 / HARTREE_TO_KCAL,
+        "e_d_1_hartree": e_d_1 / HARTREE_TO_KCAL,
+        "e_d_2_hartree": e_d_2 / HARTREE_TO_KCAL,
+        "e_TS_hartree":  e_TS  / HARTREE_TO_KCAL,
         "orca_filename_swap": swap,
     }
+    return label, audit
 
 
 def main() -> int:
@@ -183,7 +170,7 @@ def main() -> int:
                     default=Path(__file__).parent.parent / "labels")
     args = ap.parse_args()
 
-    rxns: list[str] = []
+    rxns = []
     for line in args.manifest.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -192,13 +179,16 @@ def main() -> int:
         if len(parts) != 2:
             continue
         rxns.append(parts[1])
-    print(f"loaded {len(rxns)} rxns from manifest")
+    print(f"parsing DFT labels via paper DIAS formula for {len(rxns)} rxns")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    rows, fails = [], []
+    labels, audits = [], []
+    fails = []
     for rid in rxns:
         try:
-            rows.append(parse_one_rxn(rid, args.workdir, args.geom_root))
+            label, audit = parse_one_rxn(rid, args.workdir, args.geom_root)
+            labels.append(label)
+            audits.append(audit)
         except Exception as e:
             fails.append((rid, str(e)))
             print(f"  FAIL {rid}: {e}")
@@ -207,61 +197,56 @@ def main() -> int:
         print(f"\n{len(fails)} FAIL(s), aborting")
         return 1
 
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(labels)
+    df_audit = pd.DataFrame(audits)
+
     cols = [
         "reaction_number", "reaction_id",
         "distortion_dft", "interaction_dft", "e_barrier_dft",
         "distortion_dipole", "distortion_dipolarophile",
-        "pauli_kcal", "elstat_kcal", "orb_kcal", "xc_kcal", "disp_kcal", "cpcm_kcal",
         "strain_1_kcal", "strain_2_kcal", "reactant_1_type", "reactant_2_type",
-        "e_R_1_hartree", "e_R_2_hartree", "e_d_1_hartree", "e_d_2_hartree",
-        "bond_vs_sum_residual_kcal", "orca_filename_swap",
+        "e_R_1_hartree", "e_R_2_hartree", "e_d_1_hartree", "e_d_2_hartree", "e_TS_hartree",
+        "orca_filename_swap",
     ]
     df = df[cols].sort_values("reaction_number").reset_index(drop=True)
 
-    max_bond_resid = df["bond_vs_sum_residual_kcal"].max()
-    print(f"\nmax |Bond Energy - sum(channels)| residual: {max_bond_resid:.4f} kcal/mol")
-    if max_bond_resid > 0.5:
-        print(f"WARN: residual > 0.5 kcal/mol — check ORCA EDA parsing")
-
-    print(f"\ndistortion_dft (total):      min={df['distortion_dft'].min():.2f}  max={df['distortion_dft'].max():.2f}  mean={df['distortion_dft'].mean():.2f}  n={len(df)}")
-    print(f"distortion_dipole:           min={df['distortion_dipole'].min():.2f}  max={df['distortion_dipole'].max():.2f}  mean={df['distortion_dipole'].mean():.2f}")
-    print(f"distortion_dipolarophile:    min={df['distortion_dipolarophile'].min():.2f}  max={df['distortion_dipolarophile'].max():.2f}  mean={df['distortion_dipolarophile'].mean():.2f}")
-    print(f"interaction_dft:             min={df['interaction_dft'].min():.2f}  max={df['interaction_dft'].max():.2f}  mean={df['interaction_dft'].mean():.2f}")
-    print(f"e_barrier_dft:               min={df['e_barrier_dft'].min():.2f}  max={df['e_barrier_dft'].max():.2f}  mean={df['e_barrier_dft'].mean():.2f}")
-    n_swap = (df["orca_filename_swap"] == "swap").sum()
-    print(f"\nORCA filename swap resolved: {n_swap} / {len(df)}")
+    # Sanity check
+    n = len(df)
+    n_pos = (df["e_barrier_dft"] > 0).sum()
+    print(f"\n=== DIAS barrier statistics (n={n}) ===")
+    print(f"  positive barrier:  {n_pos}/{n} ({100*n_pos/n:.1f}%)")
+    print(f"  barrier mean:      {df['e_barrier_dft'].mean():+.2f}  range [{df['e_barrier_dft'].min():+.2f}, {df['e_barrier_dft'].max():+.2f}]")
+    print(f"  distortion mean:   {df['distortion_dft'].mean():+.2f}")
+    print(f"  interaction mean:  {df['interaction_dft'].mean():+.2f}")
 
     df_2ch = df[["reaction_number", "reaction_id",
                  "distortion_dft", "interaction_dft", "e_barrier_dft"]]
-
-    out_parquet = args.out_dir / "labels_2ch_paper.parquet"
-    out_csv = args.out_dir / "labels_2ch_paper.csv"
-    out_full = args.out_dir / "labels_5channel_paper.parquet"
-
-    df_2ch.to_parquet(out_parquet, index=False)
-    df_2ch.to_csv(out_csv, index=False)
-    df.to_parquet(out_full, index=False)
-
-    print(f"\nwrote:")
-    print(f"  {out_parquet}  ({len(df_2ch)} rows)")
-    print(f"  {out_csv}")
-    print(f"  {out_full}  ({len(df)} rows, {len(df.columns)} cols)")
+    df_2ch.to_parquet(args.out_dir / "labels_2ch_paper.parquet", index=False)
+    df_2ch.to_csv(args.out_dir / "labels_2ch_paper.csv", index=False)
+    df.to_parquet(args.out_dir / "labels_5channel_paper.parquet", index=False)
+    df_audit.to_parquet(args.out_dir / "labels_5channel_audit_paper.parquet", index=False)
 
     meta = {
-        "count": int(len(df)),
-        "protocol": "wB97X-D3BJ/def2-TZVP + CPCM(water) SPE + EDA-NOCV (ORCA 6.1.1)",
-        "max_bond_residual_kcal": float(max_bond_resid),
-        "orca_filename_swap_count": int(n_swap),
+        "count": int(n),
+        "formula": "paper DIAS (Espley 2024): interaction = barrier - distortion (simple subtraction)",
+        "protocol": "wB97X-D3BJ/def2-TZVP + CPCM(water) SPE (ORCA 6.1.1)",
+        "positive_barrier_frac": float(n_pos) / n,
         "ranges_kcal": {
-            "distortion_dft":           [float(df["distortion_dft"].min()),           float(df["distortion_dft"].max())],
+            "distortion_dft":           [float(df["distortion_dft"].min()),  float(df["distortion_dft"].max())],
+            "interaction_dft":          [float(df["interaction_dft"].min()), float(df["interaction_dft"].max())],
+            "e_barrier_dft":            [float(df["e_barrier_dft"].min()),   float(df["e_barrier_dft"].max())],
             "distortion_dipole":        [float(df["distortion_dipole"].min()),        float(df["distortion_dipole"].max())],
             "distortion_dipolarophile": [float(df["distortion_dipolarophile"].min()), float(df["distortion_dipolarophile"].max())],
-            "interaction_dft":          [float(df["interaction_dft"].min()),          float(df["interaction_dft"].max())],
-            "e_barrier_dft":            [float(df["e_barrier_dft"].min()),            float(df["e_barrier_dft"].max())],
         },
+        "note_on_eda_bond_energy": "ORCA EDA-NOCV Bond Energy (previously used as 'interaction') gave non-physical barriers due to double-counting / CPCM handling ambiguity. Paper's DIAS interaction = barrier - distortion (subtraction) is used instead. 5-channel EDA output preserved in labels_5channel_audit_paper.parquet for audit only.",
     }
     (args.out_dir / "label_schema.json").write_text(json.dumps(meta, indent=2))
+
+    print(f"\nwrote:")
+    print(f"  {args.out_dir}/labels_2ch_paper.parquet  ({len(df_2ch)} rows)")
+    print(f"  {args.out_dir}/labels_5channel_paper.parquet  ({n} rows, full audit)")
+    print(f"  {args.out_dir}/labels_5channel_audit_paper.parquet  ({n} rows, EDA 5-ch)")
+    print(f"  {args.out_dir}/label_schema.json")
     return 0
 
 

@@ -63,10 +63,12 @@ def build_per_seed_df(ml_results: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_summary_df(per_seed: pd.DataFrame) -> pd.DataFrame:
+    # min_test_mae column INTENTIONALLY DROPPED — reporting min cherry-picks best seed
+    # (Nature/Science style: report mean ± std only)
     return (per_seed.groupby(["model", "target"])
             .agg(mean_test_mae=("test_mae", "mean"),
                  std_test_mae=("test_mae", "std"),
-                 min_test_mae=("test_mae", "min"),
+                 n_seeds=("test_mae", "count"),
                  mean_val_mae=("val_mae", "mean"))
             .reset_index())
 
@@ -89,7 +91,7 @@ def bar_by_target(summary: pd.DataFrame, out_path: Path):
                label=m.upper(), color=colors[m])
     ax.set_xticks(x)
     ax.set_xticklabels([t.replace("_dft", "").replace("_", " ") for t in TARGETS], rotation=15, ha="right")
-    ax.set_ylabel("Test MAE (kcal/mol) — mean ± std over 5 seeds")
+    ax.set_ylabel("Test MAE (kcal/mol) — mean ± std over 25 seeds")
     ax.set_title("paper_reproduction_203: model comparison per target")
     ax.axhline(1.0, ls="--", c="gray", alpha=0.5, label="1 kcal/mol threshold")
     ax.legend()
@@ -134,16 +136,17 @@ def write_report(summary: pd.DataFrame, per_seed: pd.DataFrame, out_md: Path):
     lines.append("Reproduction of Espley et al. 2024 (*Digital Discovery* **3**, 2479, DOI 10.1039/D4DD00224E) —")
     lines.append("SQM (AM1)-based ML prediction of DFT distortion + interaction energies.\n")
     lines.append("## Setup\n")
-    lines.append("- **Dataset**: 203 / 400 dipolar cycloaddition reactions (snapshot 2026-08-04, 5/5 ORCA jobs complete)")
-    lines.append("- **DFT target**: ωB97X-D3BJ/def2-TZVP + CPCM(water) SPE + EDA-NOCV (ORCA 6.1.1)")
+    lines.append("- **Dataset (gated cohort)**: 121 / 203 rxns passing structure gate (d_forming \u2208 [1.8, 3.2] \u00c5) + barrier > 0")
+    lines.append("- **Structure gate excluded**: 82 rxns (49 bonded d < 1.8 \u00c5, 33 nonphysical barrier). See results/excluded_rxns.csv")
+    lines.append("- **DFT target formula**: paper DIAS (Espley 2024) — barrier = E_TS − E_R₁ − E_R₂; interaction = barrier − distortion. All 5 SPEs at ωB97X-D3BJ/def2-TZVP + CPCM(water) via ORCA 6.1.1. **NOT** using EDA-NOCV Bond Energy (gave non-physical barriers).")
     lines.append("- **AM1 features**: Gaussian 16 `#P AM1 Freq NoSymm` (gas phase), Mulliken + APT charges + Morfeus (BuriedVolume, SASA, Sterimol)")
     lines.append("- **5-atom labels**: user-manual (400/400 confirmed via port 5578 viz)")
     lines.append("- **Fragment A/B partition + type**: user-manual (400/400)")
     lines.append("- **Models**: Ridge, KRR (rbf), SVR (rbf), RandomForest — sklearn only (Keras 3 NN branch skipped)")
-    lines.append("- **Splits**: 80/10/10 train/val/test per seed, 5 seeds `[23, 22, 14, 1, 2]`")
-    lines.append("- **Features**: 155 after correlation + variance filter (from 309 raw)\n")
+    lines.append("- **CV**: 80/10/10 Monte Carlo × 25 seeds `{1..25} \ {23}` + paper seeds `{23, 22, 14, 1, 2}`\n- **Feature count**: filtered from 307 to 154 via correlation (|r| > 0.99) + variance (< 0.05) thresholds")
+    lines.append("")
 
-    lines.append("## Test MAE — mean ± std over 5 seeds (kcal/mol)\n")
+    lines.append("## Test MAE — mean ± std over 25 seeds (kcal/mol)\n")
     lines.append("| target | Ridge | KRR | SVR | RF | best |")
     lines.append("|---|---|---|---|---|---|")
     for t in TARGETS:
@@ -163,7 +166,7 @@ def write_report(summary: pd.DataFrame, per_seed: pd.DataFrame, out_md: Path):
         lines.append("| " + " | ".join(cells) + " |")
 
     lines.append("\n## Comparison with paper Table 1 (ds3, N=730)\n")
-    lines.append("| target | our best (5-seed mean) | paper ds3 SVR | paper pre-ML AM1-DFT |")
+    lines.append("| target | our best (25-seed mean) | paper ds3 SVR | paper pre-ML AM1-DFT |")
     lines.append("|---|---|---|---|")
     for t in TARGETS:
         our_best = summary[summary["target"] == t]["mean_test_mae"].min()

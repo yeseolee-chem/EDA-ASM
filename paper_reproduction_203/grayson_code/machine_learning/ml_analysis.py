@@ -107,7 +107,7 @@ class General():
         # Check which models are tested in full.
         self.done = []
         for model in self.ml_results['model_target']:
-            if len(self.ml_results['random_state'][self.ml_results['model_target'] == model].iloc[0]) > 4:
+            if len(self.ml_results['random_state'][self.ml_results['model_target'] == model].iloc[0]) > 24:  # patched: allow up to 25 seeds for N=121 CV rigor
                 self.done.append(model)
     
         # Pull out path to dataset.
