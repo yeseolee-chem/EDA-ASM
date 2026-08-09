@@ -310,10 +310,10 @@ class SingleTask():
                      'l1_ratio':[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
                      'tol':[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
                      'gamma':{'krr':[None, 0.1, 0.5, 0.9], 'svr':['auto', 'scale']},
-                     'epsilon':[0.001, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20],  # PATCH-7ch: channel scales span ~50x
-                     'C':[1, 30, 50, 100, 300],  # PATCH-7ch: 4/6 paper targets sat at old ceiling
-                     'coef0': [0],  # PATCH-7ch: ignored by rbf SVR
-                     'degree': [3],  # PATCH-7ch: ignored by rbf SVR
+                     'epsilon':[0.001, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+                     'C':[1, 30, 50],
+                     'coef0': [0, 1], 
+                     'degree': [1, 2, 3],
                      'max_depth':[3, 5, 7],
                      'n_estimators':[10, 50, 100],
                      'max_features':[10, 20, 30],
@@ -425,12 +425,25 @@ class SingleTask():
         
 
 
-        # Pull out each target and check checkpoint file.
+        # PATCHED: only tune the (target, network_size) pair specified via env vars
+        # ONLY_TARGET and ONLY_NN_SIZE. Skip everything else.
+        only_target = os.environ.get('ONLY_TARGET')
+        only_nn_size = int(os.environ.get('ONLY_NN_SIZE', 0))
+        assert only_target, "set ONLY_TARGET env var"
+        assert only_nn_size in (2, 4), "set ONLY_NN_SIZE env var to 2 or 4"
+
         for target in data_dict['both_X_y']['y_train'].keys():
+            if target != only_target:
+                continue
             for network_size in [2, 4]:
+                if network_size != only_nn_size:
+                    continue
                 model_name = f'{network_size}_st_nn_{target}'
-                if model_name in Checkpointing._read_checkpoint():
-                    logger.info(f'Model already tuned - skipping {model_name}')
+                if os.path.exists(f'nn_hps_{target}_{network_size}L.pkl'):
+                    logger.info(f'output pkl exists — skipping {model_name}')
+                    continue
+                if False:  # dead branch to preserve indent level of below block
+                    pass
                 else:
                     # Build the tuner.
                     tuner = kt.Hyperband(
@@ -497,10 +510,22 @@ class SingleTask():
                                 Validation MAE {val_mae}\n \
                                 ---'
                             )       
-                    # Remove directory containing trials.
-                    shutil.rmtree(target, ignore_errors=False, onerror=None)
-                    # Checkpoint results.
-                    Checkpointing._checkpoint(tuned_dict)
+                    # PATCHED: save to per-target pkl (not shared checkpoint.pkl)
+                    out = {
+                        'model_name': model_name,
+                        'target': target,
+                        'network_size': network_size,
+                        'best_hps': dict(best_hps.values),
+                        'train_mae': float(train_mae),
+                        'val_mae': float(val_mae),
+                        'test_mae': float(test_mae),
+                        'wall_time_seconds': int(t1 - t0),
+                    }
+                    out_pkl = f'nn_hps_{target}_{network_size}L.pkl'
+                    with open(out_pkl, 'wb') as f:
+                        pickle.dump(out, f)
+                    logger.info(f'saved: {out_pkl}')
+                    # Keep trial dir (per-task cwd is isolated, no conflict)
 
         return tuned_dict
 
@@ -522,23 +547,15 @@ def main():
     logger.addHandler(fh)
     logger.addHandler(ch)
 
-    # Code to hyperparameter tune.
-    try:    
-        # Load data and extract targets.
+    # PATCHED: skip sklearn portion entirely — only run NN for ONE (target, network_size)
+    try:
         df, rxn_number = General._load_data()
         X, y = General._get_dft_features(df)
-        # Perform Train/Test/Validation splits and standardise.
         splits_dict = General._perform_train_test_split(X, y)
         data_dict = General._standardise_data(splits_dict)
-        # Run hyperparameter tuning.
-        ## Single Task
-        current_task = 'single_task'
-        logger.info('Single Task Models\n---')
-        st_tuned_dict = SingleTask._runner(data_dict)
+        current_task = 'single_task_nn_isolated'
+        logger.info(f'PATCHED: skipping sklearn. NN target={os.environ.get("ONLY_TARGET")}, size={os.environ.get("ONLY_NN_SIZE")}')
         st_nn_tuned_dict = SingleTask._single_task_nn(data_dict)
-        # Save results
-        General._save([st_tuned_dict, st_nn_tuned_dict])
-        logger.info('Tuned hyperparameters saved to hps.pkl.')
 
     except KeyboardInterrupt:
         logger.info(f'Keyboard interupt - checkpointing current task ({current_task})')

@@ -535,7 +535,7 @@ def main():
         current_task = 'single_task'
         logger.info('Single Task Models\n---')
         st_tuned_dict = SingleTask._runner(data_dict)
-        st_nn_tuned_dict = SingleTask._single_task_nn(data_dict)
+        st_nn_tuned_dict = {}  # PATCH: NN done separately by nn_one_target.py per-target array
         # Save results
         General._save([st_tuned_dict, st_nn_tuned_dict])
         logger.info('Tuned hyperparameters saved to hps.pkl.')

@@ -367,7 +367,7 @@ class CorrCheck():
         #target = CorrCheck._get_target(targets)
         X = df.drop(columns=[target])
         all_features = X.columns.tolist()
-        selector = VarianceThreshold(threshold=0.05) 
+        selector = VarianceThreshold(threshold=1e-10)  # PATCH-7ch: scale-free (constants only); 0.05 on raw units killed 14/41 descriptors 
         selector.fit_transform(X)
         features = selector.get_feature_names_out()
         

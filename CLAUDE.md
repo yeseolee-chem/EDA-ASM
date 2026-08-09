@@ -17,10 +17,42 @@
 - **If a job hits the 48h wall, just re-`sbatch` the same script.**
   Idempotency + `if out_path.exists(): return` in the runner makes
   this safe.
-- **We may hold up to 10 concurrent SLURM jobs.** When designing
-  arrays or multi-model runs, distribute across partitions so total
-  concurrency stays ≤ 10. Prefer parallel across gpu3 / gpu4 / gpu5
-  over serialising on one partition.
+- **SLURM quota: at most 12 tasks in the queue, at most 10 running
+  at once.** Both caps are on TASKS, not on wrapper submissions —
+  **an array counts as one task per array element** on this cluster,
+  not "one submission". Verified 2026-07-23 when a 30-task A6 array
+  was blocked with `AssocMaxSubmitJobLimit` while only 2 sbatch
+  wrappers (containing 10 pending array tasks) were on record.
+  The 10-job cap on RUNNING and the 12-task cap on submitted
+  (PENDING + RUNNING) both apply per task. Practical consequences:
+    - A single `sbatch --array=0-N%K` submission uses N+1 slots
+      against the 12-cap (not 1). If N+1 > 12, submission fails.
+    - Design arrays with `N < 12 − (currently_pending)` and fan out
+      the rest through `--dependency=afterany` chains or by
+      resubmitting once the first batch drains.
+    - Before every `sbatch`, check `squeue -u $USER -h | wc -l` —
+      that count is task-level and is what the 12-cap tests against.
+  When designing multi-model runs, distribute across partitions so
+  RUNNING stays ≤ 10 and total submitted tasks stay ≤ 12.
+- **Partition selection: pick whichever has idle capacity, don't
+  be picky about which one.** Within a given resource class (CPU vs
+  GPU), the specific partition does not matter — cpu1 and cpu2 are
+  interchangeable for our workloads, and gpu3 / gpu4 / gpu5 are
+  interchangeable for training / MACE feature extraction. The right
+  answer is *whichever partition currently has idle nodes and no
+  pending queue*, so the job starts immediately instead of sitting
+  in `PENDING (Priority)` on a busy partition while a sister
+  partition sits idle. Before `sbatch`:
+    - CPU jobs: `sinfo -p cpu1,cpu2 -o "%.9P %.6t %C"` and pick the
+      one with the largest idle CPU count (the `I` column of
+      `A/I/O/T`). If both are packed, either is fine — take one.
+    - GPU jobs: `sinfo -p gpu3,gpu4,gpu5 -o "%.9P %.6t %.10G %C"`
+      and target the partition with a free GPU. Same idea.
+  When fanning out across ≥ 2 jobs of the same kind, split them
+  across partitions rather than piling them on one — the goal is to
+  minimise total wall time, not to standardise on a favourite
+  partition. Only override this rule when a specific partition is
+  required (e.g. software licence pinned to one node).
 - **NO long-running processes on the login node — ever.** This is
   a stricter reading of the "login is read-only" rule and includes
   everything below, not just python/xtb/MACE:
@@ -39,8 +71,13 @@
   these — never a login-node daemon:**
     1. **SLURM job array with a concurrency cap.** `sbatch
        --array=0-N%K script.sh` runs at most `K` array tasks at a
-       time. `K = 10` matches our concurrency limit. This is
-       almost always the right answer and needs no launcher.
+       time. `K = 10` matches our RUNNING concurrency limit.
+       **Array tasks each count against the 12-task submit cap**, so
+       `N + 1 ≤ 12` is the ceiling on a *single* array under an
+       otherwise-empty queue. To fan out beyond 12 tasks, split into
+       sequential arrays chained with `--dependency=afterany` (see
+       (3)) or resubmit the next batch once the first drains. No
+       launcher process on the login node.
     2. **Submit the launcher itself as an sbatch job** on a small
        cpu partition (`--time=48:00:00`, `--mem=2G`, `--cpus-per-task=1`,
        e.g. cpu2). The launcher's polling + `sbatch` calls then

@@ -333,36 +333,36 @@ class SingleTask():
         tuned_dict = {}
         # Load in the models and hyperparameters.
         models, hp_values = SingleTask._models()
-        # Loop through evert model.
+        # PATCH-per-target: run ONE (model, target) via env vars, save isolated pkl
+        only_model = os.environ.get('ONLY_MODEL')
+        only_target = os.environ.get('ONLY_TARGET')
+        assert only_model and only_target, "set ONLY_MODEL + ONLY_TARGET env vars"
+
         for model in models.keys():
-            logger.info(f'Running {model}')
-            
+            if model != only_model: continue
             hp_dict = {}
             for hp in models[model]['hp']:
-                # Deal with differences in gamma hyperparameter.
                 if hp == 'gamma':
                     hp_dict[hp] = hp_values[hp][model]
                 else:
                     hp_dict[hp] = hp_values[hp]
-            # Loop through possible targets and perform the grid search for best hyperparameters.
             for target in data_dict['just_X']['y_train'].keys():
+                if target != only_target: continue
                 model_name = str(model+'_'+target)
-                if model_name in Checkpointing._read_checkpoint():
-                    logger.info(f'Model already tuned - skipping {model_name}')
-                else:
-                    t0 = time.time()
-                    grid = GridSearchCV(models[model]['model'], hp_dict, cv=5, scoring='neg_mean_absolute_error')
-                    grid.fit(data_dict['just_X']['X_train'], data_dict['just_X']['y_train'][target])
-                    t1 = time.time()
-                    total_t = datetime.timedelta(seconds=int(t1 - t0))
-                    # Log information.
-                    logger.info(
-                        f'{model} on {target} finished running {total_t}.\n \
-                        Train MAE: {np.round(np.abs(grid.best_score_), 3)}'
-                    )
-                    tuned_dict[model_name] = {'b_hps': grid.best_params_, 'train_mae':np.abs(grid.best_score_)}
-                # Checkpoint results.
-                Checkpointing._checkpoint(tuned_dict)
+                out_pkl = f'sk_hps_{model_name}.pkl'
+                if os.path.exists(out_pkl):
+                    logger.info(f'output pkl exists - skipping {model_name}')
+                    continue
+                t0 = time.time()
+                grid = GridSearchCV(models[model]['model'], hp_dict, cv=5, scoring='neg_mean_absolute_error')
+                grid.fit(data_dict['just_X']['X_train'], data_dict['just_X']['y_train'][target])
+                t1 = time.time()
+                total_t = datetime.timedelta(seconds=int(t1 - t0))
+                logger.info(f'{model} on {target} finished running {total_t}.\n Train MAE: {np.round(np.abs(grid.best_score_), 3)}')
+                tuned_dict[model_name] = {'b_hps': grid.best_params_, 'train_mae': np.abs(grid.best_score_)}
+                import pickle
+                pickle.dump(tuned_dict[model_name], open(out_pkl, 'wb'))
+                logger.info(f'saved: {out_pkl}')
         return tuned_dict
 
     def _nn_model_builder(hp):
@@ -535,7 +535,7 @@ def main():
         current_task = 'single_task'
         logger.info('Single Task Models\n---')
         st_tuned_dict = SingleTask._runner(data_dict)
-        st_nn_tuned_dict = SingleTask._single_task_nn(data_dict)
+        st_nn_tuned_dict = {}  # PATCH: NN done separately by nn_one_target.py per-target array
         # Save results
         General._save([st_tuned_dict, st_nn_tuned_dict])
         logger.info('Tuned hyperparameters saved to hps.pkl.')

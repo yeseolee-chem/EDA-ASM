@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=audit_2frag
-#SBATCH --partition=cpu2
+#SBATCH --partition=cpu1,cpu2
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
