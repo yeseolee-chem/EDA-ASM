@@ -13,7 +13,9 @@ COHORT_PATH = OUT / "cohort_subset.parquet"
 XTB_SHARDS = "/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/bath_1480/tt_eda_kisti_results/xtb_channels"
 MANIFEST = "/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/bath_1480/tt_eda_kisti_results/data/manifest.parquet"
 
-ORACLE_FEATURES = {"disp_xtb", "dispd4_xtb"}
+ORACLE_FEATURES = {"disp_xtb", "dispd4_xtb", "eint_total_xtb"}
+# strain frag swap fix: xTB frag numbering is inverted vs DFT labels (audit 2026-08-21)
+SWAP_PAIRS = [("strain_1_xtb", "strain_2_xtb")]
 
 
 def main():
@@ -27,6 +29,12 @@ def main():
         if c in xtb.columns:
             xtb = xtb.drop(columns=[c])
             print(f"  excluded oracle: {c}")
+    # Fix strain frag swap
+    for a, b in SWAP_PAIRS:
+        if a in xtb.columns and b in xtb.columns:
+            xtb = xtb.rename(columns={a: f"__TMP__{a}"})
+            xtb = xtb.rename(columns={f"__TMP__{a}": b, b: a})
+            print(f"  swapped: {a} ↔ {b}")
     print(f"xTB shards: {len(shards)}, rows: {len(xtb)}, cols: {len(xtb.columns)}")
 
     df = cohort.merge(manifest[["rxn_id", "imag_freq_cm1"]],
@@ -46,7 +54,7 @@ def main():
     for c in feature_cols:
         physics[c] = physics[c].fillna(physics[c].median())
 
-    out_path = OUT / "physics_24.pkl"
+    out_path = OUT / "physics_v2.pkl"  # versioned (not overwriting old)
     physics.to_pickle(out_path)
     print(f"physics (clean): {physics.shape} → {out_path}")
     print(f"Columns: {list(physics.columns)}")

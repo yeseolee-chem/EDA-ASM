@@ -22,7 +22,7 @@ FOLD = int(os.environ["FOLD"])
 SEED = int(os.environ["SEED"])
 
 COHORT_DIR = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/bath1480_probe/experiments/cohort_v1")
-OUT_ROOT = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/bath1480_probe/experiments/results/phase4_stacked_xgb_mace")
+OUT_ROOT = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/bath1480_probe/experiments/results/phase4_stacked_xgb_mace_v2")
 OUT_DIR = OUT_ROOT / f"fold_{FOLD}" / f"seed_{SEED}"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -39,7 +39,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def load_data():
     labels = pd.read_pickle(COHORT_DIR / "labels_v1.pkl")
-    physics = pd.read_pickle(COHORT_DIR / "physics_24.pkl")
+    physics = pd.read_pickle(COHORT_DIR / "physics_v2.pkl")  # oracle-clean + strain swap fix
     df = labels.merge(physics, on="reaction_number")
     return df
 

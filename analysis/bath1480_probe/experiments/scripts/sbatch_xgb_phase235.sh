@@ -26,9 +26,9 @@ PHASE=${PHASES[$PHASE_IDX]}
 SEED=${SEEDS[$SEED_IDX]}
 
 EXP=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/bath1480_probe/experiments
-export DATASET=$EXP/cohort_v1/${PHASE}_dataset.pkl
+export DATASET=$EXP/cohort_v1/${PHASE}_dataset_v2.pkl
 export SEED=$SEED
-export OUT_DIR=$EXP/results/${PHASE}_paper/seed_$SEED
+export OUT_DIR=$EXP/results/${PHASE}_paper_v2/seed_$SEED
 
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
