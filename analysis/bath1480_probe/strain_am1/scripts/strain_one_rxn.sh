@@ -30,6 +30,28 @@ if [ -f strain.json ]; then
     exit 0
 fi
 
+# Atomic lock via mkdir. Two workers racing here — only one wins.
+# Stale lock (crashed worker) — take over if older than 6 h.
+if ! mkdir "$WORK/.lock" 2>/dev/null; then
+    LOCK_AGE=$(( $(date +%s) - $(stat -c %Y "$WORK/.lock" 2>/dev/null || echo 0) ))
+    if [ $LOCK_AGE -lt 21600 ]; then
+        echo "SKIP $RXN_TAG: locked by another worker (age ${LOCK_AGE}s)"
+        exit 0
+    fi
+    echo "WARN $RXN_TAG: taking over stale lock (age ${LOCK_AGE}s)"
+fi
+trap 'rmdir "$WORK/.lock" 2>/dev/null' EXIT
+
+# Also detect ORIGINAL running workers that predate the lock feature —
+# they have recent frag*_opt.inp activity but no strain.json.
+if [ -z "${STRAIN_IGNORE_ACTIVITY:-}" ]; then
+    RECENT=$(find "$WORK" -maxdepth 1 -name "frag*_opt.inp" -mmin -360 2>/dev/null | head -1)
+    if [ -n "$RECENT" ]; then
+        echo "SKIP $RXN_TAG: recent frag activity from lock-less worker"
+        exit 0
+    fi
+fi
+
 if [ ! -f "$DATA/frag1_am1.xyz" ] || [ ! -f "$DATA/frag2_am1.xyz" ]; then
     echo "FAIL $RXN_TAG: missing frag xyz in $DATA"
     exit 2
@@ -38,25 +60,65 @@ fi
 echo "=== $RXN_TAG  start=$(date -Is)  host=$(hostname) ==="
 
 # ORCA header helpers -------------------------------------------------
-opt_header() { cat <<EOF
-! Opt B3LYP D3BJ def2-SVP CPCM(water) NoSym TightSCF
-%maxcore 3500
-%pal nprocs 4 end
+# STRAIN_RETRY_STRATEGY:
+#   unset          : default (nprocs 4, MaxIter 300, CPCM/SMD)
+#   slowconv       : SlowConv + MaxIter 500 (default retry)
+#   slowconv2p     : slowconv + nprocs 2 (avoid MPI race)
+#   stable_scf     : slowconv2p + SCF DirectResetFreq 1 (SCF stability)
+#   no_solv        : stable_scf + gas-phase (drops CPCM — labels lose solvation)
+STRAT="${STRAIN_RETRY_STRATEGY:-${STRAIN_RETRY_MODE:-0}}"
+case "$STRAT" in
+    1|slowconv)
+        OPT_TAGS="Opt SlowConv"; SP_TAGS="SP SlowConv"; NPROCS=4; OPT_MAXITER=500; USE_CPCM=1; EXTRA_SCF="";;
+    slowconv2p)
+        OPT_TAGS="Opt SlowConv"; SP_TAGS="SP SlowConv"; NPROCS=2; OPT_MAXITER=500; USE_CPCM=1; EXTRA_SCF="";;
+    stable_scf)
+        OPT_TAGS="Opt SlowConv"; SP_TAGS="SP SlowConv"; NPROCS=2; OPT_MAXITER=500; USE_CPCM=1
+        EXTRA_SCF="%scf DirectResetFreq 1 DIISMaxEq 10 end";;
+    no_solv)
+        OPT_TAGS="Opt SlowConv"; SP_TAGS="SP SlowConv"; NPROCS=2; OPT_MAXITER=500; USE_CPCM=0
+        EXTRA_SCF="%scf DirectResetFreq 1 DIISMaxEq 10 end";;
+    tight_opt)
+        # Local-basin escape fix: TightOpt + tiny trust radius + Hessian at start.
+        OPT_TAGS="TightOpt SlowConv"; SP_TAGS="SP SlowConv"; NPROCS=4; OPT_MAXITER=500; USE_CPCM=1; EXTRA_SCF="";;
+    0|"")
+        OPT_TAGS="Opt"; SP_TAGS="SP"; NPROCS=4; OPT_MAXITER=300; USE_CPCM=1; EXTRA_SCF="";;
+    *)
+        echo "WARN: unknown STRAIN_RETRY_STRATEGY=$STRAT (using default)"
+        OPT_TAGS="Opt"; SP_TAGS="SP"; NPROCS=4; OPT_MAXITER=300; USE_CPCM=1; EXTRA_SCF="";;
+esac
+cpcm_block() {
+    [ "$USE_CPCM" = "1" ] && cat <<EOF
 %cpcm
   smd true
   smdsolvent "water"
 end
 EOF
 }
-sp_tzvp_header() { cat <<EOF
-! SP B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF
-%maxcore 3500
-%pal nprocs 4 end
-%cpcm
-  smd true
-  smdsolvent "water"
-end
-EOF
+cpcm_kw() {
+    [ "$USE_CPCM" = "1" ] && echo "CPCM(water)" || echo ""
+}
+opt_header() {
+    echo "! $OPT_TAGS B3LYP D3BJ def2-SVP $(cpcm_kw) NoSym TightSCF"
+    echo "%maxcore 3500"
+    echo "%pal nprocs $NPROCS end"
+    echo "%geom"
+    echo "  MaxIter $OPT_MAXITER"
+    # tight_opt strategy: escape wrong-basin by tighter search
+    if [ "$STRAT" = "tight_opt" ]; then
+        echo "  Trust -0.1"
+        echo "  Calc_Hess true"
+    fi
+    echo "end"
+    [ -n "$EXTRA_SCF" ] && echo "$EXTRA_SCF"
+    cpcm_block
+}
+sp_tzvp_header() {
+    echo "! $SP_TAGS B3LYP D3BJ def2-TZVP $(cpcm_kw) NoSym TightSCF"
+    echo "%maxcore 3500"
+    echo "%pal nprocs $NPROCS end"
+    [ -n "$EXTRA_SCF" ] && echo "$EXTRA_SCF"
+    cpcm_block
 }
 
 xyz_body() {

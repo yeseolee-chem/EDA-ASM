@@ -10,7 +10,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=4
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=8G
+#SBATCH --mem=16G
 #SBATCH --array=0-4
 #SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/bath_1480/strain_am1/logs/strain.%A_%a.log
 
@@ -26,7 +26,8 @@ export MKL_NUM_THREADS=1
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
 
-# node-local scratch (avoid GPFS churn on ORCA .tmp files)
+# Node-local /tmp scratch (GPFS TMPDIR fills strain_am1/work quota fast when
+# 10 tasks × ORCA 8-proc × ~300MB scratch = ~24 GB concurrent).
 SCRATCH=/tmp/strain_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}
 mkdir -p $SCRATCH
 export TMPDIR=$SCRATCH
@@ -71,5 +72,5 @@ done
 
 echo "=== task=$TASK  done=$n_done  skipped=$n_skip  failed=$n_fail  time=$(date -Is) ==="
 
-cd /tmp && rm -rf $SCRATCH
+cd / && rm -rf $SCRATCH
 exit 0
