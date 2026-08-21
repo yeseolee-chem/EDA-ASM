@@ -36,6 +36,33 @@ wait_jobs() {
 
 echo "=== orch_recompute start $(date -Is) ==="
 
+# --- Step 0: build v2 datasets + hard gate on persistent artifacts ---
+source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
+conda activate distintml_repro
+python3 $SCRIPTS/build_v2_datasets.py || { echo "FAIL: v2 builder"; exit 10; }
+python3 - <<'PY' || { echo "FAIL: v2 gate"; exit 11; }
+import pandas as pd, numpy as np
+from pathlib import Path
+EXP = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/bath1480_probe/experiments")
+ORACLE = ["disp_xtb", "dispd4_xtb", "eint_total_xtb"]
+for tag in ["phase2","phase3","phase5"]:
+    p = EXP/f"cohort_v1/{tag}_dataset_v2.pkl"
+    assert p.exists(), f"MISSING {p}"
+    df = pd.read_pickle(p)
+    assert len(df) == 3504, f"{tag}: rows={len(df)} != 3504"
+    for c in ORACLE:
+        assert c not in df.columns, f"{tag}: oracle '{c}' still present"
+    if "strain_1_xtb" in df.columns and "strain_2_xtb" in df.columns:
+        r1 = np.corrcoef(df["strain_1_xtb"], df["d1_own_dft"])[0,1]
+        r2 = np.corrcoef(df["strain_1_xtb"], df["d2_own_dft"])[0,1]
+        assert abs(r1) > abs(r2), f"{tag}: strain swap NOT applied (|r(d1)|={abs(r1):.3f} < |r(d2)|={abs(r2):.3f})"
+        print(f"  {tag}: gate OK  |r(strain_1,d1)|={abs(r1):.3f}  |r(strain_1,d2)|={abs(r2):.3f}")
+    else:
+        print(f"  {tag}: strain_1_xtb / strain_2_xtb absent (τ dropped) — no swap check")
+    print(f"  {tag}: shape={df.shape}, oracle features absent ✓")
+print("=== v2 gate passed ===")
+PY
+
 # --- Sklearn Phase 2/3/5 (v2 datasets) ---
 wait_for_slot 1
 JSKL=$(sbatch --parsable $SCRIPTS/sbatch_phase235_v2_sklearn.sh)

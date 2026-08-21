@@ -3,11 +3,24 @@
 
 Changes vs 07_aggregate_v2.py:
   1. Reads from phase{2,3,5}_paper_v2/ and phase4_stacked_xgb_mace_v2/.
-  2. NMAE normalization: MAD (median absolute deviation) of the label across
-     all rxns (not per-seed test range/iloc[0]). Constant across configs → fair.
+  2. NMAE normalization: **meanAD** (mean absolute deviation) of the label across
+     all rxns (v9 house standard; not per-seed test range/iloc[0]). Constant
+     across configs → fair.
   3. disp channel marked as ORACLE (analytical D4-derived), excluded from
      best-model ranking narrative but still reported in tables/figures.
   4. Same 8-figure split (P1_P3_P4, P2_P3_P5) as v2.
+  5. Adds **control arm** (Phase 2ctl/3ctl/5ctl): armB-v2 features × Espley
+     original DFT labels — isolates feature-set effect from label-set effect
+     for clean Phase 1 comparison. No extra HPC (v2 datasets contain both
+     Espley `_dft` and our `_own_dft` targets; ml_analysis trains all in
+     single run).
+
+Methodology notes (see README):
+  - HPs (`hps_phase23_v2.pkl`) are aliased from paper Arm A tuning (46
+    Espley features). No per-arm re-tuning against v2 60-feature space.
+    Sklearn arms are therefore slightly HP-underfit for their actual
+    feature set; XGB advantage is conservative (XGB uses fixed defaults
+    + early-stopping-on-val).
 """
 from pathlib import Path
 import json
@@ -24,11 +37,15 @@ COMP = RESULTS / "comparison_v3"
 COMP.mkdir(parents=True, exist_ok=True)
 
 PHASE_COLORS = {
-    "Phase 1 (paper)":     "#7f7f7f",
-    "Phase 2 (τ=1e-10)":   "#4c9fd8",
-    "Phase 3 (τ=0.05)":    "#3d9d9b",
-    "Phase 4 (XGB+MACE)":  "#e07a5f",
-    "Phase 5 (no filter)": "#9b59b6",
+    "Phase 1 (paper)":            "#7f7f7f",
+    "Phase 2 (τ=1e-10)":          "#4c9fd8",
+    "Phase 3 (τ=0.05)":           "#3d9d9b",
+    "Phase 4 (XGB+MACE)":         "#e07a5f",
+    "Phase 5 (no filter)":        "#9b59b6",
+    # Control arms — armB-v2 features × Espley original labels
+    "Phase 2ctl (Espley y)":      "#a8d0e6",
+    "Phase 3ctl (Espley y)":      "#a8dfd9",
+    "Phase 5ctl (Espley y)":      "#d1b3d9",
 }
 MODEL_ORDER = ["ridge", "krr", "svr", "rf", "xgb"]
 
@@ -53,16 +70,23 @@ PHASE4_TARGETS = {
     "pauli": "pauli_dft", "oi": "oi_dft", "elst": "elst_dft",
     "disp": "disp_dft", "cpcm": "cpcm_dft", "cds": "cds_dft",
 }
+# Control arm: armB-v2 features × Espley original DFT labels
+# — isolates feature-set effect from label-set effect for Phase 1 comparison
+PHASE_CTL_TARGETS = {
+    "d1":          "distortion_energy_1_dft",
+    "d2":          "distortion_energy_2_dft",
+    "interaction": "interaction_energies_dft",
+}
 ORACLE_CHANNELS = {"disp"}  # D4 dispersion is analytical from geometry — declared oracle
 
 
 def compute_label_mad(dataset_pkl, target_col):
-    """MAD of a target across the whole cohort (all rxns)."""
+    """meanAD of a target across the whole cohort (v9 house standard)."""
     df = pd.read_pickle(dataset_pkl)
     if target_col not in df.columns:
         return None
-    v = df[target_col].values
-    return float(np.median(np.abs(v - np.median(v))))
+    v = df[target_col].values.astype(float)
+    return float(np.mean(np.abs(v - v.mean())))
 
 
 def extract_paper_pkl(pkl_dir):
@@ -154,11 +178,15 @@ def build_records(p1, p2, p3, p5, p4, mad_lookup):
                     "mad": mad, "n_seeds": len(sub), "oracle": canon in ORACLE_CHANNELS,
                 })
 
-    add_phase("Phase 1 (paper)",     p1, PHASE1_TARGETS, MODEL_ORDER + ["XGB+MACE"], "phase1")
-    add_phase("Phase 2 (τ=1e-10)",   p2, COMMON_OWN,      MODEL_ORDER, "phase2")
-    add_phase("Phase 3 (τ=0.05)",    p3, COMMON_OWN,      MODEL_ORDER, "phase3")
-    add_phase("Phase 5 (no filter)", p5, COMMON_OWN,      MODEL_ORDER, "phase5")
-    add_phase("Phase 4 (XGB+MACE)",  p4, PHASE4_TARGETS,  ["XGB+MACE"], "phase4")
+    add_phase("Phase 1 (paper)",         p1, PHASE1_TARGETS,      MODEL_ORDER + ["XGB+MACE"], "phase1")
+    add_phase("Phase 2 (τ=1e-10)",       p2, COMMON_OWN,           MODEL_ORDER, "phase2")
+    add_phase("Phase 3 (τ=0.05)",        p3, COMMON_OWN,           MODEL_ORDER, "phase3")
+    add_phase("Phase 5 (no filter)",     p5, COMMON_OWN,           MODEL_ORDER, "phase5")
+    add_phase("Phase 4 (XGB+MACE)",      p4, PHASE4_TARGETS,       ["XGB+MACE"], "phase4")
+    # Control arm: same v2 features, Espley original labels (feature-only ablation vs Phase 1)
+    add_phase("Phase 2ctl (Espley y)",   p2, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase2_ctl")
+    add_phase("Phase 3ctl (Espley y)",   p3, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase3_ctl")
+    add_phase("Phase 5ctl (Espley y)",   p5, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase5_ctl")
     return pd.DataFrame(rows)
 
 
@@ -229,7 +257,7 @@ def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel,
 
 
 def main():
-    print("v3 aggregation — oracle-clean + MAD-normalized NMAE")
+    print("v3 aggregation — oracle-clean + meanAD-normalized NMAE + control arm")
     # Label MAD lookup (canonical MAD per dataset+target)
     ds = {"phase1": EXP/"cohort_v1/features_espley_v1.pkl",  # not really — Phase 1 uses labels_v1
           "phase2": EXP/"cohort_v1/phase2_dataset_v2.pkl",
@@ -240,7 +268,10 @@ def main():
     # Simpler: derive MAD once per canonical from phase5_dataset_v2 (all label cols there)
     p5_ds = pd.read_pickle(EXP/"cohort_v1/phase5_dataset_v2.pkl")
     labels_v1 = pd.read_pickle(EXP/"cohort_v1/labels_v1.pkl")
-    def mad(series): return float(np.median(np.abs(series - np.median(series))))
+    def mad(series):
+        # v9 house standard: MEAN absolute deviation (not median-AD).
+        v = np.asarray(series, dtype=float)
+        return float(np.mean(np.abs(v - v.mean())))
     mad_lookup = {}
     for name, tgt in [("phase2","d1_own_dft"),("phase2","d2_own_dft"),("phase2","interaction_own_dft"),
                        ("phase3","d1_own_dft"),("phase3","d2_own_dft"),("phase3","interaction_own_dft"),
@@ -250,7 +281,12 @@ def main():
         for c in ["pauli_dft","oi_dft","elst_dft","disp_dft","cpcm_dft","cds_dft"]:
             if c in p5_ds.columns: mad_lookup[(name, c)] = mad(p5_ds[c])
     for c in ["distortion_energy_1_dft","distortion_energy_2_dft","interaction_energies_dft"]:
-        if c in p5_ds.columns: mad_lookup[("phase1", c)] = mad(p5_ds[c])
+        if c in p5_ds.columns:
+            v = mad(p5_ds[c])
+            mad_lookup[("phase1", c)] = v
+            # Control arms use same Espley targets across features
+            for tag in ["phase2_ctl","phase3_ctl","phase5_ctl"]:
+                mad_lookup[(tag, c)] = v
     # Phase 4 labels (d1_own without _dft suffix — from labels_v1)
     for c_own, tgt_col in [("d1_own","d1_own"),("d2_own","d2_own")]:
         if tgt_col in labels_v1.columns: mad_lookup[("phase4", c_own)] = mad(labels_v1[tgt_col])
@@ -283,8 +319,8 @@ def main():
 
     def render_set(suffix, phase_filter, exclude=None):
         for target_list, ncol, name_prefix, ylabel_mae, ylabel_nmae, ylabel_r2 in [
-            (d12, 3, "F1_MAE_d12", "MAE (kcal/mol)", "NMAE (÷MAD)", "R²"),
-            (other, 4, "F2_MAE_other", "MAE (kcal/mol)", "NMAE (÷MAD)", "R²"),
+            (d12, 3, "F1_MAE_d12", "MAE (kcal/mol)", "NMAE (÷meanAD)", "R²"),
+            (other, 4, "F2_MAE_other", "MAE (kcal/mol)", "NMAE (÷meanAD)", "R²"),
         ]:
             figure_grouped_bars(records, target_list, "mae_mean", "mae_std",
                 f"MAE — {'d1,d2' if target_list==d12 else '7 channels'} [{suffix}]",
@@ -297,14 +333,17 @@ def main():
             (other, 4, "F4_NMAE_other"),
         ]:
             figure_grouped_bars(records, target_list, "nmae_mean", "nmae_std",
-                f"NMAE (÷MAD) — {'d1,d2' if target_list==d12 else '7 channels'} [{suffix}]",
-                "NMAE = MAE / MAD",
+                f"NMAE (÷meanAD) — {'d1,d2' if target_list==d12 else '7 channels'} [{suffix}]",
+                "NMAE = MAE / meanAD",
                 COMP / f"{name_prefix}_{suffix}.png",
                 subplots=True, ncol=ncol, ymin=0,
                 phase_filter=phase_filter, exclude=exclude)
 
     render_set("P1_P3_P4", filter_A, exclude_A)
     render_set("P2_P3_P5", filter_B, None)
+    # Extra set: Phase 1 (paper) vs control arms (armB features × Espley labels)
+    filter_CTL = ["Phase 1 (paper)", "Phase 2ctl (Espley y)", "Phase 3ctl (Espley y)", "Phase 5ctl (Espley y)"]
+    render_set("P1_vs_CTL", filter_CTL, None)
 
     # F5 R² (single full)
     figure_grouped_bars(records, d12 + other, "r2_mean", "r2_std",
@@ -315,10 +354,18 @@ def main():
     with open(COMP / "REPORT.md", "w") as f:
         f.write("# Phase 1/2/3/4/5 v3 (oracle-clean + MAD-normalized)\n\n")
         f.write("Dataset: bath_1480, 3504 rxns  \n\n")
+        f.write("## Methodology notes\n")
+        f.write("- HPs (`hps_phase23_v2.pkl`) are **aliased from paper Arm A tuning** "
+                "(46 Espley features). No per-arm re-tuning against v2 60-feature space; "
+                "sklearn arms are therefore slightly HP-underfit for their actual feature "
+                "set. XGB uses fixed defaults + early-stopping-on-val, so any XGB advantage "
+                "reported here is conservative under this HP handicap.\n")
+        f.write("- Control arms (Phase 2ctl/3ctl/5ctl) use armB-v2 features paired with "
+                "Espley original DFT labels — the clean feature-only ablation vs Phase 1.\n\n")
         f.write("## Fixes applied\n")
         f.write("- Removed oracle features `disp_xtb`, `dispd4_xtb`, `eint_total_xtb` from all datasets.\n")
         f.write("- Fixed strain frag index swap: `strain_1_xtb ↔ strain_2_xtb`.\n")
-        f.write("- NMAE = MAE / MAD (label MAD across cohort, seed-invariant).\n")
+        f.write("- NMAE = MAE / meanAD (v9 house standard; label meanAD across cohort, seed-invariant).\n")
         f.write("- `disp` channel declared **ORACLE** (analytical D4 dispersion) — reported but "
                 "excluded from best-model ranking.\n\n")
         f.write("## Phase definitions\n")
@@ -333,7 +380,7 @@ def main():
             sub = records[records["canonical"] == canon]
             if len(sub) == 0: continue
             f.write(f"### {canon}{oracle_tag}\n\n")
-            f.write("| Phase | Model | MAE | NMAE (÷MAD) |\n|---|---|---:|---:|\n")
+            f.write("| Phase | Model | MAE | NMAE (÷meanAD) |\n|---|---|---:|---:|\n")
             for _, r in sub.iterrows():
                 f.write(f"| {r['phase']} | {r['model']} | "
                         f"{r['mae_mean']:.3f} ± {r['mae_std']:.3f} | "
