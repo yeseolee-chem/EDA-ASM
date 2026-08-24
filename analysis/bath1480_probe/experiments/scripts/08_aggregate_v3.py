@@ -24,6 +24,7 @@ Methodology notes (see README):
 """
 from pathlib import Path
 import json
+import os
 import pickle
 import numpy as np
 import pandas as pd
@@ -339,11 +340,18 @@ def main():
                 subplots=True, ncol=ncol, ymin=0,
                 phase_filter=phase_filter, exclude=exclude)
 
-    render_set("P1_P3_P4", filter_A, exclude_A)
-    render_set("P2_P3_P5", filter_B, None)
-    # Extra set: Phase 1 (paper) vs control arms (armB features × Espley labels)
+    only = os.environ.get("RENDER_ONLY", "").strip()
+    if not only or only == "all":
+        render_sets = ["P1_P3_P4", "P2_P3_P5", "P1_vs_CTL"]
+    else:
+        render_sets = [s.strip() for s in only.split(",")]
     filter_CTL = ["Phase 1 (paper)", "Phase 2ctl (Espley y)", "Phase 3ctl (Espley y)", "Phase 5ctl (Espley y)"]
-    render_set("P1_vs_CTL", filter_CTL, None)
+    if "P1_P3_P4" in render_sets:
+        render_set("P1_P3_P4", filter_A, exclude_A)
+    if "P2_P3_P5" in render_sets:
+        render_set("P2_P3_P5", filter_B, None)
+    if "P1_vs_CTL" in render_sets:
+        render_set("P1_vs_CTL", filter_CTL, None)
 
     # F5 R² (single full)
     figure_grouped_bars(records, d12 + other, "r2_mean", "r2_std",
