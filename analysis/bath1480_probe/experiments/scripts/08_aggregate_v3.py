@@ -9,11 +9,6 @@ Changes vs 07_aggregate_v2.py:
   3. disp channel marked as ORACLE (analytical D4-derived), excluded from
      best-model ranking narrative but still reported in tables/figures.
   4. Same 8-figure split (P1_P3_P4, P2_P3_P5) as v2.
-  5. Adds **control arm** (Phase 2ctl/3ctl/5ctl): armB-v2 features × Espley
-     original DFT labels — isolates feature-set effect from label-set effect
-     for clean Phase 1 comparison. No extra HPC (v2 datasets contain both
-     Espley `_dft` and our `_own_dft` targets; ml_analysis trains all in
-     single run).
 
 Methodology notes (see README):
   - HPs (`hps_phase23_v2.pkl`) are aliased from paper Arm A tuning (46
@@ -43,10 +38,6 @@ PHASE_COLORS = {
     "Phase 3 (τ=0.05)":           "#3d9d9b",
     "Phase 4 (XGB+MACE)":         "#e07a5f",
     "Phase 5 (no filter)":        "#9b59b6",
-    # Control arms — armB-v2 features × Espley original labels
-    "Phase 2ctl (Espley y)":      "#a8d0e6",
-    "Phase 3ctl (Espley y)":      "#a8dfd9",
-    "Phase 5ctl (Espley y)":      "#d1b3d9",
 }
 MODEL_ORDER = ["ridge", "krr", "svr", "rf", "xgb"]
 
@@ -70,13 +61,6 @@ PHASE4_TARGETS = {
     "d1": "d1_own", "d2": "d2_own",
     "pauli": "pauli_dft", "oi": "oi_dft", "elst": "elst_dft",
     "disp": "disp_dft", "cpcm": "cpcm_dft", "cds": "cds_dft",
-}
-# Control arm: armB-v2 features × Espley original DFT labels
-# — isolates feature-set effect from label-set effect for Phase 1 comparison
-PHASE_CTL_TARGETS = {
-    "d1":          "distortion_energy_1_dft",
-    "d2":          "distortion_energy_2_dft",
-    "interaction": "interaction_energies_dft",
 }
 ORACLE_CHANNELS = {"disp"}  # D4 dispersion is analytical from geometry — declared oracle
 
@@ -184,10 +168,6 @@ def build_records(p1, p2, p3, p5, p4, mad_lookup):
     add_phase("Phase 3 (τ=0.05)",        p3, COMMON_OWN,           MODEL_ORDER, "phase3")
     add_phase("Phase 5 (no filter)",     p5, COMMON_OWN,           MODEL_ORDER, "phase5")
     add_phase("Phase 4 (XGB+MACE)",      p4, PHASE4_TARGETS,       ["XGB+MACE"], "phase4")
-    # Control arm: same v2 features, Espley original labels (feature-only ablation vs Phase 1)
-    add_phase("Phase 2ctl (Espley y)",   p2, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase2_ctl")
-    add_phase("Phase 3ctl (Espley y)",   p3, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase3_ctl")
-    add_phase("Phase 5ctl (Espley y)",   p5, PHASE_CTL_TARGETS,    MODEL_ORDER, "phase5_ctl")
     return pd.DataFrame(rows)
 
 
@@ -258,7 +238,7 @@ def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel,
 
 
 def main():
-    print("v3 aggregation — oracle-clean + meanAD-normalized NMAE + control arm")
+    print("v3 aggregation — oracle-clean + meanAD-normalized NMAE")
     # Label MAD lookup (canonical MAD per dataset+target)
     ds = {"phase1": EXP/"cohort_v1/features_espley_v1.pkl",  # not really — Phase 1 uses labels_v1
           "phase2": EXP/"cohort_v1/phase2_dataset_v2.pkl",
@@ -282,12 +262,7 @@ def main():
         for c in ["pauli_dft","oi_dft","elst_dft","disp_dft","cpcm_dft","cds_dft"]:
             if c in p5_ds.columns: mad_lookup[(name, c)] = mad(p5_ds[c])
     for c in ["distortion_energy_1_dft","distortion_energy_2_dft","interaction_energies_dft"]:
-        if c in p5_ds.columns:
-            v = mad(p5_ds[c])
-            mad_lookup[("phase1", c)] = v
-            # Control arms use same Espley targets across features
-            for tag in ["phase2_ctl","phase3_ctl","phase5_ctl"]:
-                mad_lookup[(tag, c)] = v
+        if c in p5_ds.columns: mad_lookup[("phase1", c)] = mad(p5_ds[c])
     # Phase 4 labels (d1_own without _dft suffix — from labels_v1)
     for c_own, tgt_col in [("d1_own","d1_own"),("d2_own","d2_own")]:
         if tgt_col in labels_v1.columns: mad_lookup[("phase4", c_own)] = mad(labels_v1[tgt_col])
@@ -342,16 +317,13 @@ def main():
 
     only = os.environ.get("RENDER_ONLY", "").strip()
     if not only or only == "all":
-        render_sets = ["P1_P3_P4", "P2_P3_P5", "P1_vs_CTL"]
+        render_sets = ["P1_P3_P4", "P2_P3_P5"]
     else:
         render_sets = [s.strip() for s in only.split(",")]
-    filter_CTL = ["Phase 1 (paper)", "Phase 2ctl (Espley y)", "Phase 3ctl (Espley y)", "Phase 5ctl (Espley y)"]
     if "P1_P3_P4" in render_sets:
         render_set("P1_P3_P4", filter_A, exclude_A)
     if "P2_P3_P5" in render_sets:
         render_set("P2_P3_P5", filter_B, None)
-    if "P1_vs_CTL" in render_sets:
-        render_set("P1_vs_CTL", filter_CTL, None)
 
     # F5 R² (single full)
     figure_grouped_bars(records, d12 + other, "r2_mean", "r2_std",
@@ -368,8 +340,8 @@ def main():
                 "sklearn arms are therefore slightly HP-underfit for their actual feature "
                 "set. XGB uses fixed defaults + early-stopping-on-val, so any XGB advantage "
                 "reported here is conservative under this HP handicap.\n")
-        f.write("- Control arms (Phase 2ctl/3ctl/5ctl) use armB-v2 features paired with "
-                "Espley original DFT labels — the clean feature-only ablation vs Phase 1.\n\n")
+
+
         f.write("## Fixes applied\n")
         f.write("- Removed oracle features `disp_xtb`, `dispd4_xtb`, `eint_total_xtb` from all datasets.\n")
         f.write("- Fixed strain frag index swap: `strain_1_xtb ↔ strain_2_xtb`.\n")

@@ -4,8 +4,6 @@ Dataset: bath_1480, 3504 rxns
 
 ## Methodology notes
 - HPs (`hps_phase23_v2.pkl`) are **aliased from paper Arm A tuning** (46 Espley features). No per-arm re-tuning against v2 60-feature space; sklearn arms are therefore slightly HP-underfit for their actual feature set. XGB uses fixed defaults + early-stopping-on-val, so any XGB advantage reported here is conservative under this HP handicap.
-- Control arms (Phase 2ctl/3ctl/5ctl) use armB-v2 features paired with Espley original DFT labels — the clean feature-only ablation vs Phase 1.
-
 ## Fixes applied
 - Removed oracle features `disp_xtb`, `dispd4_xtb`, `eint_total_xtb` from all datasets.
 - Fixed strain frag index swap: `strain_1_xtb ↔ strain_2_xtb`.
@@ -45,21 +43,6 @@ Dataset: bath_1480, 3504 rxns
 | Phase 5 (no filter) | rf | 2.208 ± 0.055 | 0.287 |
 | Phase 5 (no filter) | xgb | 1.814 ± 0.023 | 0.236 |
 | Phase 4 (XGB+MACE) | XGB+MACE | 2.397 ± 0.103 | 0.311 |
-| Phase 2ctl (Espley y) | ridge | 3.054 ± 0.243 | 0.545 |
-| Phase 2ctl (Espley y) | krr | 2.865 ± 0.118 | 0.512 |
-| Phase 2ctl (Espley y) | svr | 2.448 ± 0.114 | 0.437 |
-| Phase 2ctl (Espley y) | rf | 2.800 ± 0.072 | 0.500 |
-| Phase 2ctl (Espley y) | xgb | 2.224 ± 0.120 | 0.397 |
-| Phase 3ctl (Espley y) | ridge | 3.160 ± 0.199 | 0.564 |
-| Phase 3ctl (Espley y) | krr | 2.894 ± 0.109 | 0.517 |
-| Phase 3ctl (Espley y) | svr | 2.465 ± 0.104 | 0.440 |
-| Phase 3ctl (Espley y) | rf | 2.910 ± 0.058 | 0.520 |
-| Phase 3ctl (Espley y) | xgb | 2.305 ± 0.087 | 0.412 |
-| Phase 5ctl (Espley y) | ridge | 3.057 ± 0.241 | 0.546 |
-| Phase 5ctl (Espley y) | krr | 2.887 ± 0.116 | 0.516 |
-| Phase 5ctl (Espley y) | svr | 2.482 ± 0.093 | 0.443 |
-| Phase 5ctl (Espley y) | rf | 2.801 ± 0.056 | 0.500 |
-| Phase 5ctl (Espley y) | xgb | 2.255 ± 0.123 | 0.403 |
 
 ### d2
 
@@ -85,21 +68,6 @@ Dataset: bath_1480, 3504 rxns
 | Phase 5 (no filter) | rf | 1.795 ± 0.079 | 0.270 |
 | Phase 5 (no filter) | xgb | 1.439 ± 0.068 | 0.216 |
 | Phase 4 (XGB+MACE) | XGB+MACE | 1.971 ± 0.035 | 0.296 |
-| Phase 2ctl (Espley y) | ridge | 2.766 ± 0.095 | 0.536 |
-| Phase 2ctl (Espley y) | krr | 2.584 ± 0.127 | 0.500 |
-| Phase 2ctl (Espley y) | svr | 2.134 ± 0.142 | 0.413 |
-| Phase 2ctl (Espley y) | rf | 2.374 ± 0.065 | 0.460 |
-| Phase 2ctl (Espley y) | xgb | 1.893 ± 0.059 | 0.367 |
-| Phase 3ctl (Espley y) | ridge | 2.770 ± 0.126 | 0.536 |
-| Phase 3ctl (Espley y) | krr | 2.565 ± 0.124 | 0.497 |
-| Phase 3ctl (Espley y) | svr | 2.207 ± 0.150 | 0.427 |
-| Phase 3ctl (Espley y) | rf | 2.509 ± 0.101 | 0.486 |
-| Phase 3ctl (Espley y) | xgb | 2.037 ± 0.092 | 0.394 |
-| Phase 5ctl (Espley y) | ridge | 2.766 ± 0.095 | 0.536 |
-| Phase 5ctl (Espley y) | krr | 2.600 ± 0.134 | 0.503 |
-| Phase 5ctl (Espley y) | svr | 2.164 ± 0.139 | 0.419 |
-| Phase 5ctl (Espley y) | rf | 2.383 ± 0.077 | 0.461 |
-| Phase 5ctl (Espley y) | xgb | 1.890 ± 0.042 | 0.366 |
 
 ### interaction
 
@@ -124,21 +92,6 @@ Dataset: bath_1480, 3504 rxns
 | Phase 5 (no filter) | svr | 2.052 ± 0.134 | 0.431 |
 | Phase 5 (no filter) | rf | 2.823 ± 0.155 | 0.593 |
 | Phase 5 (no filter) | xgb | 2.040 ± 0.102 | 0.428 |
-| Phase 2ctl (Espley y) | ridge | 3.041 ± 0.218 | 0.634 |
-| Phase 2ctl (Espley y) | krr | 2.928 ± 0.171 | 0.611 |
-| Phase 2ctl (Espley y) | svr | 2.345 ± 0.142 | 0.489 |
-| Phase 2ctl (Espley y) | rf | 2.758 ± 0.166 | 0.575 |
-| Phase 2ctl (Espley y) | xgb | 2.127 ± 0.137 | 0.443 |
-| Phase 3ctl (Espley y) | ridge | 3.221 ± 0.122 | 0.672 |
-| Phase 3ctl (Espley y) | krr | 3.063 ± 0.138 | 0.639 |
-| Phase 3ctl (Espley y) | svr | 2.532 ± 0.089 | 0.528 |
-| Phase 3ctl (Espley y) | rf | 2.942 ± 0.121 | 0.614 |
-| Phase 3ctl (Espley y) | xgb | 2.350 ± 0.140 | 0.490 |
-| Phase 5ctl (Espley y) | ridge | 3.042 ± 0.217 | 0.634 |
-| Phase 5ctl (Espley y) | krr | 2.951 ± 0.174 | 0.615 |
-| Phase 5ctl (Espley y) | svr | 2.355 ± 0.128 | 0.491 |
-| Phase 5ctl (Espley y) | rf | 2.755 ± 0.148 | 0.574 |
-| Phase 5ctl (Espley y) | xgb | 2.132 ± 0.137 | 0.445 |
 
 ### pauli
 
