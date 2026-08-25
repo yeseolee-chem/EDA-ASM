@@ -21,6 +21,7 @@ from pathlib import Path
 import json
 import os
 import pickle
+import re
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -216,8 +217,6 @@ def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel,
                           edgecolor="black", linewidth=0.4)
             target_ax.set_xticks(bar_positions)
             target_ax.set_xticklabels(bar_labels, rotation=45, ha="right", fontsize=8)
-            title_txt = canon + (" ⚠ oracle" if oracle else "")
-            target_ax.set_title(title_txt, fontsize=10)
             target_ax.set_ylabel(ylabel, fontsize=9)
             target_ax.grid(axis="y", alpha=0.25)
             if ymin is not None: target_ax.set_ylim(bottom=ymin)
@@ -226,12 +225,12 @@ def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel,
         legend_ax = axes_flat[len(canonicals)]
         legend_ax.axis("off")
         handles = [plt.Rectangle((0,0), 1, 1, color=PHASE_COLORS[p]) for p in phases]
-        legend_ax.legend(handles, phases, loc="center", frameon=True, fontsize=11, title="Phase")
+        legend_labels = [re.sub(r"^Phase \d+ \((.*)\)$", r"\1", p) for p in phases]
+        legend_ax.legend(handles, legend_labels, loc="center", frameon=True, fontsize=11)
         for k in range(len(canonicals)+1, len(axes_flat)):
             axes_flat[k].axis("off")
 
-    fig.suptitle(title, fontsize=12, y=0.995)
-    plt.tight_layout(rect=[0,0,1,0.98])
+    plt.tight_layout()
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path.name}")
