@@ -288,7 +288,10 @@ def main():
     print(f"records_all.csv: {len(records)} rows")
 
     d12 = ["d1", "d2"]
-    other = ["interaction", "pauli", "oi", "elst", "disp", "cpcm", "cds"]
+    # interaction dropped for consistency: Phase 4 (05_train_e3.py) hardcodes
+    # 8 targets and does not train interaction. Removing it from every subplot
+    # keeps all figures comparable across phases.
+    other = ["pauli", "oi", "elst", "disp", "cpcm", "cds"]
 
     filter_A = ["Phase 1 (paper)", "Phase 3 (τ=0.05)", "Phase 4 (XGB+MACE)"]
     exclude_A = [("Phase 3 (τ=0.05)", "xgb")]
