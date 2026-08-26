@@ -69,30 +69,6 @@ Dataset: bath_1480, 3504 rxns
 | Phase 5 (no filter) | xgb | 1.439 ± 0.068 | 0.216 |
 | Phase 4 (XGB+MACE) | XGB+MACE | 1.971 ± 0.035 | 0.296 |
 
-### interaction
-
-| Phase | Model | MAE | NMAE (÷meanAD) |
-|---|---|---:|---:|
-| Phase 1 (paper) | ridge | 3.101 ± 0.216 | 0.647 |
-| Phase 1 (paper) | krr | 2.918 ± 0.151 | 0.609 |
-| Phase 1 (paper) | svr | 2.400 ± 0.156 | 0.501 |
-| Phase 1 (paper) | rf | 2.742 ± 0.168 | 0.572 |
-| Phase 2 (τ=1e-10) | ridge | 2.444 ± 0.205 | 0.513 |
-| Phase 2 (τ=1e-10) | krr | 2.488 ± 0.137 | 0.522 |
-| Phase 2 (τ=1e-10) | svr | 2.020 ± 0.131 | 0.424 |
-| Phase 2 (τ=1e-10) | rf | 2.835 ± 0.166 | 0.595 |
-| Phase 2 (τ=1e-10) | xgb | 2.040 ± 0.124 | 0.428 |
-| Phase 3 (τ=0.05) | ridge | 2.549 ± 0.177 | 0.535 |
-| Phase 3 (τ=0.05) | krr | 2.556 ± 0.122 | 0.537 |
-| Phase 3 (τ=0.05) | svr | 2.083 ± 0.117 | 0.437 |
-| Phase 3 (τ=0.05) | rf | 2.802 ± 0.153 | 0.588 |
-| Phase 3 (τ=0.05) | xgb | 2.042 ± 0.100 | 0.429 |
-| Phase 5 (no filter) | ridge | 2.445 ± 0.207 | 0.513 |
-| Phase 5 (no filter) | krr | 2.510 ± 0.134 | 0.527 |
-| Phase 5 (no filter) | svr | 2.052 ± 0.134 | 0.431 |
-| Phase 5 (no filter) | rf | 2.823 ± 0.155 | 0.593 |
-| Phase 5 (no filter) | xgb | 2.040 ± 0.102 | 0.428 |
-
 ### pauli
 
 | Phase | Model | MAE | NMAE (÷meanAD) |
