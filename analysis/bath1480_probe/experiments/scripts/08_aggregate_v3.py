@@ -40,7 +40,7 @@ PHASE_COLORS = {
     "Phase 4 (XGB+MACE)":         "#e07a5f",
     "Phase 5 (no filter)":        "#9b59b6",
 }
-MODEL_ORDER = ["ridge", "krr", "svr", "rf", "xgb"]
+MODEL_ORDER = ["ridge", "krr", "svr", "xgb"]  # rf removed per user request
 
 PHASE1_TARGETS = {
     "d1":          "distortion_energy_1_dft",
@@ -174,14 +174,18 @@ def build_records(p1, p2, p3, p5, p4, mad_lookup):
 
 def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel, out_path,
                           subplots=False, ncol=4, ymin=None,
-                          phase_filter=None, exclude=None):
+                          phase_filter=None, exclude=None, label_override=None):
     if phase_filter is not None:
         records = records[records["phase"].isin(phase_filter)].copy()
     if exclude:
         for ph, mo in exclude:
             records = records[~((records["phase"] == ph) & (records["model"] == mo))]
 
-    phases = [p for p in PHASE_COLORS.keys() if phase_filter is None or p in phase_filter]
+    # Preserve caller-provided order when phase_filter is a list
+    if phase_filter is not None:
+        phases = list(phase_filter)
+    else:
+        phases = list(PHASE_COLORS.keys())
 
     if subplots:
         n = len(canonicals)
@@ -226,7 +230,11 @@ def figure_grouped_bars(records, canonicals, metric_col, err_col, title, ylabel,
         legend_ax = axes_flat[len(canonicals)]
         legend_ax.axis("off")
         handles = [plt.Rectangle((0,0), 1, 1, color=PHASE_COLORS[p]) for p in phases]
-        legend_labels = [re.sub(r"^Phase \d+ \((.*)\)$", r"\1", p) for p in phases]
+        def _label(p):
+            if label_override and p in label_override:
+                return label_override[p]
+            return re.sub(r"^Phase \d+ \((.*)\)$", r"\1", p)
+        legend_labels = [_label(p) for p in phases]
         legend_ax.legend(handles, legend_labels, loc="center", frameon=True, fontsize=11)
         for k in range(len(canonicals)+1, len(axes_flat)):
             axes_flat[k].axis("off")
@@ -294,9 +302,12 @@ def main():
 
     filter_A = ["Phase 1 (paper)", "Phase 3 (τ=0.05)", "Phase 4 (XGB+MACE)"]
     exclude_A = [("Phase 3 (τ=0.05)", "xgb")]
-    filter_B = ["Phase 2 (τ=1e-10)", "Phase 3 (τ=0.05)", "Phase 5 (no filter)"]
+    # P1/P3/P4: don't emphasize τ — relabel Phase 3 as "ours"
+    label_override_A = {"Phase 3 (τ=0.05)": "ours"}
+    # P2/P3/P5: reorder τ=0.05 first, then τ=1e-10, then no filter
+    filter_B = ["Phase 3 (τ=0.05)", "Phase 2 (τ=1e-10)", "Phase 5 (no filter)"]
 
-    def render_set(suffix, phase_filter, exclude=None):
+    def render_set(suffix, phase_filter, exclude=None, label_override=None):
         for target_list, ncol, name_prefix, ylabel_mae, ylabel_nmae, ylabel_r2 in [
             (d12, 3, "F1_MAE_d12", "MAE (kcal/mol)", "NMAE (÷meanAD)", "R²"),
             (other, 4, "F2_MAE_other", "MAE (kcal/mol)", "NMAE (÷meanAD)", "R²"),
@@ -306,7 +317,8 @@ def main():
                 ylabel_mae,
                 COMP / f"{name_prefix}_{suffix}.png",
                 subplots=True, ncol=ncol, ymin=0,
-                phase_filter=phase_filter, exclude=exclude)
+                phase_filter=phase_filter, exclude=exclude,
+                label_override=label_override)
         for target_list, ncol, name_prefix in [
             (d12, 3, "F3_NMAE_d12"),
             (other, 4, "F4_NMAE_other"),
@@ -316,7 +328,8 @@ def main():
                 "NMAE = MAE / meanAD",
                 COMP / f"{name_prefix}_{suffix}.png",
                 subplots=True, ncol=ncol, ymin=0,
-                phase_filter=phase_filter, exclude=exclude)
+                phase_filter=phase_filter, exclude=exclude,
+                label_override=label_override)
 
     only = os.environ.get("RENDER_ONLY", "").strip()
     if not only or only == "all":
@@ -324,7 +337,7 @@ def main():
     else:
         render_sets = [s.strip() for s in only.split(",")]
     if "P1_P3_P4" in render_sets:
-        render_set("P1_P3_P4", filter_A, exclude_A)
+        render_set("P1_P3_P4", filter_A, exclude_A, label_override_A)
     if "P2_P3_P5" in render_sets:
         render_set("P2_P3_P5", filter_B, None)
 
