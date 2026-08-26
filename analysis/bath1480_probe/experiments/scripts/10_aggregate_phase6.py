@@ -74,13 +74,11 @@ def main():
     # Bar plot
     fig, ax = plt.subplots(figsize=(10, 5))
     x = np.arange(len(CHANNELS))
-    w = 0.28
-    ax.bar(x - w, merged["mae_p5"], w, yerr=merged["mae_p5_std"], color="#9b59b6",
-           label="Phase 5 XGB", edgecolor="black", linewidth=0.4, capsize=2.5)
-    ax.bar(x, merged["mae_p6_xgb_only"], w, color="#c8b0dd",
-           label="Phase 6: XGB alone (rerun)", edgecolor="black", linewidth=0.4)
-    ax.bar(x + w, merged["mae_p6_full"], w, yerr=merged["mae_p6_full_std"], color="#e07a5f",
-           label="Phase 6: XGB + MACE residual", edgecolor="black", linewidth=0.4, capsize=2.5)
+    w = 0.38
+    ax.bar(x - w/2, merged["mae_p5"], w, yerr=merged["mae_p5_std"], color="#9b59b6",
+           label="XGB", edgecolor="black", linewidth=0.4, capsize=2.5)
+    ax.bar(x + w/2, merged["mae_p6_full"], w, yerr=merged["mae_p6_full_std"], color="#e07a5f",
+           label="XGB + MACE residual", edgecolor="black", linewidth=0.4, capsize=2.5)
     ax.set_xticks(x); ax.set_xticklabels(CHANNELS, fontsize=10)
     ax.set_ylabel("MAE (kcal/mol)")
     ax.grid(axis="y", alpha=0.25)
