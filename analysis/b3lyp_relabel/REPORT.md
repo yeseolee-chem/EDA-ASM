@@ -1,6 +1,6 @@
 # B3LYP relabel validation — REPORT (spec15)
 
-_Generated: 2026-08-30T22:58:49.010120+00:00, commit `a9203cb8bcaa`_
+_Generated: 2026-08-30T23:18:47.728342+00:00, commit `82bc5d0217f0`_
 
 ## Setup
 - Goal: validate B3LYP-TS relabeling pipeline on 200-sample batch
@@ -29,7 +29,7 @@ channel   n  mean_signed    std    mae  median_abs    p95  delta_prop  pearson_r
    disp 218       -0.633  1.799  1.280       0.769  3.839       2.544      0.927
    cpcm 218        1.941  3.890  2.828       1.560 10.778       5.501      0.742
     cds 218       -0.167  0.473  0.333       0.214  1.187       0.670      0.892
-     d1 218       -8.316  6.305  8.778       7.819 17.867       8.916      0.703
+     d1 218       -8.320  6.306  8.781       7.819 17.867       8.918      0.703
      d2 218       -6.576  4.961  6.790       6.025 14.672       7.016      0.781
 ```
 
