@@ -21,7 +21,7 @@ FORBIDDEN = [
     "am1_ts",
     "tt_eda_kisti_results",
 ]
-ALLOWED_IN = {"05_compare.py"}
+ALLOWED_IN = {"05_compare.py", "00_setup.py"}  # 00 self holds the forbidden-list literals
 
 
 def main():
