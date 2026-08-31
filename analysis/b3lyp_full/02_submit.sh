@@ -42,4 +42,20 @@ for STEM in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
     echo "  $STEM rc=$rc"
 done
 
+# ---- Disk cleanup: keep only .inp/.out/.err, delete wavefunction/density/tmp ----
+# Rationale: full 5262 rxns × ~28MB each = ~147 GB otherwise; we only need
+# text outputs (parsed by 03_parse.py). Cleanup only runs if all 5 SPEs
+# terminated normally, so partial reruns are still recoverable.
+all_ok=1
+for s in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
+    [ -f "$s.inp" ] || continue
+    grep -q "ORCA TERMINATED NORMALLY" "$s.out" 2>/dev/null || { all_ok=0; break; }
+done
+if [ "$all_ok" -eq 1 ]; then
+    find . -maxdepth 1 -type f \
+        ! -name "*.inp" ! -name "*.out" ! -name "*.err" \
+        -delete
+    echo "  cleanup done"
+fi
+
 echo "=== end $(date -Is) ==="
