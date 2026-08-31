@@ -89,13 +89,16 @@ while [ $NEXT -ge 0 ] && [ $NEXT -lt $TOTAL ]; do
         continue
     fi
     END=$((NEXT + NEED - 1))
-    JID=$(sbatch --parsable --array=$NEXT-$END%10 $SUBMIT 2>/dev/null)
+    # SLURM MaxArraySize = 1001 → array indices must be 0-1000.
+    # Use BASE_OFFSET env var to translate; array indices always low (0-N).
+    ARR_END=$((NEED - 1))
+    JID=$(sbatch --parsable --export=ALL,BASE_OFFSET=$NEXT --array=0-$ARR_END%10 $SUBMIT 2>/dev/null)
     if [ -z "$JID" ]; then
         echo "$(date -Is)  sbatch failed for $NEXT-$END, retry in ${POLL}s"
         sleep $POLL
         continue
     fi
-    echo "$(date -Is)  filled $NEXT-$END ($NEED tasks) → jid=$JID"
+    echo "$(date -Is)  filled $NEXT-$END ($NEED tasks) → jid=$JID (arr 0-$ARR_END offset $NEXT)"
     NEXT=$((END + 1))
     # Skip forward past any rxns already done to avoid resubmitting
     while [ $NEXT -lt $TOTAL ]; do

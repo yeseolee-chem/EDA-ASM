@@ -14,7 +14,9 @@ set -uo pipefail
 BASE=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/b3lyp_full
 
 mapfile -t DIRS < <(ls -d $BASE/inputs/rxn_*/ | sort)
-D="${DIRS[$SLURM_ARRAY_TASK_ID]}"
+BASE_OFFSET=${BASE_OFFSET:-0}
+IDX=$((BASE_OFFSET + SLURM_ARRAY_TASK_ID))
+D="${DIRS[$IDX]}"
 D="${D%/}"
 [ -z "$D" ] && exit 0
 rid=$(basename "$D")
