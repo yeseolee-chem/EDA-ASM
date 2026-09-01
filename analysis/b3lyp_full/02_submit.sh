@@ -22,8 +22,9 @@ D="${D%/}"
 rid=$(basename "$D")
 
 export ORCA_BIN=/home1/yeseo1ee/orca_6_1_1_avx2/orca
-export PATH=$(dirname $ORCA_BIN):$PATH
-export LD_LIBRARY_PATH=$(dirname $ORCA_BIN):${LD_LIBRARY_PATH:-}
+export MPI_ROOT=/usr/mpi/gcc/openmpi-4.1.7a1
+export PATH=$MPI_ROOT/bin:$(dirname $ORCA_BIN):$PATH
+export LD_LIBRARY_PATH=$MPI_ROOT/lib64:$(dirname $ORCA_BIN):${LD_LIBRARY_PATH:-}
 
 cd "$D"
 echo "=== $rid $(date -Is) ==="
