@@ -6,7 +6,7 @@
 #SBATCH --job-name=b3full
 #SBATCH --time=48:00:00
 #SBATCH --partition=cpu1,cpu2
-#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=32G
+#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=5 --mem=20G
 #SBATCH --output=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/b3lyp_full/logs/%A_%a.out
 
 set -uo pipefail
@@ -28,6 +28,10 @@ export LD_LIBRARY_PATH=$(dirname $ORCA_BIN):${LD_LIBRARY_PATH:-}
 cd "$D"
 echo "=== $rid $(date -Is) ==="
 
+# Option B: run all 5 SPEs in PARALLEL (background + wait).
+# Each ORCA process is single-threaded here (no %pal in input), so 5 procs
+# fit in 5 CPUs per task. All independent inputs, no shared scratch files.
+pids=()
 for STEM in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
     [ -f "$STEM.inp" ] || continue
     # idempotent skip
@@ -37,10 +41,11 @@ for STEM in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
     fi
     # Remove stale output to prevent FSPE-count anomalies from partial reruns
     rm -f "$STEM.out" "$STEM.err"
-    $ORCA_BIN "$STEM.inp" > "$STEM.out" 2> "$STEM.err"
-    rc=$?
-    echo "  $STEM rc=$rc"
+    ( $ORCA_BIN "$STEM.inp" > "$STEM.out" 2> "$STEM.err"; echo "  $STEM rc=$?" ) &
+    pids+=($!)
 done
+# Wait for all parallel SPEs to finish
+for p in "${pids[@]}"; do wait $p; done
 
 # ---- Disk cleanup: keep only .inp/.out/.err, delete wavefunction/density/tmp ----
 # Rationale: full 5262 rxns × ~28MB each = ~147 GB otherwise; we only need
