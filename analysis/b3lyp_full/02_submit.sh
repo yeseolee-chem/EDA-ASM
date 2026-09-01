@@ -25,6 +25,10 @@ export ORCA_BIN=/home1/yeseo1ee/orca_6_1_1_avx2/orca
 export MPI_ROOT=/usr/mpi/gcc/openmpi-4.1.7a1
 export PATH=$MPI_ROOT/bin:$(dirname $ORCA_BIN):$PATH
 export LD_LIBRARY_PATH=$MPI_ROOT/lib64:$(dirname $ORCA_BIN):${LD_LIBRARY_PATH:-}
+# Allow OpenMPI to oversubscribe: SLURM gives us 10 CPUs as 1 task; MPI
+# needs to launch 5 procs. Without this it errors "not enough slots".
+export OMPI_MCA_rmaps_base_oversubscribe=1
+export OMPI_MCA_btl=self,vader,tcp   # avoid IB/PSM issues on non-IB nodes
 
 cd "$D"
 echo "=== $rid $(date -Is) ==="
