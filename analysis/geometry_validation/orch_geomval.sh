@@ -1,10 +1,14 @@
 #!/bin/bash
-# spec14 orchestrator — 218 ORCA EDA calcs in waves of 20 (%10 concurrent)
-# to respect the 20-submit / 10-run QoS cap. Runs on a compute node (cpu2)
-# per CLAUDE.md (no login-node loops).
+# spec14 orchestrator — continuous fill (no wave synchronization).
 #
-# Idempotent: each array element checks "ORCA TERMINATED NORMALLY" and skips
-# if already done, so re-running or resuming after wall clip is safe.
+# Instead of waiting for a whole wave to drain, keep the submit queue full at
+# 19 geomval tasks (= 20-cap − 1 for orch itself). As tasks finish, top up
+# the queue with the next contiguous block. Slow tail-tasks no longer block
+# future dispatches.
+#
+# Idempotent: each array element in 03_submit.sh skips if eda.out already
+# contains "ORCA TERMINATED NORMALLY". Safe to re-run from 0; already-done
+# tasks exit in seconds.
 #
 #SBATCH --job-name=geom_orch
 #SBATCH --time=48:00:00
@@ -16,35 +20,40 @@ set -uo pipefail
 
 BASE=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/geometry_validation
 SUBMIT=$BASE/03_submit.sh
-POLL=60
+POLL=30
+TOTAL=218
+CAP=19          # 20-submit − 1 orch
+TARGET_QUEUE=19 # keep this many geomval tasks queued at all times
 
-echo "=== orch_geomval start $(date -Is) ==="
+echo "=== orch_geomval CONTINUOUS start $(date -Is) ==="
 
-# 11 waves × 20 tasks (last wave = 18): 0-19, 20-39, ..., 200-217
-WAVE_STARTS=(0 20 40 60 80 100 120 140 160 180 200)
-
-for START in "${WAVE_STARTS[@]}"; do
-    END=$((START + 19))
-    [ $END -gt 217 ] && END=217
-
-    # Wait until my other jobs have drained enough to allow a 20-task submission
-    while true; do
-        MY=$(squeue -u $USER -h -r --name=geomval 2>/dev/null | wc -l)
-        NEED=$((END - START + 1))
-        FREE=$((20 - MY))
-        if [ "$FREE" -ge "$NEED" ]; then break; fi
+NEXT=0
+while [ $NEXT -lt $TOTAL ]; do
+    # Count outstanding geomval tasks (queued + running, minus orch)
+    Q=$(squeue -u $USER -h -r --name=geomval 2>/dev/null | wc -l)
+    NEED=$((TARGET_QUEUE - Q))
+    REM=$((TOTAL - NEXT))
+    [ $NEED -gt $REM ] && NEED=$REM
+    if [ $NEED -le 0 ]; then
         sleep $POLL
-    done
+        continue
+    fi
+    END=$((NEXT + NEED - 1))
 
-    echo "$(date -Is)  submitting wave $START-$END (%10)"
-    JID=$(sbatch --parsable --array=$START-$END%10 $SUBMIT)
-    echo "  jid=$JID"
-
-    # Wait for this wave to fully drain before submitting the next
-    while [ -n "$(squeue -j $JID -h 2>/dev/null)" ]; do
+    JID=$(sbatch --parsable --array=$NEXT-$END%10 $SUBMIT 2>/dev/null)
+    if [ -z "$JID" ]; then
+        echo "$(date -Is)  sbatch failed for $NEXT-$END, retrying in ${POLL}s"
         sleep $POLL
-    done
-    echo "$(date -Is)  wave $START-$END drained"
+        continue
+    fi
+    echo "$(date -Is)  filled $NEXT-$END ($NEED tasks) → jid=$JID"
+    NEXT=$((END + 1))
+    sleep $POLL   # let SLURM register submission before next probe
+done
+
+echo "$(date -Is)  all $TOTAL tasks dispatched; waiting for drain"
+while [ -n "$(squeue -u $USER -h -r --name=geomval 2>/dev/null)" ]; do
+    sleep $POLL
 done
 
 echo "=== orch_geomval DONE $(date -Is) ==="

@@ -29,6 +29,12 @@ export LD_LIBRARY_PATH=$MPI_ROOT/lib64:$(dirname $ORCA_BIN):${LD_LIBRARY_PATH:-}
 # needs to launch 5 procs. Without this it errors "not enough slots".
 export OMPI_MCA_rmaps_base_oversubscribe=1
 export OMPI_MCA_btl=self,vader,tcp   # avoid IB/PSM issues on non-IB nodes
+# UCX/hcoll silently crash MPI mid-run on n044/n048 (563 stale partial
+# eda.out with only "UCX WARN IB Async event" tails). Force OB1 PML
+# (uses BTL above) and disable Mellanox collective library.
+export OMPI_MCA_pml=ob1
+export OMPI_MCA_coll_hcoll_enable=0
+export UCX_TLS=tcp,self,sm
 
 cd "$D"
 echo "=== $rid $(date -Is) ==="

@@ -41,7 +41,7 @@ def main():
     for ax, ch in zip(axes.flat, CH):
         idx = new.index.intersection(old.index)
         a = old.loc[idx, f"{ch}_dft"].values
-        b = new.loc[idx, ch].values
+        b = new.loc[idx, f"{ch}_dft"].values
         mask = ~(np.isnan(a) | np.isnan(b))
         a, b = a[mask], b[mask]
         r = float(np.corrcoef(a, b)[0, 1]) if len(a) >= 3 else float("nan")
@@ -65,7 +65,7 @@ def main():
         fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
         for ax, ch in zip(axes, ["pauli", "elst", "oi"]):
             a = old.loc[idx, f"{ch}_dft"].values
-            b = new.loc[idx, ch].values
+            b = new.loc[idx, f"{ch}_dft"].values
             mask = ~(np.isnan(a) | np.isnan(b))
             common = idx[mask]
             ch_shift = np.abs(b[mask] - a[mask])
