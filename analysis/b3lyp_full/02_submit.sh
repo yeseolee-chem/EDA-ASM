@@ -6,7 +6,7 @@
 #SBATCH --job-name=b3full
 #SBATCH --time=48:00:00
 #SBATCH --partition=cpu1,cpu2
-#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=5 --mem=20G
+#SBATCH --nodes=1 --ntasks=1 --cpus-per-task=10 --mem=40G
 #SBATCH --output=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/b3lyp_full/logs/%A_%a.out
 
 set -uo pipefail

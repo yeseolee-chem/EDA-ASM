@@ -25,7 +25,9 @@ FACTOR = 1.25
 
 EDA_HEADER = (
     "! B3LYP D3BJ def2-TZVP CPCM(water) NoSym EDA TightSCF\n"
-    "%maxcore 3500\n\n%cpcm\n  smd true\n  smdsolvent \"water\"\nend\n\n"
+    "%maxcore 3500\n\n"
+    "%pal nprocs 5 end\n\n"
+    "%cpcm\n  smd true\n  smdsolvent \"water\"\nend\n\n"
     "%eda\n"
     "  FRAG1 \"B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF\"\n"
     "  FRAG2 \"B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF\"\n"
