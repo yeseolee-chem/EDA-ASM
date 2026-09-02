@@ -59,10 +59,10 @@ done
 # Wait for all parallel SPEs to finish
 for p in "${pids[@]}"; do wait $p; done
 
-# ---- Disk cleanup: keep only .inp/.out/.err, delete wavefunction/density/tmp ----
-# Rationale: full 5262 rxns × ~28MB each = ~147 GB otherwise; we only need
-# text outputs (parsed by 03_parse.py). Cleanup only runs if all 5 SPEs
-# terminated normally, so partial reruns are still recoverable.
+# ---- Disk cleanup: keep .inp/.out/.err/.gbw, delete densities/cpcm/tmp ----
+# Quota raised to 300 GB → keep .gbw wavefunctions (~10 MB/rxn total,
+# ~52 GB for full 5262) for future re-analysis without SCF re-run.
+# Cleanup only runs if all 5 SPEs terminated normally.
 all_ok=1
 for s in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
     [ -f "$s.inp" ] || continue
@@ -70,7 +70,7 @@ for s in eda frag1_dist frag2_dist frag1_rel frag2_rel; do
 done
 if [ "$all_ok" -eq 1 ]; then
     find . -maxdepth 1 -type f \
-        ! -name "*.inp" ! -name "*.out" ! -name "*.err" \
+        ! -name "*.inp" ! -name "*.out" ! -name "*.err" ! -name "*.gbw" \
         -delete
     echo "  cleanup done"
 fi
