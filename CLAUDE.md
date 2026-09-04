@@ -17,23 +17,17 @@
 - **If a job hits the 48h wall, just re-`sbatch` the same script.**
   Idempotency + `if out_path.exists(): return` in the runner makes
   this safe.
-- **SLURM quota: at most 12 tasks in the queue, at most 10 running
-  at once.** Both caps are on TASKS, not on wrapper submissions —
+- **SLURM quota: MaxJobs=10 running, MaxSubmit=20 in queue.**
+  Both caps are on TASKS, not on wrapper submissions —
   **an array counts as one task per array element** on this cluster,
-  not "one submission". Verified 2026-07-23 when a 30-task A6 array
-  was blocked with `AssocMaxSubmitJobLimit` while only 2 sbatch
-  wrappers (containing 10 pending array tasks) were on record.
-  The 10-job cap on RUNNING and the 12-task cap on submitted
-  (PENDING + RUNNING) both apply per task. Practical consequences:
+  not "one submission". Practical consequences:
     - A single `sbatch --array=0-N%K` submission uses N+1 slots
-      against the 12-cap (not 1). If N+1 > 12, submission fails.
-    - Design arrays with `N < 12 − (currently_pending)` and fan out
+      against the 20-cap (not 1). If N+1 > 20, submission fails.
+    - Design arrays with `N < 20 − (currently_pending)` and fan out
       the rest through `--dependency=afterany` chains or by
       resubmitting once the first batch drains.
     - Before every `sbatch`, check `squeue -u $USER -h | wc -l` —
-      that count is task-level and is what the 12-cap tests against.
-  When designing multi-model runs, distribute across partitions so
-  RUNNING stays ≤ 10 and total submitted tasks stay ≤ 12.
+      that count is task-level and is what the 20-cap tests against.
 - **Partition selection: pick whichever has idle capacity, don't
   be picky about which one.** Within a given resource class (CPU vs
   GPU), the specific partition does not matter — cpu1 and cpu2 are
@@ -48,11 +42,6 @@
       `A/I/O/T`). If both are packed, either is fine — take one.
     - GPU jobs: `sinfo -p gpu3,gpu4,gpu5 -o "%.9P %.6t %.10G %C"`
       and target the partition with a free GPU. Same idea.
-  When fanning out across ≥ 2 jobs of the same kind, split them
-  across partitions rather than piling them on one — the goal is to
-  minimise total wall time, not to standardise on a favourite
-  partition. Only override this rule when a specific partition is
-  required (e.g. software licence pinned to one node).
 - **NO long-running processes on the login node — ever.** This is
   a stricter reading of the "login is read-only" rule and includes
   everything below, not just python/xtb/MACE:
@@ -63,21 +52,15 @@
     - A one-shot `sbatch script.sh` command is fine (it returns
       immediately). Anything that stays resident past that submit
       is not.
-    - The precedent in `spec/spec09_.../chain_family_b1.sh` that
-      says *"Run under nohup on login node (shell loop only)"* is
-      **wrong** and must not be imitated. CLAUDE.md overrides any
-      in-repo comment that contradicts it.
 - **If you need automated / throttled job submission, use one of
   these — never a login-node daemon:**
     1. **SLURM job array with a concurrency cap.** `sbatch
        --array=0-N%K script.sh` runs at most `K` array tasks at a
        time. `K = 10` matches our RUNNING concurrency limit.
-       **Array tasks each count against the 12-task submit cap**, so
-       `N + 1 ≤ 12` is the ceiling on a *single* array under an
-       otherwise-empty queue. To fan out beyond 12 tasks, split into
-       sequential arrays chained with `--dependency=afterany` (see
-       (3)) or resubmit the next batch once the first drains. No
-       launcher process on the login node.
+       **Array tasks each count against the 20-task submit cap.**
+       To fan out beyond 20 tasks, split into sequential arrays
+       chained with `--dependency=afterany` (see (3)) or resubmit
+       the next batch once the first drains.
     2. **Submit the launcher itself as an sbatch job** on a small
        cpu partition (`--time=48:00:00`, `--mem=2G`, `--cpus-per-task=1`,
        e.g. cpu2). The launcher's polling + `sbatch` calls then
@@ -92,185 +75,84 @@
 ## Project overview
 
 EDA (Energy Decomposition Analysis) + ASM (Activation Strain Model)
-proxy prediction of 5-channel decomposed activation energies. Repo
-covers Stage 5 (label pipeline) + Stage 6 (Δ-learners over
-MACE-OFF23 features).
+proxy prediction of 5-channel decomposed activation energies.
+
+**Current status (2026-09-04):** Full B3LYP-EDA relabeling of the
+Coley 5269-reaction dipolar cycloaddition dataset (spec16rev). All
+previous labeling experiments (789-rxn ADF, 3504-rxn cohort,
+spec14/15 validations, m1/m2/m3 delta learners) have been removed —
+those labels turned out to be incorrect and would cause confusion
+with the current authoritative labels being produced now.
 
 Folder/distribution name: `eda-asm-prediction` (hyphenated).
 Python import name: `eda_asm`.
 
-## Repository layout (post-cleanup, 2026-07-03)
+## Repository layout
 
 ```
-labels/                       789-reaction ADF + ORCA EDA-ASM labels + seed selection
-V1/                           Claisen 15-substrate ASR-EDA (spec + runs + Hammett analysis)
-models/                       parent for delta-learner deliverables
-  m1/  m2/  m3/               Δ-learner code + frozen cells + per-model figures/results per baseline
-  comparison/                 cross-model aggregates (current: comparison/v9/)
-src/eda_asm/                  canonical shared package
-  asr_v1/                     model / backbone / training / baseline_physics
-  datasets/                   dipolar_cycloaddition, qmrxn20 loaders
-  adf/                        ADF input builder + parser (legacy)
-  phase1/                     Halo8 sampling + fragment definition (legacy)
-  stage5a/                    ADF fragmentation pipeline (legacy)
-scripts/                      pipeline utilities (asr_v1 caching + trainers,
-                              screen_substituents.py, ...)
-pipeline_rebuild/spec_v1/     current spec-compliant rebuild (2026-07-03)
-reports/fragment_screen/      substituent decomposition (BRICS + Bemis-Murcko)
-backbone_ft/                  MACE-OFF23 fine-tune experiment (gitignored)
+analysis/
+  b3lyp_full/            spec16rev — current label pipeline
+                         (5262 rxns × 5 SPEs, B3LYP EDA-NOCV)
+  bath1480_probe/        experiment scripts only (results removed;
+                         code kept for future reuse)
+src/eda_asm/             shared Python package
+  datasets/              dataset loaders (dipolar, qmrxn20)
+  asr_v1/                model / backbone / training utilities
+  adf/                   ADF input builder + parser (legacy, reusable)
+scripts/                 utility scripts (fragment tools, ORCA input
+                         builders, etc.)
+backbone_ft/             MACE-OFF23 fine-tune experiment (gitignored)
+docs/                    documentation
+CLAUDE.md                this file
 ```
+
+## Current label pipeline (spec16rev b3lyp_full)
+
+Full B3LYP-D3(BJ)/def2-TZVP CPCM(water) EDA-NOCV on the Coley 5269
+dipolar cycloaddition dataset. Per reaction:
+- 5 ORCA single-point calculations run in parallel:
+  `eda` + `frag1_dist` + `frag2_dist` + `frag1_rel` + `frag2_rel`
+- 5-channel EDA labels + strain corrections
+- Self-chaining orchestrator (`orch_b3full.sh`) handles the 47h
+  wall-time limit by automatically re-submitting itself
+  (`--dependency=afterany:$SLURM_JOB_ID`)
+
+Pipeline stages under `analysis/b3lyp_full/`:
+
+| stage | script | what it does |
+|---|---|---|
+| 0 | `00_setup.py` | contamination check + Coley 5269 verification |
+| 1 | `01_build_inputs.py` | build 5 ORCA inputs per rxn (Coley r*.xyz) |
+| 2 | `02_submit.sh` | per-rxn ORCA runner (SLURM array element) |
+|   | `orch_b3full.sh` | continuous-fill + self-chaining orchestrator |
+| 3 | `03_parse.py` | parse ORCA outputs → per-rxn EDA channels |
+| 4 | `04_qc.py` | quality-check labels (post-run) |
+| 5 | `05_compare.py` | compare vs external references (post-run) |
+| 6 | `06_export.py` | export final labels parquet (post-run) |
+| 7 | `07_report.py` | REPORT.md with figures + gate status |
+
+Cleanup policy (`02_submit.sh`): after all 5 SPEs terminate normally,
+delete densities/CPCM/tmp files but keep `.inp/.out/.err/.gbw`.
+Wavefunctions (~10 MB/rxn, ~52 GB total for 5262) retained for
+future re-analysis without SCF re-run.
+
+Idempotency: each SPE is skipped if its `.out` already contains
+`ORCA TERMINATED NORMALLY`. Safe to resubmit at any time.
 
 ## Datasets — where the geometries come from
 
-The 789-reaction cohort spans four families. Raw data lives under
-`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/` (regenerable, gitignored).
+Raw data under `/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/` (regenerable,
+gitignored).
 
-| family | count | source | archive | local extraction |
-|---|---|---|---|---|
-| dipolar | 193 | Stuyver / Jorner / Coley 2023 | figshare 21707888 v5 | `dipolar_cycloaddition/extracted/full_dataset_profiles/{idx}/` |
-| qmrxn20_e2 | 200 | von Rudorff 2020 | materialscloud 2020.55 (uuid `gkqvy-3vp74`) | `QMrxn20/transition-states/e2/{label}.xyz` + friends |
-| qmrxn20_sn2 | 196 | von Rudorff 2020 | (same) | `QMrxn20/transition-states/sn2/{label}.xyz` |
-| rgd1 | 200 | Zhao & Savoie 2023 | figshare 21066901 v6 | `rgd1/RGD1_CHNO.h5` (per-reaction R/TS/P extracted to `extracted_xyz/{rid}/{R,TS,P}.xyz`) |
-
-Cohort membership: `labels/adf/adf_labels_v6_multifamily.parquet`
-(reaction_id column). Original selection artefacts (seed=42, Morgan-r2
-+ Kennard–Stone) at `labels/seed_selection/`.
-
-## MACE-OFF23 backbone
-
-Cached locally at `/home1/yeseo1ee/.cache/mace/MACE-OFF23_medium.model`
-(also small/large). Feature extraction goes through
-`src/eda_asm/asr_v1/backbone_maceoff.py:MACEOFFFeatureExtractor`.
-Per-atom invariant features, 256-d, float32.
-
-Precomputed R/TS/P features for all 789 reactions live at
-`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/mace_off23_medium/{rid}.pt`
-(regenerable via `pipeline_rebuild/stage2_mace_features.py`).
-
-## Spec-compliant model architecture (m1 / m2 / m3)
-
-All three share the same model + training loop; they differ only in
-the physics descriptor vector fed to the ridge baseline.
-
-```
-MACE-OFF23 features (256-d per atom, per state)
-  → InputStandardizer  (fit on train fold R+P only, TS excluded)
-  → SiLU + Dropout linear projection to 128-d
-  → 4 × Cross-attention blocks (LayerNorm-stabilised, 4 heads × 32-d):
-        h′(TS) = LN(h(TS) + ½ [CA_θ1(h(TS),h(R)) + CA_θ2(h(TS),h(P))])
-        h′(R)  = LN(h(R)  + CA_θ3(h(R), h(TS)))
-        h′(P)  = LN(h(P)  + CA_θ4(h(P), h(TS)))
-  → AttentionPool per state (learned query q_s, mask padding)
-  → z = [v_R || v_TS || v_P || v_TS-v_R || v_TS-v_P || v_P-v_R]  (768-d)
-  → MLP 768 → SiLU → 64 → SiLU → 64 → 5   (residual δ)
-
-Physics baseline b:  ridge (α=1) over z-score(d1..d_D) with intercept.
-Prediction:          ŷ = b + δ
-Loss:                mean over batch of  mean_c |ŷ_c − y_c| / σ_c
-                     (σ_c = per-channel std of train-fold labels)
-Optimiser:           Adam, lr = 1e-5, weight_decay = 1e-3
-Regularisation:      grad-clip 5.0, dropout 0.2
-Budget:              EPOCHS_MAX = 100 000, PATIENCE = 10 000, batch = 16
-```
-
-### Physics descriptors per model
-
-| model | dim | descriptors |
-|---|---|---|
-| m1 | 6 | d1..d6 — Kabsch RMSD × 2, Pauli/elst/disp pair-sums at TS, n_atoms |
-| m2 | 21 | d1..d6 + d7..d21 (GFN2-xTB energies, dipoles, HOMO/LUMO, fragA charge sum) |
-| m3 | 24 | d1..d21 + d22 = μ²/2η (Parr ω), d23 = Σq², d24 = Σ|WBO_{a∈A,b∈B}| |
-
-xTB descriptors come from three single-points at the TS geometry:
-complex, fragA, fragB. Fragment partition uses:
-- dipolar: atom-mapped SMILES + RDKit subgraph match on TS connectivity
-- qmrxn20 e2/sn2: connected components on R (R & TS share atom order)
-- rgd1: connected components on R (same)
-
-## Current spec-v1 rebuild pipeline
-
-Everything under `pipeline_rebuild/spec_v1/`. All sbatch scripts use
-`--time=48:00:00`; all output goes to
-`/gpfs/tmp_cpu2/yeseo1ee/eda_asm_features/spec_v1_logs/`.
-
-| stage | script | what it does | output |
+| family | count | source | archive |
 |---|---|---|---|
-| 1 | `stage1_download.sh` + `stage1b_rgd1.sh` + `stage1d_qmrxn20_fixed.sh` | download source archives (dipolar, RGD1, QMrxn20) | raw XYZs under `/gpfs/tmp_cpu2/.../eda_asm_raw/` |
-| 2 | `stage2_mace.sh` | MACE-OFF23_medium features per (R/TS/P) per reaction | `mace_off23_medium/{rid}.pt` |
-| 3 | `stage3_array.sh` (8-way shards) | fragment partition + GFN2-xTB descriptors d1..d24 | `descriptors_v1.parquet` |
-| 4 | `stage4.sh` | assemble m1/m2/m3 bundles + 5-fold stratified splits | `bundles_v1/features_v6_delta_{m1,m2,m3}.pt`, `subsamples_v1/trackB_no_ood/fold*/…` |
-| 5 | `stage5_train_{m1,m2,m3}.sh` | 5×5 CV arrays on gpu3/gpu4/gpu5 (%3 each = 9 concurrent) | `models/m{1,2,3}/code/trackB_lowlr_no_ood_*/m{1,2,3}_delta/fold*/member*.json` |
-| 6 | `stage6_aggregate.py` | 3-way NMAE / RMSE bar + parity grid + REPORT.md | `models/comparison/spec_v1/{figures,results,REPORT.md}` |
+| **dipolar (current label target)** | **5269** | Stuyver / Jorner / Coley 2023 | figshare 21707888 v5 |
+| qmrxn20_e2 | 200 | von Rudorff 2020 | materialscloud 2020.55 |
+| qmrxn20_sn2 | 196 | von Rudorff 2020 | (same) |
+| rgd1 | (available) | Zhao & Savoie 2023 | figshare 21066901 v6 |
 
-Idempotency contract:
-- Stage 2/3 shards check `_progress.jsonl` / existing rows before recompute.
-- Stage 5 runners skip a cell if the target `member{M}.json` exists.
-- If a 48h wall clips a shard/cell, re-`sbatch` the same script.
-  Anything already written is preserved; only the interrupted cell restarts.
-
-## Critical gotchas from the current rebuild (2026-07-03)
-
-- **tblite must be imported before torch.** Torch ships its own
-  `libgomp` without the `GOMP_5.0` symbol that tblite needs. Order:
-  `from tblite.interface import Calculator` at module top, then
-  everything else. Stage 3 dies with `ImportError: tblite C extension
-  unimportable` if this is violated.
-- **`tblite.Calculator.add()` does NOT accept "bond-orders" or "dipole".**
-  Only interaction terms (`electric-field`, `alpb-solvation`, …).
-  Bond orders and dipole are returned by `singlepoint()` by default.
-  Calling `add("bond-orders")` silently corrupts state so that dipole
-  is not computed → `TBLiteValueError: Molecular dipole was not
-  calculated`.
-- **QMrxn20 e2/sn2 products lose LG + proton atoms.** `d2 = kabsch_rmsd(P, TS)`
-  needs matching atom counts. Fallback: substitute TS for P when
-  `len(P) != len(TS)`, effectively setting d2 → 0 for those ~396
-  reactions. Documented in `stage3_xtb_and_descriptors.py`.
-- **SIZE_FULL = 509** is hardcoded in `runner_lowlr_trackB_m1delta.py`
-  (spec convention). Stage 4 must therefore emit `size_509.json` in
-  each fold dir even when the train pool is larger (subsample with a
-  per-fold RNG seed).
-- **Standardizer scope**: `InputStandardizer.fit_from()` on train R+P
-  only. TS is excluded per spec. The restored code included TS by
-  mistake — corrected in `training_delta.py` (2026-07-03).
-- **Loss**: σ_c-normalised L1, not raw `F.l1_loss`. σ_c comes from
-  train-fold labels, not global.
-
-## V1 Claisen 15-substrate ASR/EDA
-
-Independent side project under `V1/`. 15 para-substituents on a vinyl
-allyl ether, wB97X-3c geometry + ZORA-BLYP-D3(BJ)/TZ2P NOCV-EDA.
-Frozen 15-row parquet at `V1/outputs/v1_claisen_asr.parquet`.
-
-Downstream Hammett analysis under `V1/analysis/`:
-- `hammett_plot.py` — σₚ regressions per EDA channel + Swain–Lupton fit.
-- `submit_hammett.sh` — sbatch (48h) to cpu2.
-- Frozen figures + results/CSV committed.
-
-Headline: total ΔE‡ vs σₚ has R² ≈ 0.03 (barrier flat in σₚ), but
-individual EDA channels (Pauli, V_elst, strain) each correlate
-strongly with σₚ (R² ≈ 0.4–0.5) with signs that cancel in the total.
-This is the argument for treating EDA channels as separate features.
-
-## MACE-OFF23 fine-tune (`backbone_ft/` — gitignored)
-
-Live experiment fine-tuning MACE-OFF23_large on Halo8 R/TS/P frames.
-Uses:
-- Foundation model: `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/foundation/MACE-OFF23_large.model`
-- Splits + XYZs under `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/`
-- Scripts: `backbone_ft/scripts/run_ft_partial_freeze.py` (partial-freeze
-  wrapper around `mace_run_train`).
-- SLURM submitter: `backbone_ft/configs/slurm_ft.sh` — 48h, gpu3/4/5.
-
-**Not part of the m1/m2/m3 deliverable.** Kept out of git via
-`.gitignore` rule `/backbone_ft/`. Restart from the last MACE
-checkpoint if the 48h wall trips.
-
-## Halo8 reaction trajectories (legacy)
-
-Source DBs deleted 2026-06-12 to free quota (memory:
-`halo8_data_deleted.md`). The `data/Halo8/` symlink is broken; the
-dataset is no longer available on this cluster. Fine-tune uses the
-pre-processed XYZ splits at `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/`.
+Only the **dipolar 5269** dataset is currently being labeled
+(spec16rev). Others are available raw for future labeling.
 
 ## Environment
 
@@ -278,18 +160,26 @@ pre-processed XYZ splits at `/gpfs/tmp_cpu2/yeseo1ee/halo8_ft/`.
   tblite, rdkit, ase, pandas, matplotlib).
 - Activation: `source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh;
   conda activate reactot`. Every sbatch script does this.
-- QM tools: ADF/AMS at `$HOME/ams2026.103/` (V1 only), ORCA 6.1.1
-  at `$HOME/orca_6_1_1_avx2/` (V1 only), GFN2-xTB via `tblite`
-  Python API (m2/m3).
+- QM tools: ORCA 6.1.1 at `$HOME/orca_6_1_1_avx2/` (used for b3lyp_full).
+- MPI: OpenMPI 4.1.7a1 at `/usr/mpi/gcc/openmpi-4.1.7a1/`. ORCA
+  parallel EDA (`%pal nprocs 5`) requires `OMPI_MCA_pml=ob1`,
+  `OMPI_MCA_coll_hcoll_enable=0`, `UCX_TLS=tcp,self,sm` — UCX/hcoll
+  crash MPI mid-run on some nodes.
+
+## Home directory quota
+
+- Home quota: **300 GB** (raised from 100 GB on 2026-09-02).
+- Current usage: ~130 GB (`analysis/b3lyp_full/` scratch + .gbw
+  retention, ~52 GB predicted at completion).
+- Test quota: `dd if=/dev/zero of=~/qtest.bin bs=1M count=500` should
+  succeed. "Disk quota exceeded" means the ORCA basis-write error
+  (`TBasis::WriteElement`) will resurface.
 
 ## Conventions
 
-- Random seeds always come from the config (default seed = 42 for
-  fold generation and RNG in stratification).
+- Random seeds always come from the config (default seed = 42).
 - All energies stored in **kcal/mol** unless the column name says
   otherwise (`_Eh` = hartree, `_h` = hartree).
 - Geometries in Å.
-- Never commit `/gpfs/tmp_cpu2/yeseo1ee/...` outputs. Bundles + raw
-  descriptors + logs live there and are gitignored.
-- Fresh per-cell training outputs (`m{1,2,3}/code/trackB_*/`) are
-  gitignored until a curated aggregation step promotes them.
+- Never commit `/gpfs/tmp_cpu2/yeseo1ee/...` outputs. Raw datasets
+  and any large regenerable data live there and are gitignored.
