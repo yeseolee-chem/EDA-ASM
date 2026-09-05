@@ -182,10 +182,13 @@ def main() -> int:
     ok = D[D.ok]
     print(f"\nR build success: {len(ok)} / {len(D)}   failures: {dict(fails)}   "
           f"reused: {n_reused}")
-    fresh_ok = len(ok) - n_reused
-    cap_rate_rxn = n_cap_rxn / max(1, fresh_ok)
+    # n_cap_rxn tracks BOTH fresh and reused rxns (reused branch feeds it
+    # from the cached hit_cap array); denominator must match that scope,
+    # i.e. every ok row, not just fresh. Dividing by fresh_ok on a
+    # fully-reused re-run yielded 14/0 -> 1400%.
+    cap_rate_rxn = n_cap_rxn / max(1, len(ok))
     cap_rate_frag = n_cap_frag / max(1, n_frag_total)
-    print(f"MAX_ISO({MAX_ISO}) hit — reaction basis: {n_cap_rxn}/{fresh_ok} "
+    print(f"MAX_ISO({MAX_ISO}) hit — reaction basis: {n_cap_rxn}/{len(ok)} "
           f"({cap_rate_rxn:.1%})")
     print(f"MAX_ISO({MAX_ISO}) hit — fragment basis: {n_cap_frag}/{n_frag_total} "
           f"({cap_rate_frag:.1%})   (SPEC reference: 4.6%)")
