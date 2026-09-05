@@ -149,6 +149,10 @@ PATCH_RULES = [
     # PyTorch Lightning 2.x renamed `replace_sampler_ddp` to
     # `use_distributed_sampler`. Semantics identical.
     (r'\breplace_sampler_ddp\b', 'use_distributed_sampler'),
+    # PL 2.x rejects strategy=None (raises ValueError); the string "auto"
+    # is the equivalent "let PL pick". react-ot's train script sets
+    # strategy = None on the single-GPU path.
+    (r'(?m)^(\s*)strategy\s*=\s*None\s*$', r'\1strategy = "auto"'),
 ]
 
 

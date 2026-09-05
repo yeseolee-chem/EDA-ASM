@@ -114,6 +114,7 @@ def main() -> int:
         (r'(?m)^\s*import colored_traceback\.always\s*$',
          'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
         (r'\breplace_sampler_ddp\b', 'use_distributed_sampler'),
+        (r'(?m)^(\s*)strategy\s*=\s*None\s*$', r'\1strategy = "auto"'),
     ]:
         text = re.sub(pat, repl, text)
     if MAX_EPOCHS:
