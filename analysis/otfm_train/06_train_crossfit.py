@@ -127,7 +127,8 @@ def prepare_fold(fold: int) -> tuple[Path, int, int]:
 
 PREAMBLE_TEMPLATE = '''\
 # --- SPEC17rev2 injected preamble ---------------------------------
-import os, sys
+import glob as _glob
+import os, sys, re as _re
 sys.path.insert(0, {analysis_dir!r})
 from _partial_load import partial_load, assert_gate_6a
 import torch as _torch
@@ -137,6 +138,24 @@ _FOLD_DATADIR = {datadir!r}
 _SAMPLER_MAX_NUM = {sampler_max_num}
 _BATCH_SIZE = {batch_size}
 _FOLD_NAME = {fold_name!r}
+
+# Auto-resume: pick the fold's best-val checkpoint if one exists.
+def _find_best_ckpt():
+    pat = os.path.join({fold_ckpt_dir!r},
+                       "checkpoint", "*", "*", "sb-*.ckpt")
+    hits = _glob.glob(pat)
+    if not hits:
+        return None
+    def _key(p):
+        m = _re.search(r"val_ep_scaled_err=(-?\\d+\\.\\d+)", p)
+        return float(m.group(1)) if m else float("inf")
+    return sorted(hits, key=_key)[0]
+
+_RESUME_CKPT = _find_best_ckpt()
+if _RESUME_CKPT:
+    print(f"[resume] found best ckpt: {{_RESUME_CKPT}}")
+else:
+    print("[resume] no prior checkpoint, training from scratch")
 # ------------------------------------------------------------------
 '''
 
@@ -173,6 +192,12 @@ PATCH_RULES = [
     # subset selection. Our fold pkls are already the desired subset — set
     # False so react-ot skips the missing key and uses all rows.
     (r'\buse_by_ind\s*=\s*True\b', 'use_by_ind=False'),
+    # Default save_top_k=-1 saves EVERY epoch (~200MB each) — hit disk
+    # quota after ~100 epochs on fold0/1/2. Cap to top-3 by val metric.
+    (r'save_top_k=-1', 'save_top_k=3'),
+    # Resume from best existing checkpoint if one is present in the fold
+    # dir. _RESUME_CKPT is discovered by the injected preamble.
+    (r'trainer\.fit\(ddpm\)', 'trainer.fit(ddpm, ckpt_path=_RESUME_CKPT)'),
 ]
 
 
@@ -207,6 +232,7 @@ def patch_train_script(src: Path, dst: Path, datadir: Path,
         sampler_max_num=SAMPLER_MAX_NUM,
         batch_size=BATCH_SIZE,
         fold_name=fold_name,
+        fold_ckpt_dir=str(BASE / "ckpt" / fold_name),
     )
     # Optionally cap epochs
     if MAX_EPOCHS:

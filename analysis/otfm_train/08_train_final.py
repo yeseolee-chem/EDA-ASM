@@ -132,6 +132,10 @@ def main() -> int:
         # Our fold pkls have no "use_ind" key; disable ProcessedTS1x's
         # index-based filter.
         (r'\buse_by_ind\s*=\s*True\b', 'use_by_ind=False'),
+        # Cap ckpt retention to avoid disk-quota blowout on long runs.
+        (r'save_top_k=-1', 'save_top_k=3'),
+        # Auto-resume from best-val ckpt if present in final_dir.
+        (r'trainer\.fit\(ddpm\)', 'trainer.fit(ddpm, ckpt_path=_RESUME_CKPT)'),
     ]:
         text = re.sub(pat, repl, text)
     if MAX_EPOCHS:
@@ -139,7 +143,7 @@ def main() -> int:
                       f'max_epochs={int(MAX_EPOCHS)}', text)
 
     preamble = (
-        f"import sys\n"
+        f"import glob as _glob, os, re as _re, sys\n"
         f"sys.path.insert(0, {str(BASE)!r})\n"
         f"from _partial_load import partial_load, assert_gate_6a\n"
         f"_PRETRAINED_CKPT_PATH = {str(ROT / 'reactot-pretrained.ckpt')!r}\n"
@@ -147,6 +151,12 @@ def main() -> int:
         f"_SAMPLER_MAX_NUM = {SAMPLER_MAX_NUM}\n"
         f"_BATCH_SIZE = {BATCH_SIZE}\n"
         f"_FOLD_NAME = 'final'\n"
+        f"_hits = _glob.glob({str(final_dir)!r} + '/checkpoint/*/*/sb-*.ckpt')\n"
+        f"def _key(p):\n"
+        f"    m = _re.search(r'val_ep_scaled_err=(-?\\d+\\.\\d+)', p)\n"
+        f"    return float(m.group(1)) if m else float('inf')\n"
+        f"_RESUME_CKPT = sorted(_hits, key=_key)[0] if _hits else None\n"
+        f"print('[resume]', _RESUME_CKPT or 'from scratch')\n"
     )
     dst = final_dir / "train.py"
     dst.write_text(preamble + text)
