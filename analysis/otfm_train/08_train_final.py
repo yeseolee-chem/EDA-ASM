@@ -126,6 +126,9 @@ def main() -> int:
          'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
         # replace_sampler_ddp and strategy=None PL 2.x patches reverted —
         # env pinned to pytorch-lightning==1.9.5 (see docs/otfm_train_env.md).
+        # Our fold pkls have no "use_ind" key; disable ProcessedTS1x's
+        # index-based filter.
+        (r'\buse_by_ind\s*=\s*True\b', 'use_by_ind=False'),
     ]:
         text = re.sub(pat, repl, text)
     if MAX_EPOCHS:

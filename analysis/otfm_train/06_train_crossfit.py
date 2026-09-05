@@ -164,6 +164,10 @@ PATCH_RULES = [
     # after downgrading the reactot env to pytorch-lightning==1.9.5, which
     # accepts react-ot's original PL 1.x API. See docs/otfm_train_env.md
     # for the env pinning rationale.
+    # use_by_ind=True makes ProcessedTS1x read raw_dataset["use_ind"] for
+    # subset selection. Our fold pkls are already the desired subset — set
+    # False so react-ot skips the missing key and uses all rows.
+    (r'\buse_by_ind\s*=\s*True\b', 'use_by_ind=False'),
 ]
 
 
