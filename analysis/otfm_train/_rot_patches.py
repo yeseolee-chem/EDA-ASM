@@ -88,6 +88,33 @@ def patch_allowed_atoms(rot_root: Path) -> bool:
     return True
 
 
+def patch_ase_neb_import(rot_root: Path) -> bool:
+    """react-ot pins `from ase.neb import NEB`; ASE >=3.24 moved it to
+    `ase.mep.neb`. Rewrite the import with a two-path try/except so the
+    trainer loads under either ASE version.
+    """
+    p = rot_root / "reactot" / "diffusion" / "_utils.py"
+    if not p.exists():
+        return False
+    text = p.read_text()
+    if "from ase.mep.neb import NEB" in text and "from ase.neb import NEB" not in text:
+        return False   # already patched
+    _backup(p)
+    new_import = (
+        "try:\n"
+        "    from ase.mep.neb import NEB   # ASE >= 3.24\n"
+        "except ImportError:\n"
+        "    from ase.neb import NEB       # ASE < 3.24\n"
+    )
+    new = re.sub(r"^from ase\.neb import NEB\s*$", new_import, text,
+                 count=1, flags=re.M)
+    if new == text:
+        return False
+    p.write_text(new)
+    print(f"[patch] {p.name}: ase.neb import made version-agnostic")
+    return True
+
+
 def assert_gate_6b(rot_root: Path) -> None:
     """Verify all patches took effect. Raises on failure."""
     cfg = rot_root / "reactot" / "dataset" / "datasets_config.py"
@@ -122,5 +149,6 @@ def apply_all(rot_root: Path) -> dict:
     """Run every patch + verify. Call once before invoking react-ot training."""
     mapping = patch_atom_mapping(rot_root)
     patch_allowed_atoms(rot_root)
+    patch_ase_neb_import(rot_root)
     assert_gate_6b(rot_root)
     return mapping
