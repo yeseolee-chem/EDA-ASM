@@ -40,6 +40,12 @@ GEN = BASE / "generated" / "crossfit"
 MANIFEST = GEN.parent / "manifest.csv"
 N_FOLDS = 5
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(BASE))
+from _rot_patches import apply_all as apply_rot_patches  # noqa: E402
+
 # React-OT sampler knobs — SPEC §17 quote: nfe=25 / solver ode.
 SAMPLER_NFE = int(os.environ.get("SAMPLER_NFE", "25"))
 SAMPLER_MAX_NUM = int(os.environ.get("SAMPLER_MAX_NUM", "1600"))
@@ -190,6 +196,9 @@ def main() -> int:
     GEN.mkdir(parents=True, exist_ok=True)
     fold_dir = BASE / "ckpt" / f"fold{fold}"
     ckpt = find_checkpoint(fold_dir)
+    # GATE-6b: ensure react-ot's dataset module sees the 7-element mapping.
+    # ckpt.load_from_checkpoint triggers dataset imports on some releases.
+    apply_rot_patches(ROT)
     model = load_model(ckpt)
 
     import torch

@@ -48,6 +48,9 @@ CHANNELS = ("elst", "orb", "pauli", "xc", "disp")
 N_SAMPLES = 200
 SEED = 42
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
 
 def read_xyz(path: Path):
     lines = path.read_text().split("\n")

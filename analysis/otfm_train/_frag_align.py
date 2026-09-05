@@ -130,7 +130,9 @@ def match_fragment(ts_syms, ts_xyz, r_syms, r_xyz):
     if best_order is None:
         return None
     aligned = kabsch_apply(r_xyz[best_order], ts_xyz)
-    return best_order, aligned, cnt + 1, hit_cap
+    # cnt hits MAX_ISO on the sentinel iteration we don't score; cap the
+    # reported count so downstream stats never exceed MAX_ISO.
+    return best_order, aligned, min(cnt + 1, MAX_ISO), hit_cap
 
 
 def verify_correspondence(ts_syms, ts_xyz, r_syms, r_xyz, order):

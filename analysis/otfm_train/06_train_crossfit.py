@@ -48,6 +48,12 @@ SEED = 42
 N_FOLDS = 5
 VAL_FRAC = 0.10
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(BASE))
+from _rot_patches import apply_all as apply_rot_patches  # noqa: E402
+
 # Environment-tunable knobs.
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "8"))
 SAMPLER_MAX_NUM = int(os.environ.get("SAMPLER_MAX_NUM", "1600"))
@@ -189,6 +195,16 @@ def train_one_fold(fold: int) -> int:
     if not PRETRAINED.exists():
         print(f"[FATAL] pretrained ckpt missing: {PRETRAINED}", file=sys.stderr)
         return 1
+
+    # GATE-6b: extend ATOM_MAPPING to 7 elements + allowed_atom_types BEFORE
+    # any react-ot dataset import. Idempotent (writes .py.orig once).
+    mapping = apply_rot_patches(ROT)
+    (BASE / "artifacts" / "GATE6b_STATUS.txt").write_text(
+        "PASS\n"
+        f"atom_mapping={mapping}\n"
+        f"n_element={len(mapping)}\n"
+        f"expected_node_nfs={3 + len(mapping) + 1}\n"
+    )
 
     src = find_train_script()
     dst = fold_dir / "train.py"

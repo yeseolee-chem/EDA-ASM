@@ -24,6 +24,9 @@ BASE = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/otfm_trai
 PROF = BASE / "coley_profiles/full_dataset_profiles"
 GEN = BASE / "generated/crossfit"
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
 
 def read_xyz(path: Path):
     lines = path.read_text().split("\n")

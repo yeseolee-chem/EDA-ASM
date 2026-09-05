@@ -22,6 +22,9 @@ T1X = REPO / "external/react-ot/reactot/data/transition1x"
 CKPT = REPO / "external/react-ot/reactot-pretrained.ckpt"
 OUT = BASE / "artifacts" / "schema.md"
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
 
 def dump_pkl(f) -> list[str]:
     lines = [f"### {f.name}"]

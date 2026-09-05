@@ -26,6 +26,9 @@ REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
 BASE = REPO / "analysis/otfm_train"
 CSV_PATH = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv")
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
 SEED = 42
 N_FOLDS = 5
 

@@ -25,6 +25,9 @@ BASE = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/otfm_trai
 ART = BASE / "artifacts"
 FIG = BASE / "figures"
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
 
 def read_gate(k: int) -> str:
     p = ART / f"GATE{k}_STATUS.txt"

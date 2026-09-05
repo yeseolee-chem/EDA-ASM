@@ -28,6 +28,12 @@ BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "8"))
 SAMPLER_MAX_NUM = int(os.environ.get("SAMPLER_MAX_NUM", "1600"))
 MAX_EPOCHS = os.environ.get("MAX_EPOCHS", "")
 
+for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
+    (BASE / _d).mkdir(parents=True, exist_ok=True)
+
+sys.path.insert(0, str(BASE))
+from _rot_patches import apply_all as apply_rot_patches  # noqa: E402
+
 
 def slice_data(data: dict, ids: set) -> dict:
     keep = [i for i, r in enumerate(data["rxn_id"]) if r in ids]
@@ -76,6 +82,9 @@ def main() -> int:
 
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{ROT}:{env.get('PYTHONPATH', '')}"
+
+    # GATE-6b: patch ATOM_MAPPING before spawning the trainer.
+    apply_rot_patches(ROT)
 
     import re
 
