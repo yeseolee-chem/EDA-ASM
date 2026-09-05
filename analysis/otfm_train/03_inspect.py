@@ -18,12 +18,17 @@ import torch
 
 REPO = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction")
 BASE = REPO / "analysis/otfm_train"
-T1X = REPO / "external/react-ot/reactot/data/transition1x"
-CKPT = REPO / "external/react-ot/reactot-pretrained.ckpt"
+ROT = REPO / "external/react-ot"
+T1X = ROT / "reactot/data/transition1x"
+CKPT = ROT / "reactot-pretrained.ckpt"
 OUT = BASE / "artifacts" / "schema.md"
 
 for _d in ("artifacts", "data", "ckpt", "generated", "logs", "figures"):
     (BASE / _d).mkdir(parents=True, exist_ok=True)
+
+# torch.load on the pretrained checkpoint unpickles reactot.* classes, so
+# the react-ot source tree must be importable BEFORE dump_ckpt() runs.
+sys.path.insert(0, str(ROT))
 
 
 def dump_pkl(f) -> list[str]:
@@ -77,7 +82,18 @@ def main() -> int:
     if not CKPT.exists():
         print(f"[FATAL] checkpoint missing: {CKPT}", file=sys.stderr)
         return 1
+
+    # Document the shipped checkpoint (5-element atom mapping). Step 6's
+    # apply_rot_patches() will widen ATOM_MAPPING to 7 elements, so the
+    # atom-count-sensitive layers dumped below are exactly those that
+    # partial_load must skip on ckpt reload. GATE-6a asserts that.
+    body.append("## Shipped checkpoint (pre-patch)")
     body += dump_ckpt() + [""]
+    body.append("## Expected reshape after GATE-6b patch")
+    body.append("`ATOM_MAPPING` widens 5 → 7 elements (adds Cl, Br). "
+                "`node_nfs` moves from `[9]*3` to `[11]*3`. Embed/output "
+                "layers listed above become the partial_load skip set.")
+    body.append("")
 
     pkls = sorted(T1X.glob("*.pkl")) if T1X.exists() else []
     if not pkls:

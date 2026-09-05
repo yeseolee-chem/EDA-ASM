@@ -11,5 +11,10 @@ BASE=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/otfm_train
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
 
+# torch.load unpickles reactot.* classes from the checkpoint — react-ot
+# source tree must be on PYTHONPATH. Script also sys.path.inserts as
+# defense-in-depth.
+export PYTHONPATH=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/external/react-ot:${PYTHONPATH:-}
+
 cd "$BASE"
 python 03_inspect.py
