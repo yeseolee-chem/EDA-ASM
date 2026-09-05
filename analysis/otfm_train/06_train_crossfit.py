@@ -146,6 +146,9 @@ PATCH_RULES = [
     # (?m) enables multiline so ^ matches each line start.
     (r'(?m)^\s*import colored_traceback\.always\s*$',
      'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
+    # PyTorch Lightning 2.x renamed `replace_sampler_ddp` to
+    # `use_distributed_sampler`. Semantics identical.
+    (r'\breplace_sampler_ddp\b', 'use_distributed_sampler'),
 ]
 
 
