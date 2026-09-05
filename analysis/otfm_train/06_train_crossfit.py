@@ -140,6 +140,12 @@ PATCH_RULES = [
     (r'ts1x-train-[^"\']+\.pkl', f'train_{{FOLD_NAME}}.pkl'),
     (r'ts1x-val-[^"\']+\.pkl',   f'val_{{FOLD_NAME}}.pkl'),
     (r'ts1x-test-[^"\']+\.pkl',  f'test_{{FOLD_NAME}}.pkl'),
+    # colored_traceback triggers curses.setupterm() at import time, which
+    # fails on SLURM compute nodes lacking a terminfo database. Not needed
+    # for training — swap to a no-op try/except so any missing dep is soft.
+    # (?m) enables multiline so ^ matches each line start.
+    (r'(?m)^\s*import colored_traceback\.always\s*$',
+     'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
 ]
 
 

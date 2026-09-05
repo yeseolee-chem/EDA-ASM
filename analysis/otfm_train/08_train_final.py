@@ -111,6 +111,8 @@ def main() -> int:
         (r'ts1x-train-[^"\']+\.pkl', 'train_final.pkl'),
         (r'ts1x-val-[^"\']+\.pkl',   'val_final.pkl'),
         (r'ts1x-test-[^"\']+\.pkl',  'test_final.pkl'),
+        (r'(?m)^\s*import colored_traceback\.always\s*$',
+         'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
     ]:
         text = re.sub(pat, repl, text)
     if MAX_EPOCHS:
