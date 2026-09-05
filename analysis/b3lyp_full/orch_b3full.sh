@@ -80,8 +80,10 @@ while [ $NEXT -ge 0 ] && [ $NEXT -lt $TOTAL ]; do
         break
     fi
 
-    Q=$(squeue -u $USER -h -r --name=b3full 2>/dev/null | wc -l)
-    NEED=$((TARGET_QUEUE - Q))
+    # Count ALL user tasks (not just b3full) — other experiments
+    # (e.g. spec17rev2 otfm) also consume the 20-task cap.
+    Q_ALL=$(squeue -u $USER -h -r 2>/dev/null | wc -l)
+    NEED=$((TARGET_QUEUE - Q_ALL + 1))  # +1 because orch itself is in Q_ALL
     REM=$((TOTAL - NEXT))
     [ $NEED -gt $REM ] && NEED=$REM
     if [ $NEED -le 0 ]; then
