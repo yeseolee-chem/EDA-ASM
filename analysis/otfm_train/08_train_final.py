@@ -113,8 +113,8 @@ def main() -> int:
         (r'ts1x-test-[^"\']+\.pkl',  'test_final.pkl'),
         (r'(?m)^\s*import colored_traceback\.always\s*$',
          'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
-        (r'\breplace_sampler_ddp\b', 'use_distributed_sampler'),
-        (r'(?m)^(\s*)strategy\s*=\s*None\s*$', r'\1strategy = "auto"'),
+        # replace_sampler_ddp and strategy=None PL 2.x patches reverted —
+        # env pinned to pytorch-lightning==1.9.5 (see docs/otfm_train_env.md).
     ]:
         text = re.sub(pat, repl, text)
     if MAX_EPOCHS:

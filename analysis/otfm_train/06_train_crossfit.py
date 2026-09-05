@@ -146,13 +146,11 @@ PATCH_RULES = [
     # (?m) enables multiline so ^ matches each line start.
     (r'(?m)^\s*import colored_traceback\.always\s*$',
      'try:\n    import colored_traceback.always\nexcept Exception:\n    pass'),
-    # PyTorch Lightning 2.x renamed `replace_sampler_ddp` to
-    # `use_distributed_sampler`. Semantics identical.
-    (r'\breplace_sampler_ddp\b', 'use_distributed_sampler'),
-    # PL 2.x rejects strategy=None (raises ValueError); the string "auto"
-    # is the equivalent "let PL pick". react-ot's train script sets
-    # strategy = None on the single-GPU path.
-    (r'(?m)^(\s*)strategy\s*=\s*None\s*$', r'\1strategy = "auto"'),
+    # NOTE: earlier revisions patched `replace_sampler_ddp` → `use_distributed_sampler`
+    # and `strategy = None` → `strategy = "auto"` for PL 2.x compat. Reverted
+    # after downgrading the reactot env to pytorch-lightning==1.9.5, which
+    # accepts react-ot's original PL 1.x API. See docs/otfm_train_env.md
+    # for the env pinning rationale.
 ]
 
 
