@@ -42,9 +42,24 @@ def main() -> int:
 
     build = pd.read_csv(build_csv)
     comp = pd.read_csv(comp_csv)
-    keep = sorted(set(build[build.ok & build.p_order_ok].rxn_id) &
-                  set(comp[(comp.status == "ok") & comp.supported].rxn_id))
-    print(f"conversion candidates: {len(keep)}")
+    keep = set(build[build.ok & build.p_order_ok].rxn_id) & \
+           set(comp[(comp.status == "ok") & comp.supported].rxn_id)
+
+    # p_order_failures.csv holds rxns where verify_product's stricter graph
+    # check failed (Coley P file inconsistent with TS + formed bonds).
+    # These pass Step 2's atom-list p_order_ok but should not be used for
+    # training since the P target is unreliable.
+    pfail_csv = BASE / "artifacts" / "p_order_failures.csv"
+    n_pfail_excluded = 0
+    if pfail_csv.exists():
+        pfail_ids = set(pd.read_csv(pfail_csv).rxn_id)
+        before = len(keep)
+        keep -= pfail_ids
+        n_pfail_excluded = before - len(keep)
+
+    keep = sorted(keep)
+    print(f"conversion candidates: {len(keep)}   "
+          f"(excluded {n_pfail_excluded} via p_order_failures.csv)")
 
     data = {
         "reactant": {"charges": [], "positions": []},

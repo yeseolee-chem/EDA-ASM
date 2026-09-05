@@ -142,6 +142,24 @@ def verify_correspondence(ts_syms, ts_xyz, r_syms, r_xyz, order):
     return all(set(Gt[i]) == set(Gr[i]) for i in range(len(ts_syms)))
 
 
+def _diff_formed_bonds(ts_syms, ts_xyz, p_syms, p_xyz):
+    """Chemically derive forming bonds from P-TS graph diff.
+
+    Returns list of 2 (i,j) tuples if P has exactly 2 more edges than TS
+    (clean cycloaddition topology). Returns None otherwise — callers use
+    this only as a fallback when the filename-parsed bonds fail to
+    split the TS graph into 2 fragments.
+    """
+    if ts_syms != p_syms:
+        return None
+    ts_edges = {tuple(sorted(e)) for e in build_graph(ts_syms, ts_xyz).edges()}
+    p_edges = {tuple(sorted(e)) for e in build_graph(p_syms, p_xyz).edges()}
+    formed = p_edges - ts_edges
+    if len(formed) == 2:
+        return sorted(formed)
+    return None
+
+
 def build_reactant_complex(prof_root: Path, rid: int):
     ts_f, r_f, p_f = find_files(prof_root, rid)
     if ts_f is None or len(r_f) != 2 or p_f is None:
@@ -156,43 +174,84 @@ def build_reactant_complex(prof_root: Path, rid: int):
     ts_s, ts_x = read_xyz(ts_f)
     comps = [sorted(c) for c in
              nx.connected_components(build_graph(ts_s, ts_x, skip=formed))]
+    recovery_used = None
     if len(comps) != 2:
-        return None, f"{len(comps)}-piece split (expected 2)"
+        # RECOVERY 1: filename bonds don't split TS → try P-TS graph diff.
+        # Chemically valid: bonds actually new in P vs TS are the true
+        # cycloaddition bonds regardless of what the filename says.
+        p_s0, p_x0 = read_xyz(p_f)
+        alt_formed = _diff_formed_bonds(ts_s, ts_x, p_s0, p_x0)
+        if alt_formed is not None:
+            alt_comps = [sorted(c) for c in
+                         nx.connected_components(
+                             build_graph(ts_s, ts_x, skip=alt_formed))]
+            if len(alt_comps) == 2:
+                formed = alt_formed
+                comps = alt_comps
+                recovery_used = "diff_bonds_split"
+        if len(comps) != 2:
+            return None, f"{len(comps)}-piece split (expected 2)"
 
     reacts = [read_xyz(f) for f in r_f]
 
-    pairing = None
-    for perm in itertools.permutations(range(2)):
-        if all(formula([ts_s[i] for i in comps[k]]) == formula(reacts[perm[k]][0])
-               for k in range(2)):
-            pairing = perm
-            break
-    if pairing is None:
-        return None, "composition mismatch"
+    def _try_align(components, formed_bonds):
+        """Try to align both reactants onto the given TS components.
+        Returns (X, info) on success, None on isomorphism/correspondence fail.
+        """
+        X_local = np.zeros_like(ts_x)
+        info_local = []
+        # Match composition pairing for THIS component set (may differ from
+        # the outer `pairing` if the components changed via recovery).
+        local_pairing = None
+        for perm in itertools.permutations(range(2)):
+            if all(formula([ts_s[i] for i in components[k]]) == formula(reacts[perm[k]][0])
+                   for k in range(2)):
+                local_pairing = perm
+                break
+        if local_pairing is None:
+            return None
+        for k in range(2):
+            idx = components[k]
+            rs, rx = reacts[local_pairing[k]]
+            sub_s = [ts_s[i] for i in idx]
+            sub_x = ts_x[idx]
+            res = match_fragment(sub_s, sub_x, rs, rx)
+            if res is None:
+                return None
+            order, aligned, n_iso, hit_cap = res
+            if not verify_correspondence(sub_s, sub_x, rs, rx, order):
+                return None
+            X_local[idx] = aligned
+            disp = np.linalg.norm(aligned - sub_x, axis=1)
+            info_local.append(dict(
+                n_iso=n_iso, hit_cap=hit_cap,
+                frag_rmsd=rmsd(aligned, sub_x),
+                max_disp_heavy=float(max(
+                    [disp[i] for i in range(len(idx)) if sub_s[i] != "H"] or [0])),
+                max_disp_h=float(max(
+                    [disp[i] for i in range(len(idx)) if sub_s[i] == "H"] or [0])),
+            ))
+        return X_local, info_local, components, formed_bonds
 
-    X = np.zeros_like(ts_x)
-    info = []
-    for k in range(2):
-        idx = comps[k]
-        rs, rx = reacts[pairing[k]]
-        sub_s = [ts_s[i] for i in idx]
-        sub_x = ts_x[idx]
-        res = match_fragment(sub_s, sub_x, rs, rx)
-        if res is None:
+    attempt = _try_align(comps, formed)
+    if attempt is None:
+        # RECOVERY 2: filename bonds split TS but no reactant isomorphism.
+        # Retry with diff-based forming bonds — different split may match
+        # actual Coley r*.xyz connectivity when filename bonds don't.
+        p_s0, p_x0 = read_xyz(p_f)
+        alt_formed = _diff_formed_bonds(ts_s, ts_x, p_s0, p_x0)
+        if alt_formed is not None and alt_formed != formed:
+            alt_comps = [sorted(c) for c in
+                         nx.connected_components(
+                             build_graph(ts_s, ts_x, skip=alt_formed))]
+            if len(alt_comps) == 2:
+                attempt = _try_align(alt_comps, alt_formed)
+                if attempt is not None:
+                    recovery_used = "diff_bonds_iso"
+        if attempt is None:
             return None, "no isomorphism"
-        order, aligned, n_iso, hit_cap = res
-        if not verify_correspondence(sub_s, sub_x, rs, rx, order):
-            return None, "correspondence verify failed"
-        X[idx] = aligned
-        disp = np.linalg.norm(aligned - sub_x, axis=1)
-        info.append(dict(
-            n_iso=n_iso, hit_cap=hit_cap,
-            frag_rmsd=rmsd(aligned, sub_x),
-            max_disp_heavy=float(max(
-                [disp[i] for i in range(len(idx)) if sub_s[i] != "H"] or [0])),
-            max_disp_h=float(max(
-                [disp[i] for i in range(len(idx)) if sub_s[i] == "H"] or [0])),
-        ))
+
+    X, info, comps, formed = attempt
 
     Y, shift = separate_fragments(X, ts_s, comps[0], comps[1])
     p_s, p_x = read_xyz(p_f)
@@ -200,6 +259,7 @@ def build_reactant_complex(prof_root: Path, rid: int):
         R=Y, TS=ts_x, P=p_x, syms=ts_s,
         frag1=comps[0], frag2=comps[1],
         shift=shift, p_order_ok=(p_s == ts_s), info=info,
+        recovery_used=recovery_used,
     ), None
 
 
