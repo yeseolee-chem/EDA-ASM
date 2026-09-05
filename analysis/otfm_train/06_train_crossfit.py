@@ -104,6 +104,19 @@ def prepare_fold(fold: int) -> tuple[Path, int, int]:
             pickle.dump(sub, f)
         tmp.replace(out)
         print(f"  wrote {out.name}: n={len(sub['rxn_id'])}")
+
+    # react-ot's SBModule.setup() hardcodes the filenames train_rpsb_all.pkl,
+    # valid_rpsb_all.pkl, test.pkl in reactot/trainer/pl_trainer.py.
+    # Rather than patch three more spots in the source, mirror our fold
+    # files under the expected names via relative symlinks.
+    for our, rot in (("train", "train_rpsb_all"),
+                     ("val",   "valid_rpsb_all"),
+                     ("test",  "test")):
+        src_name = f"{our}_fold{fold}.pkl"
+        link = datadir / f"{rot}.pkl"
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(src_name)
     return datadir, len(tr_ids), len(val_ids)
 
 

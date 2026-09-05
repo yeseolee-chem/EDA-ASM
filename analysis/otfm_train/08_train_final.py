@@ -80,6 +80,17 @@ def main() -> int:
         pickle.dump(slice_data(data, set()), f)
     tmp.replace(datadir / "test_final.pkl")
 
+    # react-ot's SBModule.setup() hardcodes train_rpsb_all.pkl / valid_rpsb_all.pkl
+    # / test.pkl. Symlink our _final.pkl files under those names.
+    for our, rot in (("train", "train_rpsb_all"),
+                     ("val",   "valid_rpsb_all"),
+                     ("test",  "test")):
+        src_name = f"{our}_final.pkl"
+        link = datadir / f"{rot}.pkl"
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(src_name)
+
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{ROT}:{env.get('PYTHONPATH', '')}"
 
