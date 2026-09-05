@@ -13,6 +13,10 @@ GATE-2 targets (from spec §3):
 Idempotent: re-writes reactant_complex/rxn_NNNN.npz + reactant_build.csv.
 Single-process by design (~24 min for 5269 rxns per spec) so numbers stay
 reproducible against the spec sample.
+
+⚠️ The reactant_build.csv column ``shift`` collides with the pandas
+   ``DataFrame.shift`` method. Always access it as ``df["shift"]``, never
+   ``df.shift``.
 """
 from __future__ import annotations
 
@@ -44,6 +48,15 @@ def main() -> int:
         print(f"[FATAL] profiles missing: {PROF}. Run Step 0.", file=sys.stderr)
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
+
+    # Clean up stale tmp files. Two patterns exist:
+    #   .rxn_*.tmp.npz         — current (correct) tmp name
+    #   .rxn_*.npz.tmp.npz     — leftover from earlier buggy .npz.tmp naming
+    #                            (np.savez auto-appended .npz, breaking rename)
+    # Both are safe to remove — never a final artifact. Single glob catches
+    # both (both end in ".tmp.npz").
+    for junk in OUT.glob(".rxn_*.tmp.npz"):
+        junk.unlink()
 
     ids = sorted(int(d.name) for d in PROF.iterdir()
                  if d.is_dir() and d.name.isdigit())
@@ -79,30 +92,42 @@ def main() -> int:
     for i, rid in enumerate(ids):
         out_npz = OUT / f"rxn_{rid:04d}.npz"
         if out_npz.exists() and not FORCE:
-            # Recompute summary stats from the cached npz + fresh graph;
-            # skips the expensive isomorphism enumeration.
             npz = np.load(out_npz, allow_pickle=True)
-            syms = [str(s) for s in npz["syms"]]
-            A = list(int(x) for x in npz["frag1"])
-            B = list(int(x) for x in npz["frag2"])
-            R, TS, P = npz["R"], npz["TS"], npz["P"]
-            inter = float(np.linalg.norm(
-                R[A][:, None, :] - R[B][None, :, :], axis=-1).min())
-            ts_inter = float(np.linalg.norm(
-                TS[A][:, None, :] - TS[B][None, :, :], axis=-1).min())
-            # shift is discoverable from R vs raw TS but not needed for gates;
-            # record NaN so the reused rows are distinguishable from fresh ones.
-            rows.append(dict(
-                rxn_id=rid, ok=True, n_atoms=len(syms),
-                rmsd_R_TS=rmsd(R, TS), shift=float("nan"),
-                inter_R=inter, inter_TS=ts_inter,
-                p_order_ok=True, hit_cap=False,
-                n_iso_max=0, max_disp_heavy=float("nan"),
-                max_disp_h=float("nan"), reused=True,
-            ))
-            n_frag_total += 2
-            n_reused += 1
-            continue
+            # New-format npz written by this loop carries the "meta_version"
+            # marker + per-fragment diagnostics. Old-format npz predates the
+            # persistence fix and lacks them: fall through to full recompute
+            # so counters stay honest.
+            if "meta_version" in npz.files:
+                syms = [str(s) for s in npz["syms"]]
+                A = list(int(x) for x in npz["frag1"])
+                B = list(int(x) for x in npz["frag2"])
+                R, TS = npz["R"], npz["TS"]
+                inter = float(np.linalg.norm(
+                    R[A][:, None, :] - R[B][None, :, :], axis=-1).min())
+                ts_inter = float(np.linalg.norm(
+                    TS[A][:, None, :] - TS[B][None, :, :], axis=-1).min())
+                caps = npz["hit_cap"]
+                niso = npz["n_iso"]
+                mdh = npz["max_disp_heavy"]
+                mdH = npz["max_disp_h"]
+                shift_val = float(npz["sep_shift"].item())
+                p_ok = bool(npz["p_order_ok"].item())
+                n_cap_rxn += int(caps.any())
+                n_cap_frag += int(caps.sum())
+                n_frag_total += len(caps)
+                rows.append(dict(
+                    rxn_id=rid, ok=True, n_atoms=len(syms),
+                    rmsd_R_TS=rmsd(R, TS), shift=shift_val,
+                    inter_R=inter, inter_TS=ts_inter,
+                    p_order_ok=p_ok, hit_cap=bool(caps.any()),
+                    n_iso_max=int(niso.max()),
+                    max_disp_heavy=float(mdh.max()),
+                    max_disp_h=float(mdH.max()),
+                    reused=True,
+                ))
+                n_reused += 1
+                continue
+            # else: old-format cache, recompute
 
         res, err = build_reactant_complex(PROF, rid)
         if err:
@@ -129,11 +154,22 @@ def main() -> int:
             max_disp_h=max(x["max_disp_h"] for x in res["info"]),
             reused=False,
         ))
-        # atomic write via temp + rename
-        tmp = OUT / f".rxn_{rid:04d}.npz.tmp"
-        np.savez(tmp,
-                 R=R, TS=TS, P=res["P"], syms=np.array(res["syms"]),
-                 frag1=np.array(A), frag2=np.array(B))
+        # Atomic write via temp + rename. Tmp filename MUST end in .npz —
+        # np.savez auto-appends .npz otherwise, breaking the subsequent
+        # tmp.replace() call.
+        tmp = OUT / f".rxn_{rid:04d}.tmp.npz"
+        np.savez(
+            tmp,
+            R=R, TS=TS, P=res["P"], syms=np.array(res["syms"]),
+            frag1=np.array(A), frag2=np.array(B),
+            hit_cap=np.array([x["hit_cap"] for x in res["info"]]),
+            n_iso=np.array([x["n_iso"] for x in res["info"]]),
+            max_disp_heavy=np.array([x["max_disp_heavy"] for x in res["info"]]),
+            max_disp_h=np.array([x["max_disp_h"] for x in res["info"]]),
+            sep_shift=np.array(res["shift"]),
+            p_order_ok=np.array(res["p_order_ok"]),
+            meta_version=np.array(1),
+        )
         tmp.replace(out_npz)
 
         if (i + 1) % 500 == 0:
@@ -154,9 +190,11 @@ def main() -> int:
     print(f"MAX_ISO({MAX_ISO}) hit — fragment basis: {n_cap_frag}/{n_frag_total} "
           f"({cap_rate_frag:.1%})   (SPEC reference: 4.6%)")
     if len(ok):
+        # ok["shift"] not ok.shift — the latter is the pandas method.
+        shift_col = ok["shift"]
         print(f"n_iso max: {ok.n_iso_max.max()}")
-        print(f"\nseparation shift (Å): median {ok.shift.median():.2f}  "
-              f"max {ok.shift.max():.2f}")
+        print(f"\nseparation shift (Å): median {shift_col.median():.2f}  "
+              f"max {shift_col.max():.2f}")
         print(f"fragment-fragment min distance (Å)")
         print(f"  R : median {ok.inter_R.median():.3f}  "
               f"min {ok.inter_R.min():.3f}  "
