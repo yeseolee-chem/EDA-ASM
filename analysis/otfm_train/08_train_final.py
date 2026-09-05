@@ -37,13 +37,16 @@ from _rot_patches import apply_all as apply_rot_patches  # noqa: E402
 
 def slice_data(data: dict, ids: set) -> dict:
     keep = [i for i, r in enumerate(data["rxn_id"]) if r in ids]
+
+    def slice_frag(frag: dict) -> dict:
+        sub = {k: [frag[k][i] for i in keep] for k in frag}
+        sub["num_atoms"] = [len(c) for c in sub["charges"]]
+        return sub
+
     return {
-        "reactant": {k: [data["reactant"][k][i] for i in keep]
-                     for k in data["reactant"]},
-        "transition_state": {k: [data["transition_state"][k][i] for i in keep]
-                             for k in data["transition_state"]},
-        "product": {k: [data["product"][k][i] for i in keep]
-                    for k in data["product"]},
+        "reactant":         slice_frag(data["reactant"]),
+        "transition_state": slice_frag(data["transition_state"]),
+        "product":          slice_frag(data["product"]),
         "single_fragment": [data["single_fragment"][i] for i in keep],
         "rxn_id": [data["rxn_id"][i] for i in keep],
     }

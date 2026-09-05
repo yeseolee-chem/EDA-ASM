@@ -62,13 +62,18 @@ MAX_EPOCHS = os.environ.get("MAX_EPOCHS", "")  # empty -> keep react-ot default
 
 def slice_fold(data: dict, ids: set) -> dict:
     keep = [i for i, r in enumerate(data["rxn_id"]) if r in ids]
+
+    def slice_frag(frag: dict) -> dict:
+        sub = {k: [frag[k][i] for i in keep] for k in frag}
+        # react-ot's BaseDataset.process_molecules reads data["num_atoms"];
+        # derive it from charges so the pkl matches Transition1x schema.
+        sub["num_atoms"] = [len(c) for c in sub["charges"]]
+        return sub
+
     return {
-        "reactant": {k: [data["reactant"][k][i] for i in keep]
-                     for k in data["reactant"]},
-        "transition_state": {k: [data["transition_state"][k][i] for i in keep]
-                             for k in data["transition_state"]},
-        "product": {k: [data["product"][k][i] for i in keep]
-                    for k in data["product"]},
+        "reactant":         slice_frag(data["reactant"]),
+        "transition_state": slice_frag(data["transition_state"]),
+        "product":          slice_frag(data["product"]),
         "single_fragment": [data["single_fragment"][i] for i in keep],
         "rxn_id": [data["rxn_id"][i] for i in keep],
     }
