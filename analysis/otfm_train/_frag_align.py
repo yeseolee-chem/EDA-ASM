@@ -118,6 +118,71 @@ def separate_fragments(X, syms, A, B):
     return Y, hi
 
 
+def match_fragment_hungarian(ts_syms, ts_xyz, r_syms, r_xyz,
+                               max_iter=8, rmsd_max=1.5, jaccard_min=0.85):
+    """Recovery 6: element-preserving Hungarian bipartite matching.
+
+    For R conformers whose graph is a different constitutional isomer than
+    the TS-fragment (bond opens/closes during R→TS), graph iso fails but
+    coordinate-based matching may still find the correct correspondence.
+
+    Iterative Kabsch alignment + linear_sum_assignment on element-
+    partitioned distance matrix. Accepted only if:
+      - RMSD < rmsd_max (default 1.5 Å) after final alignment
+      - Jaccard edge overlap > jaccard_min (default 0.85) between TS-frag
+        graph and permuted R graph — ensures chemistry consistency
+      - All element labels match
+
+    Returns (order, aligned_xyz, n_iso, hit_cap) on success, None on
+    reject. n_iso reported as -1 to signal Hungarian recovery.
+    """
+    try:
+        from scipy.optimize import linear_sum_assignment
+    except ImportError:
+        return None
+    n = len(ts_syms)
+    if len(r_syms) != n or sorted(ts_syms) != sorted(r_syms):
+        return None
+    order = list(range(n))
+    for _ in range(max_iter):
+        mc = np.mean(r_xyz[order], axis=0)
+        rc_ts = np.mean(ts_xyz, axis=0)
+        a = r_xyz[order] - mc
+        b = ts_xyz - rc_ts
+        H = a.T @ b
+        U, S, Vt = np.linalg.svd(H)
+        d = np.sign(np.linalg.det(Vt.T @ U.T))
+        Rot = Vt.T @ np.diag([1, 1, d]) @ U.T
+        r_trans = (r_xyz - mc) @ Rot.T + rc_ts
+        D = np.full((n, n), 1e9)
+        for i in range(n):
+            for j in range(n):
+                if ts_syms[i] == r_syms[j]:
+                    D[i, j] = np.linalg.norm(ts_xyz[i] - r_trans[j])
+        _, new_order = linear_sum_assignment(D)
+        new_order = new_order.tolist()
+        if new_order == order:
+            break
+        order = new_order
+    # Post-hoc verification
+    perm_syms = [r_syms[j] for j in order]
+    if any(ts_syms[i] != perm_syms[i] for i in range(n)):
+        return None
+    aligned = kabsch_apply(r_xyz[order], ts_xyz)
+    r_val = rmsd(aligned, ts_xyz)
+    if r_val > rmsd_max:
+        return None
+    Gt = build_graph(ts_syms, ts_xyz)
+    Gr_perm = build_graph(perm_syms, r_xyz[order])
+    ts_e = {tuple(sorted(e)) for e in Gt.edges()}
+    r_e = {tuple(sorted(e)) for e in Gr_perm.edges()}
+    inter = ts_e & r_e
+    union = ts_e | r_e
+    if not union or len(inter) / len(union) < jaccard_min:
+        return None
+    return order, aligned, -1, False
+
+
 def match_fragment(ts_syms, ts_xyz, r_syms, r_xyz):
     """Enumerate graph isomorphisms and pick RMSD-optimal alignment.
 
@@ -468,10 +533,21 @@ def build_reactant_complex(prof_root: Path, rid: int):
             sub_x = ts_x[idx]
             res = match_fragment(sub_s, sub_x, rs, rx)
             if res is None:
-                return None
-            order, aligned, n_iso, hit_cap = res
-            if not verify_correspondence(sub_s, sub_x, rs, rx, order):
-                return None
+                # Recovery 6: Hungarian element-preserving assignment.
+                # For rxns where R→TS involves a bond opening/closing
+                # (constitutional isomer change), graph iso fails but
+                # coordinate matching with Jaccard-edge verification may
+                # still produce a chemically sensible mapping.
+                res = match_fragment_hungarian(sub_s, sub_x, rs, rx)
+                if res is None:
+                    return None
+                order, aligned, n_iso, hit_cap = res
+                # Skip strict verify_correspondence — Hungarian was already
+                # Jaccard-verified against the TS-frag graph.
+            else:
+                order, aligned, n_iso, hit_cap = res
+                if not verify_correspondence(sub_s, sub_x, rs, rx, order):
+                    return None
             X_local[idx] = aligned
             disp = np.linalg.norm(aligned - sub_x, axis=1)
             info_local.append(dict(
