@@ -170,6 +170,127 @@ def _diff_formed_bonds(ts_syms, ts_xyz, p_syms, p_xyz):
     return None
 
 
+def _smiles_inter_fragment_edges(prof_root: Path, rid: int, ts_syms, ts_xyz,
+                                   p_syms=None, p_xyz=None):
+    """Use SMILES atom-mapping to identify which TS edges connect the two
+    reactant molecules. Recovers rxns where TS geometry is 'late' (past
+    the saddle point) and forming bonds are already fully bonded — the
+    filename bonds don't split TS because those bonds are >1.9Å (missed
+    by build_graph), while the ACTUAL formed bonds are <1.5Å (counted as
+    normal bonds).
+
+    Returns list of (i,j) edges to remove to split TS into 2 pieces
+    matching the R molecule composition, or None on failure.
+    """
+    try:
+        import pandas as pd
+        from rdkit import Chem
+        from rdkit import RDLogger; RDLogger.DisableLog("rdApp.*")
+        from networkx.algorithms.isomorphism import (
+            GraphMatcher, categorical_node_match,
+        )
+    except ImportError:
+        return None
+    csv_path = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/"
+                    "dipolar_cycloaddition/full_dataset.csv")
+    if not csv_path.exists():
+        return None
+    try:
+        smi = pd.read_csv(csv_path).set_index("rxn_id").loc[rid, "rxn_smiles"]
+    except (KeyError, FileNotFoundError):
+        return None
+    try:
+        r_smi, p_smi = smi.split(">>")
+    except ValueError:
+        return None
+    # Get atom_map groups per reactant molecule
+    r_mols = r_smi.split(".")
+    if len(r_mols) != 2:
+        return None
+    r_groups_am = []
+    for m_smi in r_mols:
+        m = Chem.MolFromSmiles(m_smi)
+        if m is None:
+            return None
+        r_groups_am.append({a.GetAtomMapNum() for a in m.GetAtoms()
+                            if a.GetAtomMapNum() > 0})
+
+    # Match SMILES-P to a reference xyz to get atom_map → xyz_idx
+    P_h = Chem.AddHs(Chem.MolFromSmiles(p_smi))
+    G_smi = nx.Graph()
+    m2i = {}
+    for a in P_h.GetAtoms():
+        G_smi.add_node(a.GetIdx(), el=a.GetSymbol())
+        if a.GetAtomMapNum() > 0:
+            m2i[a.GetAtomMapNum()] = a.GetIdx()
+    for b in P_h.GetBonds():
+        G_smi.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx())
+
+    # Try P xyz first (matches SMILES-P directly), then TS xyz
+    m2xyz = None
+    refs = []
+    if p_syms is not None and p_xyz is not None:
+        refs.append((p_syms, p_xyz))
+    refs.append((ts_syms, ts_xyz))
+    for xyz_syms, xyz_x in refs:
+        G_xyz = build_graph(xyz_syms, xyz_x)
+        GM = GraphMatcher(G_xyz, G_smi,
+                          node_match=categorical_node_match("el", None))
+        for cnt, iso in enumerate(GM.isomorphisms_iter()):
+            if cnt >= 100:
+                break
+            inv = {v: k for k, v in iso.items()}
+            try:
+                m2xyz = {am: inv[smi_i] for am, smi_i in m2i.items()
+                         if smi_i in inv}
+            except KeyError:
+                continue
+            break
+        if m2xyz:
+            break
+    if m2xyz is None or len(m2xyz) != len(m2i):
+        return None
+
+    # Translate R atom-map groups into xyz index sets (heavy atoms only —
+    # H's have atom_map=0 in SMILES)
+    xyz_groups = [{m2xyz[am] for am in g if am in m2xyz} for g in r_groups_am]
+
+    # Find TS edges connecting the two groups (assign each H by connectivity)
+    G_ts = build_graph(ts_syms, ts_xyz)
+    # Assign every atom (including H) to a group by BFS from the heavy seeds
+    group_of = {}
+    for gi, g in enumerate(xyz_groups):
+        for a in g:
+            group_of[a] = gi
+    # BFS to propagate through non-inter edges — but we need to identify
+    # inter edges first, chicken/egg. Instead: propagate through short edges
+    # (within-molecule bonds are typically < 1.8Å for heavy-H, < 1.6Å for
+    # heavy-heavy in a fragment). Any edge > 1.6Å that crosses group_of
+    # boundaries is a candidate inter-fragment edge.
+    # Simpler: assign H atoms to whichever heavy neighbor they're closest to.
+    for i, s in enumerate(ts_syms):
+        if i in group_of:
+            continue
+        if s == "H":
+            # Find nearest heavy atom with assigned group
+            best = None; best_d = 1e9
+            for j in G_ts.neighbors(i):
+                if j in group_of:
+                    d = float(np.linalg.norm(ts_xyz[i] - ts_xyz[j]))
+                    if d < best_d:
+                        best_d, best = d, group_of[j]
+            if best is not None:
+                group_of[i] = best
+    inter_edges = []
+    for u, v in G_ts.edges():
+        gu = group_of.get(u); gv = group_of.get(v)
+        if gu is not None and gv is not None and gu != gv:
+            inter_edges.append(tuple(sorted((u, v))))
+    if not inter_edges:
+        return None
+    return sorted(set(inter_edges))
+
+
 def _smiles_formed_bonds(prof_root: Path, rid: int, ts_syms, ts_xyz,
                           p_syms=None, p_xyz=None):
     """Derive xyz-indexed forming bonds by matching Coley's atom-mapped
@@ -302,6 +423,23 @@ def build_reactant_complex(prof_root: Path, rid: int):
                     formed = smi_formed
                     comps = smi_comps
                     recovery_used = "smiles_bonds_split"
+        if len(comps) != 2:
+            # RECOVERY 5: SMILES atom-group inter-fragment edges. For "late"
+            # TS geometries where forming bonds are already fully formed
+            # (~1.5 Å, counted as bonds by build_graph), identify which TS
+            # edges cross the R-molecule boundary via SMILES atom-mapping
+            # and remove those. Recovers rxns 3090, 3766, 4252.
+            inter = _smiles_inter_fragment_edges(
+                prof_root, rid, ts_s, ts_x, p_s0, p_x0)
+            if inter is not None:
+                G_split = build_graph(ts_s, ts_x)
+                G_split.remove_edges_from(inter)
+                split_comps = [sorted(c) for c in
+                               nx.connected_components(G_split)]
+                if len(split_comps) == 2:
+                    formed = inter
+                    comps = split_comps
+                    recovery_used = "smiles_inter_edges"
         if len(comps) != 2:
             return None, f"{len(comps)}-piece split (expected 2)"
 
