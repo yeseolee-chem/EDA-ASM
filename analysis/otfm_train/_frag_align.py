@@ -119,19 +119,26 @@ def separate_fragments(X, syms, A, B):
 
 
 def match_fragment_hungarian(ts_syms, ts_xyz, r_syms, r_xyz,
-                               max_iter=8, rmsd_max=1.5, jaccard_min=0.85):
+                               max_iter=8, rmsd_max=1.5):
     """Recovery 6: element-preserving Hungarian bipartite matching.
 
-    For R conformers whose graph is a different constitutional isomer than
-    the TS-fragment (bond opens/closes during R→TS), graph iso fails but
-    coordinate-based matching may still find the correct correspondence.
+    For R conformers whose atom ORDER differs from TS-fragment but whose
+    graph is still identical (e.g. atom relabeling), coordinate-based
+    matching finds the correct permutation.
 
     Iterative Kabsch alignment + linear_sum_assignment on element-
     partitioned distance matrix. Accepted only if:
-      - RMSD < rmsd_max (default 1.5 Å) after final alignment
-      - Jaccard edge overlap > jaccard_min (default 0.85) between TS-frag
-        graph and permuted R graph — ensures chemistry consistency
-      - All element labels match
+      - all element labels match at the assigned permutation
+      - RMSD < rmsd_max after final alignment
+      - permuted R adjacency == TS-fragment adjacency (STRICT, same
+        contract as verify_correspondence). Rxns whose R↔TS have real
+        connectivity differences (bond opens or closes during R→TS)
+        are rejected here — chemistry contract for training data.
+
+    Earlier revisions used Jaccard ≥ 0.85 which admitted 1-edge mismatches
+    (rxn 3865, 4069). That was wrong: even a single-bond disagreement means
+    the model would learn a spurious R→TS transition. Reverted to strict
+    identity per SPEC17rev2 "Do NOT modify" contract on _frag_align.
 
     Returns (order, aligned_xyz, n_iso, hit_cap) on success, None on
     reject. n_iso reported as -1 to signal Hungarian recovery.
@@ -172,13 +179,12 @@ def match_fragment_hungarian(ts_syms, ts_xyz, r_syms, r_xyz,
     r_val = rmsd(aligned, ts_xyz)
     if r_val > rmsd_max:
         return None
+    # STRICT connectivity identity — same contract as verify_correspondence.
+    # Rejects any rxn where R and TS-fragment have different adjacency,
+    # even by a single bond.
     Gt = build_graph(ts_syms, ts_xyz)
     Gr_perm = build_graph(perm_syms, r_xyz[order])
-    ts_e = {tuple(sorted(e)) for e in Gt.edges()}
-    r_e = {tuple(sorted(e)) for e in Gr_perm.edges()}
-    inter = ts_e & r_e
-    union = ts_e | r_e
-    if not union or len(inter) / len(union) < jaccard_min:
+    if not all(set(Gt[i]) == set(Gr_perm[i]) for i in range(n)):
         return None
     return order, aligned, -1, False
 

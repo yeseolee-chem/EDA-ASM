@@ -22,19 +22,12 @@ PROF = BASE / "coley_profiles/full_dataset_profiles"
 FIXED = BASE / "tools/failed_viewer/fixed"
 FIXED.mkdir(parents=True, exist_ok=True)
 
-# The 11 excluded rxns from EXECUTION_LOG.md
+# Final 2 unrecoverable rxns after Recovery 1-6 (9/11 recovered).
 FAILING = {
-    3090: {"group": "A", "reason": "1-piece split + P-fail. TS→P에 결합 파괴 2개 존재 (다단계)"},
-    3766: {"group": "A", "reason": "1-piece split + P-fail. 형성 결합 1개만 (cycloaddition 아님)"},
-    4252: {"group": "A", "reason": "1-piece split + P-fail. 결합 형성 2 + 파괴 1 (원자 이동)"},
-    5930: {"group": "A", "reason": "no isomorphism + P-fail. R xyz vs TS-fragment 그래프 다름"},
-    3865: {"group": "A", "reason": "no isomorphism. R conformer의 spurious H-contact 1개"},
-    4069: {"group": "A", "reason": "no isomorphism. 위와 동일 conformer artifact"},
-    4727: {"group": "A", "reason": "no isomorphism. 위와 동일"},
-    2461: {"group": "B", "reason": "verify_product만 실패. P에 대칭 원자 재라벨링 (25↔26)"},
-    4924: {"group": "B", "reason": "verify_product만 실패. 대칭 34↔37 교환"},
-    5386: {"group": "B", "reason": "verify_product만 실패. 대칭 재라벨링"},
-    5513: {"group": "B", "reason": "verify_product만 실패. 동일 유형"},
+    4727: {"group": "U", "reason": "Hungarian RMSD 2.375Å, Jaccard 0.433 → 화학적으로 잘못된 원자 swap. "
+                                     "R conformer의 spurious H-contact 1개 + Hungarian이 방향족 H들을 헷갈림"},
+    5930: {"group": "U", "reason": "Hungarian RMSD 1.615Å, Jaccard 0.740 → borderline reject. "
+                                     "TS에 R에 없는 O-C 결합 1.58Å (반대 방향), Hungarian이 안정적 매칭 못 찾음"},
 }
 
 app = Flask(__name__, template_folder="templates")

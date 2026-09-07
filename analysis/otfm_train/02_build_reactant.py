@@ -97,7 +97,10 @@ def main() -> int:
             # marker + per-fragment diagnostics. Old-format npz predates the
             # persistence fix and lacks them: fall through to full recompute
             # so counters stay honest.
-            if "meta_version" in npz.files:
+            # meta_version=2 adds recovery_used column and reflects the
+            # jaccard→strict fix in match_fragment_hungarian.
+            mv = int(npz["meta_version"].item()) if "meta_version" in npz.files else 0
+            if mv >= 2:
                 syms = [str(s) for s in npz["syms"]]
                 A = list(int(x) for x in npz["frag1"])
                 B = list(int(x) for x in npz["frag2"])
@@ -112,6 +115,7 @@ def main() -> int:
                 mdH = npz["max_disp_h"]
                 shift_val = float(npz["sep_shift"].item())
                 p_ok = bool(npz["p_order_ok"].item())
+                recovery = str(npz["recovery_used"].item())
                 n_cap_rxn += int(caps.any())
                 n_cap_frag += int(caps.sum())
                 n_frag_total += len(caps)
@@ -123,11 +127,12 @@ def main() -> int:
                     n_iso_max=int(niso.max()),
                     max_disp_heavy=float(mdh.max()),
                     max_disp_h=float(mdH.max()),
+                    recovery_used=recovery,
                     reused=True,
                 ))
                 n_reused += 1
                 continue
-            # else: old-format cache, recompute
+            # else: old-format cache (meta_version<2), recompute
 
         res, err = build_reactant_complex(PROF, rid)
         if err:
@@ -144,6 +149,7 @@ def main() -> int:
         n_cap_rxn += int(any(cap_flags))
         n_cap_frag += sum(cap_flags)
         n_frag_total += len(cap_flags)
+        recovery = res.get("recovery_used") or ""
         rows.append(dict(
             rxn_id=rid, ok=True, n_atoms=len(res["syms"]),
             rmsd_R_TS=rmsd(R, TS), shift=res["shift"],
@@ -152,11 +158,14 @@ def main() -> int:
             n_iso_max=max(x["n_iso"] for x in res["info"]),
             max_disp_heavy=max(x["max_disp_heavy"] for x in res["info"]),
             max_disp_h=max(x["max_disp_h"] for x in res["info"]),
+            recovery_used=recovery,
             reused=False,
         ))
         # Atomic write via temp + rename. Tmp filename MUST end in .npz —
         # np.savez auto-appends .npz otherwise, breaking the subsequent
-        # tmp.replace() call.
+        # tmp.replace() call. Bumped meta_version=2 after Recovery 6
+        # jaccard→strict fix + recovery_used column addition; older-format
+        # caches fall through to recompute.
         tmp = OUT / f".rxn_{rid:04d}.tmp.npz"
         np.savez(
             tmp,
@@ -168,7 +177,8 @@ def main() -> int:
             max_disp_h=np.array([x["max_disp_h"] for x in res["info"]]),
             sep_shift=np.array(res["shift"]),
             p_order_ok=np.array(res["p_order_ok"]),
-            meta_version=np.array(1),
+            recovery_used=np.array(recovery),
+            meta_version=np.array(2),
         )
         tmp.replace(out_npz)
 
@@ -232,19 +242,31 @@ def main() -> int:
     cap_ok = cap_rate_frag <= 0.10
 
     passed = all([p_ok, r_ok, conn_ok, inter_ok, p_col_ok, cap_ok])
+    # Recovery breakdown for audit + paper supplement.
+    recovery_counts = ok["recovery_used"].fillna("").value_counts().to_dict() if len(ok) else {}
+    recovery_lines = "".join(
+        f"recovery_{(k or 'primary')}={v}\n" for k, v in sorted(recovery_counts.items())
+    )
+    # Clarifying note re p_verify_fail vs p_order_ok_all:
+    #   p_verify_pass/fail counts stage 2a (verify_product on ORIGINAL P.xyz,
+    #   BEFORE any recovery). p_order_ok_all is stage 2b (build_reactant_complex
+    #   with Recovery 4 p_canonicalize applied). These two DIFFER by design —
+    #   Recovery 4 reorders P atoms to restore graph identity for cases that
+    #   verify_product flagged, without touching Coley's source P.xyz.
     (BASE / "artifacts" / "GATE2_STATUS.txt").write_text(
         ("PASS" if passed else "FAIL") + "\n"
-        f"p_verify_pass={pv_true}\n"
-        f"p_verify_fail={pv_false}\n"
+        f"p_verify_pass={pv_true}       # stage 2a: original P.xyz (pre-recovery)\n"
+        f"p_verify_fail={pv_false}       # stage 2a\n"
         f"p_verify_undecidable={pv_none}\n"
         f"p_verify_rate={p_verify_rate:.6f}\n"
         f"r_build_success={len(ok)}/{n}\n"
         f"r_build_reused={n_reused}\n"
         f"connectivity_verify_fail={fails.get('correspondence verify failed', 0)}\n"
         f"inter_R_lt_1A_count={int((ok.inter_R < 1.0).sum()) if len(ok) else 0}\n"
-        f"p_order_ok_all={p_col_ok}\n"
+        f"p_order_ok_all={p_col_ok}     # stage 2b: after Recovery 4 canonicalize\n"
         f"max_iso_hit_rate_reaction={cap_rate_rxn:.4f}\n"
         f"max_iso_hit_rate_fragment={cap_rate_frag:.4f}\n"
+        + recovery_lines
     )
     if not passed:
         print("[GATE-2 FAIL] see artifacts/GATE2_STATUS.txt", file=sys.stderr)
