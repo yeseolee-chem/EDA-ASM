@@ -13,6 +13,7 @@ in Step 5 and cross-fitting audit in Step 7.
 """
 from __future__ import annotations
 
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -45,21 +46,27 @@ def main() -> int:
     keep = set(build[build.ok & build.p_order_ok].rxn_id) & \
            set(comp[(comp.status == "ok") & comp.supported].rxn_id)
 
-    # p_order_failures.csv holds rxns where verify_product's stricter graph
-    # check failed (Coley P file inconsistent with TS + formed bonds).
-    # These pass Step 2's atom-list p_order_ok but should not be used for
-    # training since the P target is unreliable.
-    pfail_csv = BASE / "artifacts" / "p_order_failures.csv"
+    # p_order_failures.csv comes from verify_product() run in stage 2a.
+    # As of Recovery 4 (P atom canonicalization) in _frag_align, Step 2's
+    # build_reactant_complex reorders P coords when Coley's P.xyz has
+    # symmetric-atom relabeling relative to TS+formed. The corrected P is
+    # saved into the npz, and build.p_order_ok reflects that.
+    #
+    # SKIP_PFAIL=1 (default) trusts build.p_order_ok as authoritative and
+    # includes canonicalized Group B rxns. Set SKIP_PFAIL=0 to fall back
+    # to double-exclusion via p_order_failures.csv (pre-Recovery 4 behavior).
     n_pfail_excluded = 0
-    if pfail_csv.exists():
-        pfail_ids = set(pd.read_csv(pfail_csv).rxn_id)
-        before = len(keep)
-        keep -= pfail_ids
-        n_pfail_excluded = before - len(keep)
+    if os.environ.get("SKIP_PFAIL", "1") == "0":
+        pfail_csv = BASE / "artifacts" / "p_order_failures.csv"
+        if pfail_csv.exists():
+            pfail_ids = set(pd.read_csv(pfail_csv).rxn_id)
+            before = len(keep)
+            keep -= pfail_ids
+            n_pfail_excluded = before - len(keep)
 
     keep = sorted(keep)
     print(f"conversion candidates: {len(keep)}   "
-          f"(excluded {n_pfail_excluded} via p_order_failures.csv)")
+          f"(pfail double-exclusion: {n_pfail_excluded})")
 
     data = {
         "reactant": {"charges": [], "positions": []},

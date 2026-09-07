@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>spec17rev2 failed rxn viewer</title>
+<script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+<style>
+  body { margin: 0; font-family: -apple-system, sans-serif; background: #f5f5f5; }
+  #app { display: grid; grid-template-columns: 240px 1fr; height: 100vh; }
+  #sidebar { background: #222; color: #ddd; padding: 12px; overflow-y: auto; }
+  #sidebar h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; color: #888; }
+  .rxn-btn {
+    display: block; width: 100%; text-align: left; padding: 8px 10px;
+    margin-bottom: 4px; border: 0; border-radius: 4px;
+    background: #333; color: #ddd; cursor: pointer; font-size: 13px;
+  }
+  .rxn-btn:hover { background: #444; }
+  .rxn-btn.active { background: #0a58ca; color: #fff; }
+  .rxn-btn .badge {
+    display: inline-block; padding: 1px 6px; margin-right: 8px;
+    border-radius: 3px; font-size: 11px; font-weight: bold;
+  }
+  .rxn-btn .badge.A { background: #dc3545; }
+  .rxn-btn .badge.B { background: #ffc107; color: #000; }
+  .rxn-btn .badge.saved { background: #198754; margin-left: 4px; }
+
+  #main { display: flex; flex-direction: column; overflow: hidden; }
+  #header {
+    padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd;
+  }
+  #header h1 { margin: 0; font-size: 16px; }
+  #header .reason { color: #666; font-size: 13px; margin-top: 4px; }
+  #panels {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px; padding: 8px; flex: 1; overflow: hidden;
+  }
+  .panel {
+    display: flex; flex-direction: column;
+    background: #fff; border: 1px solid #ddd; border-radius: 4px;
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 6px 10px; background: #eee; border-bottom: 1px solid #ddd;
+    font-weight: bold; display: flex; justify-content: space-between; align-items: center;
+  }
+  .panel-header .label { color: #333; }
+  .panel-header .badge-edit { font-size: 10px; padding: 2px 6px; background: #ffc107; border-radius: 3px; display: none; }
+  .panel-header .badge-edit.show { display: inline-block; }
+  .viewer { height: 45%; min-height: 200px; position: relative; background: #000; }
+  .xyz-area {
+    flex: 1; margin: 0; padding: 6px 8px; font-family: monospace;
+    font-size: 11px; border: 0; border-top: 1px solid #ddd; outline: none;
+    resize: none; overflow: auto; white-space: pre;
+  }
+  .btn-bar { padding: 4px 8px; background: #f8f9fa; border-top: 1px solid #ddd; display: flex; gap: 4px; }
+  .btn {
+    padding: 4px 10px; border: 0; border-radius: 3px; cursor: pointer; font-size: 12px;
+  }
+  .btn-primary { background: #0d6efd; color: #fff; }
+  .btn-primary:hover { background: #0b5ed7; }
+  .btn-secondary { background: #6c757d; color: #fff; }
+  .btn-secondary:hover { background: #5c636a; }
+  .btn-warning { background: #ffc107; color: #000; }
+  .btn-warning:hover { background: #e0a800; }
+  .status { padding: 4px 8px; font-size: 11px; color: #666; min-height: 18px; }
+  .status.err { color: #dc3545; }
+  .status.ok { color: #198754; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="sidebar">
+    <h2>실패 11 rxns</h2>
+    {% for row in rows %}
+    <button class="rxn-btn" data-rid="{{ row.rxn_id }}">
+      <span class="badge {{ row.group }}">{{ row.group }}</span>
+      rxn {{ row.rxn_id }}
+    </button>
+    {% endfor %}
+    <hr style="border-color:#333; margin: 12px 0">
+    <p style="font-size:11px; color:#888; line-height:1.4">
+      <b style="color:#dc3545">A</b>: R-build 실패<br>
+      <b style="color:#ffc107">B</b>: verify_product만 실패<br><br>
+      편집 → Save 시 <code>fixed/&lt;rid&gt;/&lt;slot&gt;.xyz</code>에 저장. Coley 원본 안 건드림.
+    </p>
+  </aside>
+
+  <div id="main">
+    <div id="header">
+      <h1 id="title">rxn을 왼쪽에서 선택하세요</h1>
+      <div class="reason" id="reason"></div>
+    </div>
+    <div id="panels">
+
+      <div class="panel" data-slot="r">
+        <div class="panel-header">
+          <span class="label">R (reactant r0 + r1)</span>
+          <span class="badge-edit">EDITED</span>
+        </div>
+        <div class="viewer" id="viewer-r"></div>
+        <div style="display:flex; flex:1; min-height:0">
+          <div style="flex:1; display:flex; flex-direction:column; border-right:1px solid #ddd">
+            <div style="padding:2px 8px; font-size:10px; background:#f8f9fa; color:#666">r0</div>
+            <textarea class="xyz-area" data-slot="r0"></textarea>
+            <div class="btn-bar">
+              <button class="btn btn-primary" data-action="update" data-slot="r0">Update view</button>
+              <button class="btn btn-secondary" data-action="save" data-slot="r0">Save</button>
+              <button class="btn btn-warning" data-action="reset" data-slot="r0">Reset</button>
+            </div>
+            <div class="status" data-slot-status="r0"></div>
+          </div>
+          <div style="flex:1; display:flex; flex-direction:column">
+            <div style="padding:2px 8px; font-size:10px; background:#f8f9fa; color:#666">r1</div>
+            <textarea class="xyz-area" data-slot="r1"></textarea>
+            <div class="btn-bar">
+              <button class="btn btn-primary" data-action="update" data-slot="r1">Update view</button>
+              <button class="btn btn-secondary" data-action="save" data-slot="r1">Save</button>
+              <button class="btn btn-warning" data-action="reset" data-slot="r1">Reset</button>
+            </div>
+            <div class="status" data-slot-status="r1"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" data-slot="ts">
+        <div class="panel-header">
+          <span class="label">TS (transition state)</span>
+          <span class="badge-edit">EDITED</span>
+        </div>
+        <div class="viewer" id="viewer-ts"></div>
+        <textarea class="xyz-area" data-slot="ts"></textarea>
+        <div class="btn-bar">
+          <button class="btn btn-primary" data-action="update" data-slot="ts">Update view</button>
+          <button class="btn btn-secondary" data-action="save" data-slot="ts">Save</button>
+          <button class="btn btn-warning" data-action="reset" data-slot="ts">Reset</button>
+        </div>
+        <div class="status" data-slot-status="ts"></div>
+      </div>
+
+      <div class="panel" data-slot="p">
+        <div class="panel-header">
+          <span class="label">P (product)</span>
+          <span class="badge-edit">EDITED</span>
+        </div>
+        <div class="viewer" id="viewer-p"></div>
+        <textarea class="xyz-area" data-slot="p"></textarea>
+        <div class="btn-bar">
+          <button class="btn btn-primary" data-action="update" data-slot="p">Update view</button>
+          <button class="btn btn-secondary" data-action="save" data-slot="p">Save</button>
+          <button class="btn btn-warning" data-action="reset" data-slot="p">Reset</button>
+        </div>
+        <div class="status" data-slot-status="p"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const viewers = {};
+let currentRid = null;
+
+function makeViewer(divId) {
+  const v = $3Dmol.createViewer(divId, { backgroundColor: "black" });
+  return v;
+}
+["viewer-r","viewer-ts","viewer-p"].forEach(id => viewers[id] = makeViewer(id));
+
+function parseXyz(text) {
+  const lines = text.trim().split("\n");
+  const n = parseInt(lines[0]);
+  const atoms = [];
+  for (let i = 2; i < 2 + n; i++) {
+    const t = lines[i].split(/\s+/).filter(Boolean);
+    atoms.push({ el: t[0], x: +t[1], y: +t[2], z: +t[3] });
+  }
+  return atoms;
+}
+function centroid(atoms) {
+  const c = atoms.reduce((a, p) => [a[0]+p.x, a[1]+p.y, a[2]+p.z], [0,0,0]);
+  return c.map(v => v / atoms.length);
+}
+function maxRadius(atoms, ctr) {
+  return Math.max(...atoms.map(p => Math.hypot(p.x-ctr[0], p.y-ctr[1], p.z-ctr[2])));
+}
+function combineForR(r0, r1) {
+  if (!r0 && !r1) return "";
+  if (!r1) return r0;
+  if (!r0) return r1;
+  const a0 = parseXyz(r0);
+  const a1 = parseXyz(r1);
+  const c0 = centroid(a0);
+  const c1 = centroid(a1);
+  const r0max = maxRadius(a0, c0);
+  const r1max = maxRadius(a1, c1);
+  // Place both centroids on x-axis, separated by (r0max + r1max + 3Å margin).
+  // Both molecules first re-centered at their own centroid.
+  const gap = r0max + r1max + 3.0;
+  const out = [`${a0.length + a1.length}`, `combined r0 + r1 (auto-separated, gap ${gap.toFixed(1)}Å)`];
+  a0.forEach(p => out.push(
+    `${p.el} ${(p.x - c0[0]).toFixed(6)} ${(p.y - c0[1]).toFixed(6)} ${(p.z - c0[2]).toFixed(6)}`));
+  a1.forEach(p => out.push(
+    `${p.el} ${(p.x - c1[0] + gap).toFixed(6)} ${(p.y - c1[1]).toFixed(6)} ${(p.z - c1[2]).toFixed(6)}`));
+  return out.join("\n");
+}
+
+function renderViewer(viewerId, xyz) {
+  const v = viewers[viewerId];
+  v.removeAllModels();
+  if (!xyz.trim()) { v.render(); return; }
+  try {
+    v.addModel(xyz, "xyz");
+    v.setStyle({}, { stick: { radius: 0.15 }, sphere: { scale: 0.25 } });
+    v.addLabel("", {}); // clear labels
+    v.zoomTo();
+    v.render();
+  } catch(e) {
+    console.error(viewerId, e);
+  }
+}
+
+function getSlotXyz(slot) {
+  return document.querySelector(`textarea[data-slot="${slot}"]`).value;
+}
+function setSlotXyz(slot, val) {
+  document.querySelector(`textarea[data-slot="${slot}"]`).value = val || "";
+}
+function setStatus(slot, msg, cls) {
+  const el = document.querySelector(`[data-slot-status="${slot}"]`);
+  el.textContent = msg;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+function markEdited(panelSlot, edited) {
+  document.querySelectorAll(`.panel[data-slot="${panelSlot}"] .badge-edit`)
+    .forEach(b => b.classList.toggle("show", edited));
+}
+
+function updateR() {
+  const combined = combineForR(getSlotXyz("r0"), getSlotXyz("r1"));
+  renderViewer("viewer-r", combined);
+}
+
+async function loadRxn(rid) {
+  currentRid = rid;
+  document.querySelectorAll(".rxn-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.rid == rid);
+  });
+  const r = await fetch(`/rxn/${rid}`).then(r => r.json());
+  document.getElementById("title").textContent =
+    `rxn ${rid} — group ${r.info.group}` + (r.ts_name ? ` — TS: ${r.ts_name}` : "");
+  document.getElementById("reason").textContent = r.info.reason;
+
+  // Prefer edited version, fall back to Coley original.
+  for (const slot of ["r0","r1","ts","p"]) {
+    const edit = r[slot + "_edit"];
+    const orig = r[slot + "_orig"];
+    setSlotXyz(slot, edit || orig);
+    setStatus(slot, edit ? "저장된 편집본 사용중" : "Coley 원본", edit ? "ok" : "");
+  }
+  markEdited("r", !!(r.r0_edit || r.r1_edit));
+  markEdited("ts", !!r.ts_edit);
+  markEdited("p", !!r.p_edit);
+
+  updateR();
+  renderViewer("viewer-ts", getSlotXyz("ts"));
+  renderViewer("viewer-p", getSlotXyz("p"));
+}
+
+async function saveSlot(slot) {
+  if (currentRid == null) return;
+  const xyz = getSlotXyz(slot);
+  try {
+    const r = await fetch(`/save/${currentRid}/${slot}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ xyz })
+    }).then(r => r.json());
+    if (r.error) {
+      setStatus(slot, "저장 실패: " + r.error, "err");
+    } else {
+      setStatus(slot, `저장됨 (${r.n_atoms} atoms) → ${r.path}`, "ok");
+      const panelSlot = (slot === "r0" || slot === "r1") ? "r" : slot;
+      markEdited(panelSlot, true);
+    }
+  } catch(e) { setStatus(slot, "저장 실패: " + e.message, "err"); }
+}
+
+async function resetSlot(slot) {
+  if (currentRid == null) return;
+  await fetch(`/reset/${currentRid}/${slot}`, { method: "POST" });
+  await loadRxn(currentRid);
+}
+
+// event delegation
+document.getElementById("sidebar").addEventListener("click", e => {
+  const btn = e.target.closest(".rxn-btn");
+  if (btn) loadRxn(parseInt(btn.dataset.rid));
+});
+document.getElementById("panels").addEventListener("click", e => {
+  const btn = e.target.closest(".btn");
+  if (!btn) return;
+  const slot = btn.dataset.slot;
+  const action = btn.dataset.action;
+  if (action === "update") {
+    if (slot === "r0" || slot === "r1") updateR();
+    else renderViewer("viewer-" + slot, getSlotXyz(slot));
+  } else if (action === "save") saveSlot(slot);
+  else if (action === "reset") resetSlot(slot);
+});
+
+// Auto-select first rxn on load
+window.addEventListener("load", () => {
+  const first = document.querySelector(".rxn-btn");
+  if (first) first.click();
+});
+</script>
+</body>
+</html>

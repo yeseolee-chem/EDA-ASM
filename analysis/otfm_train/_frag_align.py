@@ -37,14 +37,24 @@ def read_xyz(path):
     return syms, np.array(xyz)
 
 
-def find_files(prof_root: Path, rid: int):
+def find_files(prof_root: Path, rid: int, include_alt: bool = False):
+    """Locate TS/R/P files. If include_alt=True, also return _alt conformers
+    grouped by slot (used by build_reactant_complex recovery paths)."""
     d = prof_root / str(rid)
     ts = [f for f in d.iterdir()
           if f.name.startswith("TS_") and f.name != "TS_imag_mode.xyz"]
+    p = sorted(f for f in d.iterdir() if f.name.startswith("p0_"))
+    if include_alt:
+        r_by_slot: dict[int, list] = {}
+        for f in sorted(d.iterdir()):
+            m = re.match(r"^r(\d+)_", f.name)
+            if not m or f.suffix != ".xyz":
+                continue
+            r_by_slot.setdefault(int(m.group(1)), []).append(f)
+        return (ts[0] if ts else None), r_by_slot, (p[0] if p else None)
     r = sorted(f for f in d.iterdir()
                if re.match(r"^r\d+_", f.name) and f.suffix == ".xyz"
                and "_alt" not in f.name)
-    p = sorted(f for f in d.iterdir() if f.name.startswith("p0_"))
     return (ts[0] if ts else None), r, (p[0] if p else None)
 
 
@@ -160,6 +170,94 @@ def _diff_formed_bonds(ts_syms, ts_xyz, p_syms, p_xyz):
     return None
 
 
+def _smiles_formed_bonds(prof_root: Path, rid: int, ts_syms, ts_xyz,
+                          p_syms=None, p_xyz=None):
+    """Derive xyz-indexed forming bonds by matching Coley's atom-mapped
+    P SMILES to a Coley-provided reference (P xyz first, then TS xyz).
+    Recovers rxns where the TS filename's template indices don't match
+    the actual xyz atom ordering (e.g. rxn 5930).
+
+    Returns list of 2 (i,j) tuples on success, else None.
+
+    Requires the full_dataset.csv rxn_smiles column and rdkit. Falls back
+    gracefully (returns None) if either is unavailable.
+    """
+    try:
+        import pandas as pd
+        from rdkit import Chem
+        from rdkit import RDLogger; RDLogger.DisableLog("rdApp.*")
+        from networkx.algorithms.isomorphism import (
+            GraphMatcher, categorical_node_match,
+        )
+    except ImportError:
+        return None
+    csv_path = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/"
+                    "dipolar_cycloaddition/full_dataset.csv")
+    if not csv_path.exists():
+        return None
+    try:
+        smi = pd.read_csv(csv_path).set_index("rxn_id").loc[rid, "rxn_smiles"]
+    except (KeyError, FileNotFoundError):
+        return None
+    try:
+        reac, prod = smi.split(">>")
+        R = Chem.MolFromSmiles(reac); P = Chem.MolFromSmiles(prod)
+    except (ValueError, AttributeError):
+        return None
+    if R is None or P is None:
+        return None
+
+    def _bonds_by_atommap(m):
+        s = set()
+        for b in m.GetBonds():
+            i = b.GetBeginAtom().GetAtomMapNum()
+            j = b.GetEndAtom().GetAtomMapNum()
+            if i and j:
+                s.add((min(i, j), max(i, j)))
+        return s
+
+    formed_am = _bonds_by_atommap(P) - _bonds_by_atommap(R)
+    if len(formed_am) != 2:
+        return None  # not a canonical 2-bond cycloaddition
+
+    # Build SMILES-P graph (with Hs) tracking atom map
+    P_h = Chem.AddHs(P)
+    G_smi = nx.Graph()
+    m2i = {}
+    for a in P_h.GetAtoms():
+        G_smi.add_node(a.GetIdx(), el=a.GetSymbol())
+        if a.GetAtomMapNum() > 0:
+            m2i[a.GetAtomMapNum()] = a.GetIdx()
+    for b in P_h.GetBonds():
+        G_smi.add_edge(b.GetBeginAtomIdx(), b.GetEndAtomIdx())
+
+    # Try P xyz first (its graph structure matches SMILES-P directly, no
+    # bond-elongation issues from being an intermediate state).
+    # Fall back to TS xyz if P.xyz graph doesn't isomorphize (e.g. its own
+    # atom labeling is scrambled).
+    refs = []
+    if p_syms is not None and p_xyz is not None:
+        refs.append((p_syms, p_xyz))
+    refs.append((ts_syms, ts_xyz))
+    for xyz_syms, xyz_x in refs:
+        G_xyz = build_graph(xyz_syms, xyz_x)
+        GM = GraphMatcher(G_xyz, G_smi,
+                          node_match=categorical_node_match("el", None))
+        for cnt, iso in enumerate(GM.isomorphisms_iter()):
+            if cnt >= 100:
+                break
+            inv = {v: k for k, v in iso.items()}
+            try:
+                formed_xyz = sorted(
+                    tuple(sorted((inv[m2i[a]], inv[m2i[b]])))
+                    for a, b in formed_am
+                )
+            except KeyError:
+                continue
+            return formed_xyz
+    return None
+
+
 def build_reactant_complex(prof_root: Path, rid: int):
     ts_f, r_f, p_f = find_files(prof_root, rid)
     if ts_f is None or len(r_f) != 2 or p_f is None:
@@ -189,6 +287,21 @@ def build_reactant_complex(prof_root: Path, rid: int):
                 formed = alt_formed
                 comps = alt_comps
                 recovery_used = "diff_bonds_split"
+        if len(comps) != 2:
+            # RECOVERY 3: use full_dataset.csv atom-mapped SMILES to derive
+            # forming bonds in xyz-index space via P.xyz graph iso. Recovers
+            # rxns where filename template indices are wrong AND P-TS graph
+            # diff hits close-contact spurious bonds (e.g. rxn 5930).
+            p_s0, p_x0 = read_xyz(p_f)
+            smi_formed = _smiles_formed_bonds(prof_root, rid, ts_s, ts_x, p_s0, p_x0)
+            if smi_formed is not None:
+                smi_comps = [sorted(c) for c in
+                             nx.connected_components(
+                                 build_graph(ts_s, ts_x, skip=smi_formed))]
+                if len(smi_comps) == 2:
+                    formed = smi_formed
+                    comps = smi_comps
+                    recovery_used = "smiles_bonds_split"
         if len(comps) != 2:
             return None, f"{len(comps)}-piece split (expected 2)"
 
@@ -249,16 +362,74 @@ def build_reactant_complex(prof_root: Path, rid: int):
                 if attempt is not None:
                     recovery_used = "diff_bonds_iso"
         if attempt is None:
+            # RECOVERY 3b: SMILES-derived bonds as last resort.
+            p_s0, p_x0 = read_xyz(p_f)
+            smi_formed = _smiles_formed_bonds(prof_root, rid, ts_s, ts_x, p_s0, p_x0)
+            if smi_formed is not None and smi_formed != formed:
+                smi_comps = [sorted(c) for c in
+                             nx.connected_components(
+                                 build_graph(ts_s, ts_x, skip=smi_formed))]
+                if len(smi_comps) == 2:
+                    attempt = _try_align(smi_comps, smi_formed)
+                    if attempt is not None:
+                        recovery_used = "smiles_bonds_iso"
+        if attempt is None:
             return None, "no isomorphism"
 
     X, info, comps, formed = attempt
 
     Y, shift = separate_fragments(X, ts_s, comps[0], comps[1])
     p_s, p_x = read_xyz(p_f)
+    p_ordered = (p_s == ts_s)
+
+    # RECOVERY 4: P atom relabel-swap canonicalization (Group B fix).
+    # verify_product's graph check fails when Coley's P.xyz has symmetric
+    # atoms swapped relative to (TS + formed_bonds → P) prediction. Find
+    # the permutation that makes P graph match the predicted P graph, apply
+    # to coordinates. Preserves chemistry; only reorders indexing.
+    if p_ordered:
+        G_ts_plus_formed = build_graph(ts_s, ts_x)
+        G_ts_plus_formed.add_edges_from(formed)
+        G_p = build_graph(p_s, p_x)
+        neighbors_match = all(
+            set(G_ts_plus_formed[i]) == set(G_p[i]) for i in range(len(ts_s))
+        )
+        if not neighbors_match:
+            from networkx.algorithms.isomorphism import (
+                GraphMatcher, categorical_node_match,
+            )
+            # Build labeled graphs (element attr already set by build_graph)
+            GM = GraphMatcher(
+                G_p, G_ts_plus_formed,
+                node_match=categorical_node_match("el", None),
+            )
+            for cnt, iso in enumerate(GM.isomorphisms_iter()):
+                if cnt >= 100:
+                    break
+                # iso: G_p node → G_ts_plus_formed node.
+                # New P coord for slot i = old P coord at atom that maps to slot i.
+                inv = {v: k for k, v in iso.items()}   # ts_slot → p_atom
+                try:
+                    perm = [inv[i] for i in range(len(ts_s))]
+                except KeyError:
+                    continue
+                new_p_x = p_x[perm]
+                new_p_s = [p_s[i] for i in perm]
+                # Verify permutation restores graph identity
+                G_p_new = build_graph(new_p_s, new_p_x)
+                if all(set(G_ts_plus_formed[i]) == set(G_p_new[i])
+                       for i in range(len(ts_s))):
+                    p_x = new_p_x
+                    p_s = new_p_s
+                    p_ordered = True
+                    recovery_used = ((recovery_used + "+" if recovery_used else "")
+                                     + "p_canonicalize")
+                    break
+
     return dict(
         R=Y, TS=ts_x, P=p_x, syms=ts_s,
         frag1=comps[0], frag2=comps[1],
-        shift=shift, p_order_ok=(p_s == ts_s), info=info,
+        shift=shift, p_order_ok=p_ordered, info=info,
         recovery_used=recovery_used,
     ), None
 
