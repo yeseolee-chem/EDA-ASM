@@ -238,7 +238,13 @@ def main() -> int:
     r_ok = len(ok) / n >= 0.98 if n else False
     conn_ok = ("correspondence verify failed" not in fails)
     inter_ok = len(ok) > 0 and (ok.inter_R < 1.0).sum() == 0
-    p_col_ok = len(ok) > 0 and bool(ok.p_order_ok.all())
+    # Under audit-fix p_ordered init-False (2026-09-09), rxns whose P.xyz
+    # graph disagrees with TS+formed AND lack a valid iso permutation
+    # keep p_order_ok=False in the ok rows. Step 4 filters them out.
+    # Gate tolerates <0.5% p_order failures (same threshold as p_verify).
+    n_p_bad = int((~ok.p_order_ok.astype(bool)).sum()) if len(ok) else 0
+    p_col_rate = 1.0 - n_p_bad / max(1, len(ok))
+    p_col_ok = p_col_rate >= 0.995
     # SPEC references the *fragment* rate (11/240 = 4.6%). Gate on that.
     cap_ok = cap_rate_frag <= 0.10
 
@@ -264,7 +270,9 @@ def main() -> int:
         f"r_build_reused={n_reused}\n"
         f"connectivity_verify_fail={fails.get('correspondence verify failed', 0)}\n"
         f"inter_R_lt_1A_count={int((ok.inter_R < 1.0).sum()) if len(ok) else 0}\n"
-        f"p_order_ok_all={p_col_ok}     # stage 2b: after Recovery 4 canonicalize\n"
+        f"p_order_ok_all={p_col_rate >= 1.0}     # stage 2b: after Recovery 4 canonicalize\n"
+        f"p_order_ok_bad={n_p_bad}       # canonicalize fail → Step 4 excludes\n"
+        f"p_order_ok_rate={p_col_rate:.6f}\n"
         f"max_iso_hit_rate_reaction={cap_rate_rxn:.4f}\n"
         f"max_iso_hit_rate_fragment={cap_rate_frag:.4f}\n"
         + recovery_lines
