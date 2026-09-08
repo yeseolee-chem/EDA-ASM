@@ -152,3 +152,25 @@ def apply_all(rot_root: Path) -> dict:
     patch_ase_neb_import(rot_root)
     assert_gate_6b(rot_root)
     return mapping
+
+
+def restore_all(rot_root: Path) -> list:
+    """Undo every in-place patch by restoring from the `.py.orig` backup.
+
+    Use before pushing the react-ot repo to another user or before running
+    other pipelines that expect the upstream defaults (ATOM_MAPPING = 5
+    elements, `from ase.neb import NEB`, etc.).
+
+    Returns the list of files restored.
+    """
+    restored = []
+    for rel in ("reactot/dataset/datasets_config.py",
+                "reactot/run_model.py",
+                "reactot/diffusion/_utils.py"):
+        p = rot_root / rel
+        bak = p.with_suffix(p.suffix + ".orig")
+        if bak.exists():
+            p.write_text(bak.read_text())
+            restored.append(rel)
+            print(f"[restore] {rel} <- {bak.name}")
+    return restored

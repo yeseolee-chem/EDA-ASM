@@ -88,12 +88,23 @@ def main() -> int:
         except KeyError as e:
             fails.append((rid, f"unknown element {e}"))
             continue
+        # Structural guarantee: syms, R, TS, P are all sliced from the
+        # same ts_x array in build_reactant_complex; P is read with the
+        # same length. Audit belt+suspenders — reject rxns whose npz
+        # violates this so the downstream `num_atoms = len(charges)`
+        # derivation in Step 6 cannot silently index-mismatch.
+        R_arr, TS_arr, P_arr = npz["R"], npz["TS"], npz["P"]
+        if not (len(chg) == len(R_arr) == len(TS_arr) == len(P_arr)):
+            fails.append((rid, f"length mismatch "
+                               f"syms={len(chg)} R={len(R_arr)} "
+                               f"TS={len(TS_arr)} P={len(P_arr)}"))
+            continue
         data["reactant"]["charges"].append(chg)
-        data["reactant"]["positions"].append(npz["R"].tolist())
+        data["reactant"]["positions"].append(R_arr.tolist())
         data["transition_state"]["charges"].append(chg)
-        data["transition_state"]["positions"].append(npz["TS"].tolist())
+        data["transition_state"]["positions"].append(TS_arr.tolist())
         data["product"]["charges"].append(chg)
-        data["product"]["positions"].append(npz["P"].tolist())
+        data["product"]["positions"].append(P_arr.tolist())
         data["single_fragment"].append(0)
         data["rxn_id"].append(rid)
 

@@ -97,10 +97,12 @@ def main() -> int:
             # marker + per-fragment diagnostics. Old-format npz predates the
             # persistence fix and lacks them: fall through to full recompute
             # so counters stay honest.
-            # meta_version=2 adds recovery_used column and reflects the
-            # jaccard→strict fix in match_fragment_hungarian.
+            # meta_version=3: p_ordered init-False fix in Recovery 4
+            # (audit 2026-09-09). Older caches may have p_order_ok=True
+            # for rxns where P.xyz graph disagreed with TS+formed and no
+            # valid canonicalize permutation existed → recompute.
             mv = int(npz["meta_version"].item()) if "meta_version" in npz.files else 0
-            if mv >= 2:
+            if mv >= 3:
                 syms = [str(s) for s in npz["syms"]]
                 A = list(int(x) for x in npz["frag1"])
                 B = list(int(x) for x in npz["frag2"])
@@ -132,7 +134,7 @@ def main() -> int:
                 ))
                 n_reused += 1
                 continue
-            # else: old-format cache (meta_version<2), recompute
+            # else: old-format cache (meta_version<3), recompute
 
         res, err = build_reactant_complex(PROF, rid)
         if err:
@@ -163,9 +165,8 @@ def main() -> int:
         ))
         # Atomic write via temp + rename. Tmp filename MUST end in .npz —
         # np.savez auto-appends .npz otherwise, breaking the subsequent
-        # tmp.replace() call. Bumped meta_version=2 after Recovery 6
-        # jaccard→strict fix + recovery_used column addition; older-format
-        # caches fall through to recompute.
+        # tmp.replace() call. meta_version=3 after audit p_ordered
+        # init-False fix (2026-09-09); older-format caches recompute.
         tmp = OUT / f".rxn_{rid:04d}.tmp.npz"
         np.savez(
             tmp,
@@ -178,7 +179,7 @@ def main() -> int:
             sep_shift=np.array(res["shift"]),
             p_order_ok=np.array(res["p_order_ok"]),
             recovery_used=np.array(recovery),
-            meta_version=np.array(2),
+            meta_version=np.array(3),
         )
         tmp.replace(out_npz)
 

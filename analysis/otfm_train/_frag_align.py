@@ -539,17 +539,17 @@ def build_reactant_complex(prof_root: Path, rid: int):
             sub_x = ts_x[idx]
             res = match_fragment(sub_s, sub_x, rs, rx)
             if res is None:
-                # Recovery 6: Hungarian element-preserving assignment.
-                # For rxns where R→TS involves a bond opening/closing
-                # (constitutional isomer change), graph iso fails but
-                # coordinate matching with Jaccard-edge verification may
-                # still produce a chemically sensible mapping.
+                # Recovery 6: Hungarian element-preserving assignment for
+                # rxns where the atom ORDER in R.xyz differs from TS but
+                # the graph is still identical.
+                # match_fragment_hungarian enforces strict connectivity
+                # identity internally (same contract as verify_correspondence),
+                # so this branch does not need a follow-up correspondence
+                # check. Rxns with real R↔TS bond differences reject here.
                 res = match_fragment_hungarian(sub_s, sub_x, rs, rx)
                 if res is None:
                     return None
                 order, aligned, n_iso, hit_cap = res
-                # Skip strict verify_correspondence — Hungarian was already
-                # Jaccard-verified against the TS-frag graph.
             else:
                 order, aligned, n_iso, hit_cap = res
                 if not verify_correspondence(sub_s, sub_x, rs, rx, order):
@@ -615,6 +615,13 @@ def build_reactant_complex(prof_root: Path, rid: int):
             set(G_ts_plus_formed[i]) == set(G_p[i]) for i in range(len(ts_s))
         )
         if not neighbors_match:
+            # ⚠ P0 fix (audit 2026-09-09):
+            # Downgrade p_ordered to False by default; only re-promote if
+            # canonicalization actually succeeds. Previously left as True
+            # from the atom-list check (line 603), so rxns whose P graph
+            # disagreed with TS+formed AND had no valid iso permutation
+            # still exited with p_order_ok=True → leaked into training.
+            p_ordered = False
             from networkx.algorithms.isomorphism import (
                 GraphMatcher, categorical_node_match,
             )
