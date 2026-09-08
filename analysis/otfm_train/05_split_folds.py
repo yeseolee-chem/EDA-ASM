@@ -34,47 +34,39 @@ N_FOLDS = 5
 
 
 def scaffold_key(rxn_smiles: str):
+    """Group rxns by their REACTANT set only.
+
+    Rationale (audit 2026-09-09): the previous formula
+    `reactants | ring_sig | sorted(formed_bonds)` used formed_bond atom
+    indices that vary per rxn — every reaction ended up in its own
+    scaffold class (n_scaffolds == n_rxns == 5,265), which reduced the
+    "scaffold split" to a random rxn-level split. That let sibling rxns
+    (same reactant pair, different regio/stereo) end up in different
+    folds, leaking 79% of rxns' R-side information across the split.
+
+    Coley's dataset construction pairs one dipole × one dipolarophile
+    and enumerates 2–6 regiochemical products per pair. The correct
+    "scaffold" for leak-free generalization is the canonicalized
+    reactant SMILES pair itself. That yields ~2,667 unique keys and
+    keeps all sibling rxns in the same fold.
+    """
     try:
-        reac, prod = rxn_smiles.split(">>")
+        reac, _ = rxn_smiles.split(">>")
     except ValueError:
         return None
-    R = Chem.MolFromSmiles(reac)
-    P = Chem.MolFromSmiles(prod)
-    if R is None or P is None:
-        return None
-
-    def bondset(m):
-        s = set()
-        for b in m.GetBonds():
-            i = b.GetBeginAtom().GetAtomMapNum()
-            j = b.GetEndAtom().GetAtomMapNum()
-            if i and j:
-                s.add((min(i, j), max(i, j)))
-        return s
-
-    formed = bondset(P) - bondset(R)
-    if len(formed) != 2:
-        return None
-    m2i = {a.GetAtomMapNum(): a.GetIdx() for a in P.GetAtoms()}
-    fidx = {frozenset((m2i[i], m2i[j])) for i, j in formed}
-    best = None
-    for ring in P.GetRingInfo().AtomRings():
-        rs = set(ring)
-        if all(all(x in rs for x in fb) for fb in fidx):
-            if best is None or len(ring) < len(best):
-                best = ring
-    if best is None:
-        return None
-    sig = "".join(sorted(P.GetAtomWithIdx(i).GetSymbol() for i in best))
 
     def strip(s):
         m = Chem.MolFromSmiles(s)
+        if m is None:
+            return None
         for a in m.GetAtoms():
             a.SetAtomMapNum(0)
         return Chem.MolToSmiles(m)
 
-    parts = sorted(strip(p) for p in reac.split("."))
-    return f"{'.'.join(parts)}|{sig}|{sorted(formed)}"
+    parts = [strip(p) for p in reac.split(".")]
+    if any(p is None for p in parts):
+        return None
+    return ".".join(sorted(parts))
 
 
 def main() -> int:
