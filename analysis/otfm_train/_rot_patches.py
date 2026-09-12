@@ -88,6 +88,35 @@ def patch_allowed_atoms(rot_root: Path) -> bool:
     return True
 
 
+def patch_ipdb_import(rot_root: Path) -> bool:
+    """react-ot's `en_sb.py` imports `ipdb` unconditionally, which pulls in
+    IPython → sqlite3 → libicui18n.so.78 → CXXABI_1.3.15. Some compute
+    nodes lack that libstdc++ symbol, breaking model load at inference
+    time (Step 7). Wrap in try/except and fall back to stdlib pdb — this
+    is only a dev-time debug alias, not used in the training/inference path.
+    """
+    p = rot_root / "reactot" / "diffusion" / "en_sb.py"
+    if not p.exists():
+        return False
+    text = p.read_text()
+    if "except ImportError" in text and "from pdb import set_trace" in text:
+        return False   # already patched
+    _backup(p)
+    new_import = (
+        "try:\n"
+        "    from ipdb import set_trace as debug\n"
+        "except ImportError:\n"
+        "    from pdb import set_trace as debug\n"
+    )
+    new = re.sub(r"^from ipdb import set_trace as debug\s*$",
+                 new_import, text, count=1, flags=re.M)
+    if new == text:
+        return False
+    p.write_text(new)
+    print(f"[patch] {p.name}: ipdb import wrapped in try/except (libstdc++ compat)")
+    return True
+
+
 def patch_ase_neb_import(rot_root: Path) -> bool:
     """react-ot pins `from ase.neb import NEB`; ASE >=3.24 moved it to
     `ase.mep.neb`. Rewrite the import with a two-path try/except so the
@@ -150,6 +179,7 @@ def apply_all(rot_root: Path) -> dict:
     mapping = patch_atom_mapping(rot_root)
     patch_allowed_atoms(rot_root)
     patch_ase_neb_import(rot_root)
+    patch_ipdb_import(rot_root)
     assert_gate_6b(rot_root)
     return mapping
 
@@ -166,7 +196,8 @@ def restore_all(rot_root: Path) -> list:
     restored = []
     for rel in ("reactot/dataset/datasets_config.py",
                 "reactot/run_model.py",
-                "reactot/diffusion/_utils.py"):
+                "reactot/diffusion/_utils.py",
+                "reactot/diffusion/en_sb.py"):
         p = rot_root / rel
         bak = p.with_suffix(p.suffix + ".orig")
         if bak.exists():

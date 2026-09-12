@@ -76,14 +76,15 @@ def find_checkpoint(fold_dir: Path) -> Path:
 
 
 def load_model(ckpt_path: Path):
-    """Load the trained model. Tries LitDDPMModule then LitSBModule."""
+    """Load the trained model. Tries several react-ot module layouts."""
+    import traceback
     sys.path.insert(0, str(ROT))
     import torch  # noqa: F401
 
-    last_err = None
+    errors = []
     for mod_name, cls_name in (
-        ("reactot.trainer.pl_trainer", "DDPMModule"),
         ("reactot.trainer.pl_trainer", "SBModule"),
+        ("reactot.trainer.pl_trainer", "DDPMModule"),
         ("reactot.trainer.pl_trainer_ts1x", "DDPMModule"),
     ):
         try:
@@ -93,11 +94,16 @@ def load_model(ckpt_path: Path):
             print(f"loaded {cls_name} from {ckpt_path}")
             return m
         except Exception as e:  # noqa: BLE001
-            last_err = e
+            errors.append((mod_name, cls_name, e, traceback.format_exc()))
             continue
+    # Print all attempts' tracebacks so the user can diagnose which of the
+    # three failure modes actually blocked loading.
+    for mod_name, cls_name, e, tb in errors:
+        print(f"\n=== attempt: {mod_name}.{cls_name} ===")
+        print(tb, flush=True)
     raise RuntimeError(
-        f"could not load checkpoint {ckpt_path}. Verify react-ot module layout "
-        f"and update load_model() imports. Last error: {last_err}"
+        f"could not load checkpoint {ckpt_path}. Verify react-ot module "
+        f"layout and update load_model() imports. See tracebacks above."
     )
 
 
@@ -148,46 +154,21 @@ def append_manifest(rows: list[dict]) -> None:
             w.writerow(r)
 
 
-def generate_one(model, rxn: dict, device: str = "cuda"):
-    """Call the model's OT sampler to produce a TS structure.
-
-    react-ot's sampling entry point varies across releases; this helper tries
-    `sample`, `generate_ts`, `predict_ts` in order and raises if none work.
-    """
-    import torch
-
-    charges = torch.tensor(rxn["charges"], dtype=torch.long)
-    r_pos = torch.tensor(rxn["R"], dtype=torch.float32)
-    p_pos = torch.tensor(rxn["P"], dtype=torch.float32)
-    for method_name in ("sample_rp_to_ts", "sample", "generate_ts", "predict_ts"):
-        method = getattr(model, method_name, None)
-        if method is None:
-            continue
-        try:
-            with torch.no_grad():
-                out = method(
-                    reactant_positions=r_pos.to(device),
-                    product_positions=p_pos.to(device),
-                    charges=charges.to(device),
-                    nfe=SAMPLER_NFE,
-                    solver="ode",
-                )
-            arr = out.detach().cpu().numpy() if hasattr(out, "detach") else np.asarray(out)
-            return arr
-        except TypeError:
-            continue
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(
-                f"model.{method_name} raised {type(e).__name__}: {e}. "
-                "Update generate_one() to match your react-ot API."
-            ) from e
-    raise RuntimeError(
-        "no sampling method found on model. Update generate_one() to match "
-        "your react-ot inference API (see reactot/evaluation.py for hints)."
-    )
-
-
 def main() -> int:
+    """Run the fold's SBModule over its test set via `eval_sample_batch`.
+
+    Real react-ot inference API (from reactot/trainer/test_integrator.ipynb):
+      1. model.setup(stage="test")  → loads test.pkl from training_config.datadir
+      2. model.test_dataloader()    → yields (representations, conditions) tuples
+      3. model.eval_sample_batch(batch, return_all=True)
+           → (r_pos, x0_pred, p_pos, x0_size, x0_other, rmsds)
+         x0_pred is the generated TS positions (concatenated across the batch);
+         x0_size gives the per-rxn atom count so we can split.
+
+    The test.pkl symlink (→ test_fold{K}.pkl) is created by Step 6 alongside
+    train_rpsb_all.pkl / valid_rpsb_all.pkl, so the setup() call sees the
+    fold's held-out reactions under react-ot's expected filename.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--fold", type=int, required=True, choices=range(N_FOLDS))
     args = ap.parse_args()
@@ -196,45 +177,119 @@ def main() -> int:
     GEN.mkdir(parents=True, exist_ok=True)
     fold_dir = BASE / "ckpt" / f"fold{fold}"
     ckpt = find_checkpoint(fold_dir)
-    # GATE-6b: ensure react-ot's dataset module sees the 7-element mapping.
-    # ckpt.load_from_checkpoint triggers dataset imports on some releases.
     apply_rot_patches(ROT)
     model = load_model(ckpt)
 
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device).eval()
 
+    # Point the model at THIS fold's data (in case ckpt was resumed from a
+    # different fold's config).
+    fold_data = str(fold_dir / "data") + "/"
+    model.training_config["datadir"] = fold_data
+    model.training_config["use_sampler"] = False   # deterministic batching
+    model.training_config["swapping_react_prod"] = False
+    model.setup(stage="test", device=device, swapping_react_prod=False)
+    model = model.to(device).eval()
+    model.nfe = SAMPLER_NFE
+
+    # react-ot's `EnSB.sample()` references `self.opt.solver` etc. The OPT
+    # object is defined in train_rpsb_ts1x.py and manually attached to the
+    # trainer (train script line 211: `ddpm.ddpm.opt = opt`). Reproduce
+    # here so inference works with the same convention. We pick solver="ode"
+    # (matches SPEC17rev2 §7 which specifies ODE integration for OT).
+    class _OPT:
+        def __init__(self):
+            self.solver = "ode"
+            self.method = "euler"
+            self.atol = 1e-2
+            self.rtol = 1e-2
+    model.ddpm.opt = _OPT()
+    # eval_sample_batch reads model.ot_ode (used at sample-time flag)
+    if not hasattr(model, "ot_ode"):
+        model.ot_ode = True
+
+    # Load fold test pkl to recover rxn_id order (SBModule strips it from batch).
     ds = load_fold_test(fold)
     folds = pd.read_csv(BASE / "artifacts" / "folds.csv").set_index("rxn_id")
-
-    new_rows = []
-    n_skip = 0
-    for i, rid in enumerate(ds["rxn_id"]):
-        # cross-fit safety
+    test_rids = list(ds["rxn_id"])
+    for rid in test_rids:
         if folds.at[rid, "fold"] != fold:
             print(f"[FATAL] rxn {rid} not in fold {fold}", file=sys.stderr)
             return 1
-        if already_generated(rid, fold):
-            n_skip += 1
+
+    # Iterate test dataloader in bz=8 batches; ORDER must match test.pkl since
+    # ProcessedTS1x reads it linearly and DataLoader shuffle=False.
+    bz_test = int(os.environ.get("BATCH_SIZE_TEST", "8"))
+    from torch.utils.data import DataLoader
+    loader = DataLoader(
+        model.test_dataset,
+        batch_size=bz_test,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=model.test_dataset.collate_fn,
+    )
+
+    new_rows = []
+    n_skip = 0
+    cursor = 0
+    for batch_idx, batch in enumerate(loader):
+        # Fast-skip if EVERY rxn in this batch is already generated.
+        this_batch_rids = test_rids[cursor:cursor + bz_test]
+        if all(already_generated(rid, fold) for rid in this_batch_rids):
+            n_skip += len(this_batch_rids)
+            cursor += len(this_batch_rids)
             continue
-        rxn = {
-            "charges": ds["reactant"]["charges"][i],
-            "R": ds["reactant"]["positions"][i],
-            "P": ds["product"]["positions"][i],
-        }
-        ts_xyz = generate_one(model, rxn, device=device)
-        syms = [Z_TO_SYMBOL[z] for z in rxn["charges"]]
-        out = GEN / f"rxn_{rid:04d}.xyz"
-        write_xyz(out, syms, ts_xyz,
-                  comment=f"rid={rid} fold={fold} nfe={SAMPLER_NFE}")
-        new_rows.append(dict(rxn_id=rid, generating_model=fold,
-                              n_atoms=len(syms), path=str(out)))
-        if (i + 1) % 100 == 0:
-            print(f"  fold {fold}: {i+1}/{len(ds['rxn_id'])} generated")
+        # Sample.
+        try:
+            batch = tuple(
+                [
+                    {k: (v.to(device) if hasattr(v, "to") else v)
+                     for k, v in rep.items()}
+                    for rep in batch[0]
+                ],
+                batch[1],
+            ) if False else batch  # keep dataloader default collate output as-is
+        except Exception:
+            pass
+        r_pos, x0_pred, p_pos, x0_size, x0_other, rmsds = model.eval_sample_batch(
+            batch, return_all=True,
+        )
+        # Split concatenated positions per rxn using x0_size.
+        pos_np = x0_pred.detach().cpu().numpy()
+        sizes = [int(s) for s in x0_size]
+        assert sum(sizes) == pos_np.shape[0], (
+            f"size mismatch: sizes={sizes} pos_len={pos_np.shape[0]}"
+        )
+        offset = 0
+        for k, n in enumerate(sizes):
+            if k >= len(this_batch_rids):
+                break
+            rid = this_batch_rids[k]
+            if already_generated(rid, fold):
+                offset += n
+                continue
+            rxn_pos = pos_np[offset:offset + n]
+            offset += n
+            # syms: reconstruct from ds charges (test.pkl order = loader order)
+            chg = ds["reactant"]["charges"][cursor + k]
+            syms = [Z_TO_SYMBOL[z] for z in chg]
+            if len(syms) != n:
+                print(f"[WARN] rid {rid}: syms={len(syms)} vs x0_size={n}",
+                      file=sys.stderr)
+                continue
+            out = GEN / f"rxn_{rid:04d}.xyz"
+            write_xyz(out, syms, rxn_pos,
+                      comment=f"rid={rid} fold={fold} nfe={SAMPLER_NFE}")
+            new_rows.append(dict(rxn_id=rid, generating_model=fold,
+                                  n_atoms=n, path=str(out)))
+        cursor += len(this_batch_rids)
+        if (batch_idx + 1) % 20 == 0:
+            print(f"  fold {fold}: batch {batch_idx+1}, cursor {cursor}/{len(test_rids)}",
+                  flush=True)
+
     if new_rows:
         append_manifest(new_rows)
-
     print(f"fold {fold}: generated {len(new_rows)}   skipped {n_skip}")
     return 0
 

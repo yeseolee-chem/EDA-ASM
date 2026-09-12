@@ -13,6 +13,9 @@ BASE=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/otfm_train
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
 
+# Compute-node libstdc++ workaround (see 07_generate_crossfit.sh)
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
 cd "$BASE"
 python 10_channel_impact.py --stage sample && \
 python 10_channel_impact.py --stage inputs

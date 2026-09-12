@@ -15,6 +15,12 @@ BASE=/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/analysis/otfm_train
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
 
+# Ensure conda env's libstdc++.so.6.0.34 (CXXABI_1.3.15) is loaded ahead of
+# the system's /lib64/libstdc++.so.6 (only up to CXXABI_1.3.11). Some
+# compute nodes (e.g. n104) resolve system libstdc++ first at runtime,
+# breaking libicui18n.so.78 which pymatgen chain-imports.
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+
 export SAMPLER_NFE="${SAMPLER_NFE:-25}"
 
 cd "$BASE"
