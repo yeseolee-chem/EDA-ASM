@@ -34,6 +34,20 @@ GFN = int(os.environ.get("XTB_GFN", "2"))
 THREADS = int(os.environ.get("XTB_THREADS", "4"))
 TIMEOUT = int(os.environ.get("XTB_TIMEOUT_S", "600"))
 
+# xTB path-validity thresholds (SPEC18 audit 2026-09-13).
+# The path finder reports MANY trial runs and picks one. If the taken run
+# never actually reaches the product (large product-end RMSD) or lands a
+# non-physical barrier, the emitted xtbpath_ts.xyz is garbage. Reject
+# these BEFORE saving `ts_xtb.npy` so Step 4 correctly falls back to
+# (R+P)/2 instead of poisoning the training data.
+#
+# Coley 5,269 rxns DFT G_act: min 0.51, median 19.81, p95 38.28, max 75.80
+# xTB error vs DFT is typically ±15 kcal/mol; BARRIER_MAX = 100 gives
+# ~25 kcal/mol margin above the empirical DFT ceiling.
+PROD_RMSD_MAX = float(os.environ.get("PROD_RMSD_MAX", "0.5"))   # Å
+BARRIER_MIN   = float(os.environ.get("BARRIER_MIN", "0.0"))     # kcal/mol
+BARRIER_MAX   = float(os.environ.get("BARRIER_MAX", "100.0"))   # kcal/mol
+
 # Locked path.inp — SPEC §3 rule: identical parameters across all rxns.
 PATH_INP = """$path
    nrun=1
@@ -66,11 +80,18 @@ def read_xyz(path: Path):
 
 
 def parse_log(text: str) -> dict:
-    """Extract barrier/gradient/TS-write info from xtb `--path` stdout."""
+    """Extract barrier/gradient/TS-write info from xtb `--path` stdout.
+
+    Also parses the per-trial `path trials` table so callers can verify
+    the run xtb actually took reached the product side.
+    """
     out = dict(
         fwd_barrier=np.nan, bwd_barrier=np.nan, dE=np.nan,
         grad_norm=np.nan, ts_point=-1, ts_written=False,
         terminated_normally=False,
+        # Per-trial path validity (audit-added)
+        n_trials=0, n_reached=0, taken_run=-1,
+        taken_barrier=np.nan, taken_dE=np.nan, taken_prod_rmsd=np.nan,
     )
     m = re.search(r"forward\s+barrier\s+\(kcal\)\s*:\s*(-?[\d.]+)", text)
     if m:
@@ -89,6 +110,28 @@ def parse_log(text: str) -> dict:
     out["terminated_normally"] = (
         "normal termination of xtb" in text or out["ts_written"]
     )
+
+    # Per-trial table: `run N  barrier: B  dE: D  product-end path RMSD: R`
+    trials = re.findall(
+        r"run\s*(\d+)\s+barrier:\s*(-?[\d.]+)\s+dE:\s*(-?[\d.]+)\s+"
+        r"product-end path RMSD:\s*([\d.]+)",
+        text,
+    )
+    out["n_trials"] = len(trials)
+    tr = {int(r): (float(b), float(d), float(p)) for r, b, d, p in trials}
+    # Count runs that actually reached the product side (product-end RMSD < 0.5 Å)
+    out["n_reached"] = sum(1 for _, _, p in tr.values() if p < PROD_RMSD_MAX)
+
+    # `path K taken with M points` — this identifies which run xtb committed to
+    m = re.search(r"path\s+(\d+)\s+taken with\s+(\d+)\s+points", text)
+    if m:
+        k = int(m.group(1))
+        out["taken_run"] = k
+        if k in tr:
+            b, d, p = tr[k]
+            out["taken_barrier"] = b
+            out["taken_dE"] = d
+            out["taken_prod_rmsd"] = p
     return out
 
 
@@ -139,6 +182,22 @@ def run_one(rid: int, work: Path) -> dict:
     if not np.isfinite(ts_xyz).all():
         return dict(rxn_id=rid, status="nan_coords", **info)
 
+    # Path-validity gates (audit 2026-09-13): the emitted xtbpath_ts.xyz
+    # is only trustworthy if xtb's chosen trial actually connected R to P
+    # AND the barrier is physically reasonable. Otherwise the "TS" sits on
+    # an unrelated barrier and would poison the guess for OTFM.
+    taken_prod = info.get("taken_prod_rmsd", float("nan"))
+    if np.isfinite(taken_prod) and taken_prod > PROD_RMSD_MAX:
+        return dict(rxn_id=rid, status="path_not_connected", **info)
+    barrier = info.get("fwd_barrier", float("nan"))
+    if np.isfinite(barrier) and not (BARRIER_MIN <= barrier <= BARRIER_MAX):
+        return dict(rxn_id=rid, status="barrier_unphysical", **info)
+    taken_dE = info.get("taken_dE", float("nan"))
+    if np.isfinite(taken_dE) and taken_dE > 5.0:
+        # Coley reactions are exothermic ([3+2] cycloaddition); dE > +5 kcal
+        # on the chosen path means the trial ended in a non-product basin.
+        return dict(rxn_id=rid, status="dE_sign_wrong", **info)
+
     np.save(work / "ts_xtb.npy", ts_xyz)
     return dict(rxn_id=rid, status="ok", **info)
 
@@ -183,7 +242,10 @@ def main() -> int:
     out = BASE / "artifacts" / f"xtb_path_{args.mode}_shard{args.shard:02d}.csv"
     D.to_csv(out, index=False)
     n_ok = int((D.status == "ok").sum())
+    counts = D.status.value_counts().to_dict()
     print(f"shard {args.shard}: ok={n_ok}/{len(D)}  ->  {out}")
+    for k, v in counts.items():
+        print(f"    {k}: {v}")
     return 0
 
 

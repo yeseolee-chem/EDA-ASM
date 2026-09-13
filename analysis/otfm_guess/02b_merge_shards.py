@@ -38,15 +38,25 @@ def main() -> int:
     for k, v in counts.items():
         print(f"  {k}: {v}")
 
-    # STOP conditions per SPEC §4 Step 2
+    # STOP conditions per SPEC §4 Step 2 (+ audit-added path-validity gates)
     order_mm = int(counts.get("order_mismatch", 0))
+    n_notconn = int(counts.get("path_not_connected", 0))
+    n_bad_barrier = int(counts.get("barrier_unphysical", 0))
+    n_bad_dE = int(counts.get("dE_sign_wrong", 0))
     if order_mm > 0:
         print(f"⚠ order_mismatch={order_mm} — this is a WRITE bug. STOP.",
               file=sys.stderr)
+    if n_notconn > 0 or n_bad_barrier > 0 or n_bad_dE > 0:
+        print(f"[note] path validity: not_connected={n_notconn}  "
+              f"barrier_unphysical={n_bad_barrier}  dE_sign_wrong={n_bad_dE}  "
+              f"— these rxns fall back to (R+P)/2 at Step 4.")
 
     gate = "PASS" if (ok_rate >= 0.80 and order_mm == 0) else "FAIL"
     lines = [gate, f"n={len(D)}", f"ok={n_ok}", f"ok_rate={ok_rate:.4f}",
-             f"order_mismatch={order_mm}"]
+             f"order_mismatch={order_mm}",
+             f"path_not_connected={n_notconn}",
+             f"barrier_unphysical={n_bad_barrier}",
+             f"dE_sign_wrong={n_bad_dE}"]
     lines += [f"{k}={v}" for k, v in counts.items()]
     (BASE / "artifacts" / f"GATE2_{args.mode}_STATUS.txt").write_text(
         "\n".join(lines) + "\n"
