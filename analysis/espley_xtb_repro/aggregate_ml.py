@@ -26,19 +26,25 @@ def main():
     for t in per_target:
         tgt = t["target"]
         report["per_target"][tgt] = t
-        pre = (t.get("pre_ml") or {}).get("mae", float("nan"))
+        pre_info = t.get("pre_ml") or {}
+        pre_mae = pre_info.get("mae", float("nan"))
+        pre_r = pre_info.get("pearson_r", float("nan"))
         for fs_name, A in t.get("protocol_A", {}).items():
             for mname, r in A.items():
                 rows.append(dict(protocol="A", feature_set=fs_name, target=tgt, model=mname,
-                                 pre_ml_mae=pre, train_mae=r["train_mae"],
+                                 pre_ml_mae=pre_mae, pre_ml_r=pre_r,
+                                 train_mae=r["train_mae"], train_nmae=r.get("train_nmae", float("nan")),
                                  test_mae=r["test_mae"], test_mae_sd=r["test_mae_sd"],
+                                 test_nmae=r.get("test_nmae", float("nan")),
                                  test_r2=r["test_r2"], test_range=r["test_range"],
                                  test_mae_pct_range=r["test_mae_pct_range"]))
         for fs_name, B in t.get("protocol_B", {}).items():
             for mname, r in B.items():
                 rows.append(dict(protocol="B", feature_set=fs_name, target=tgt, model=mname,
-                                 pre_ml_mae=pre, train_mae=float("nan"),
+                                 pre_ml_mae=pre_mae, pre_ml_r=pre_r,
+                                 train_mae=float("nan"), train_nmae=float("nan"),
                                  test_mae=r["pooled_oof"]["mae"], test_mae_sd=float("nan"),
+                                 test_nmae=r["pooled_oof"].get("nmae", float("nan")),
                                  test_r2=r["pooled_oof"]["r2"], test_range=float("nan"),
                                  test_mae_pct_range=float("nan")))
 

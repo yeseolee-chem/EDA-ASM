@@ -56,25 +56,30 @@ MULLIKEN15 = ([f"mulliken_R_dip_{k}" for k in (0, 1, 2)]
               + [f"mulliken_TSdip_{k}" for k in (0, 1, 2)]
               + [f"mulliken_TSdph_{k}" for k in (0, 1)]
               + [f"mulliken_TS_{k}" for k in (0, 1, 2, 3, 4)])
-APTSURR15 = ([f"aptsurr_R_dip_{k}" for k in (0, 1, 2)]
-             + [f"aptsurr_R_dph_{k}" for k in (0, 1)]
-             + [f"aptsurr_TSdip_{k}" for k in (0, 1, 2)]
-             + [f"aptsurr_TSdph_{k}" for k in (0, 1)]
-             + [f"aptsurr_TS_{k}" for k in (0, 1, 2, 3, 4)])
-D_STRUCT41 = DIST11 + MULLIKEN15 + APTSURR15
+VALENCE15 = ([f"wbo_valence_R_dip_{k}" for k in (0, 1, 2)]
+             + [f"wbo_valence_R_dph_{k}" for k in (0, 1)]
+             + [f"wbo_valence_TSdip_{k}" for k in (0, 1, 2)]
+             + [f"wbo_valence_TSdph_{k}" for k in (0, 1)]
+             + [f"wbo_valence_TS_{k}" for k in (0, 1, 2, 3, 4)])
+D_STRUCT41 = DIST11 + MULLIKEN15 + VALENCE15
 E5 = ["xtb_e_barrier_kcal", "xtb_dist_dipole_kcal", "xtb_dist_dipolarophile_kcal",
       "xtb_sum_distortion_kcal", "xtb_interaction_kcal"]
-CHAN8 = ["ch_strain_1", "ch_strain_2", "ch_elst", "ch_Pauli", "ch_oi",
-         "ch_disp", "ch_cpcm", "ch_cds"]
-ESPLEY54 = D_STRUCT41 + E5 + CHAN8   # 41 + 5 + 8 = 54  (q_barrier dropped)
-
-FEATURE_SETS = {"E5": E5, "ESPLEY54": ESPLEY54}
+CHAN8 = ["b_strain_1", "b_strain_2", "b_elst", "b_pauli", "b_oi", "b_disp", "b_cpcm", "b_cds"]
+AUX18 = (["b_elst_scc", "b_disp_d4", "b_axc", "b_ct",
+          "gap_ts", "gap_dip", "gap_dph", "mu_ts", "mu_dip", "mu_dph", "dmu_complexation"]
+         + [f"dsasa_{el}" for el in ("H", "C", "N", "O", "F", "Cl", "Br")])
+ESPLEY46 = D_STRUCT41 + E5                       # ablation
+ESPLEY54 = D_STRUCT41 + E5 + CHAN8
+ESPLEY72 = ESPLEY54 + AUX18
+FEATURE_SETS = {"ESPLEY46": ESPLEY46, "ESPLEY54": ESPLEY54, "ESPLEY72": ESPLEY72}
 
 TARGETS = ["dft_barrier_kcal", "dft_d1_kcal", "dft_d2_kcal", "dft_eint_spe_kcal", "dft_e_bond_kcal",
            "dft_elst_dft", "dft_pauli_dft", "dft_oi_dft", "dft_disp_dft", "dft_cpcm_dft", "dft_cds_dft"]
 PRE_ML = {"dft_barrier_kcal": "xtb_e_barrier_kcal", "dft_d1_kcal": "xtb_dist_dipole_kcal",
           "dft_d2_kcal": "xtb_dist_dipolarophile_kcal", "dft_eint_spe_kcal": "xtb_interaction_kcal",
-          "dft_e_bond_kcal": "xtb_interaction_kcal"}
+          "dft_e_bond_kcal": "xtb_interaction_kcal",
+          "dft_elst_dft": "b_elst", "dft_pauli_dft": "b_pauli", "dft_oi_dft": "b_oi",
+          "dft_disp_dft": "b_disp", "dft_cpcm_dft": "b_cpcm", "dft_cds_dft": "b_cds"}
 SEEDS = [22, 23, 14, 1, 2]
 TUNE_SEED = 23
 
@@ -96,7 +101,9 @@ GRIDS = {
 
 def mets(y, p):
     r = float(np.corrcoef(y, p)[0, 1]) if (np.std(y) > 0 and np.std(p) > 0) else float("nan")
-    return dict(mae=float(mean_absolute_error(y, p)),
+    mae = float(mean_absolute_error(y, p))
+    mad = float(np.mean(np.abs(y - np.mean(y))))
+    return dict(mae=mae, nmae=mae / mad if mad > 0 else float("nan"),
                 rmse=float(np.sqrt(mean_squared_error(y, p))),
                 r2=float(r2_score(y, p)), pearson_r=r)
 
