@@ -75,14 +75,17 @@
 ## Project overview
 
 EDA (Energy Decomposition Analysis) + ASM (Activation Strain Model)
-proxy prediction of 5-channel decomposed activation energies.
+proxy prediction of 6-channel decomposed activation energies.
 
-**Current status (2026-09-04):** Full B3LYP-EDA relabeling of the
-Coley 5269-reaction dipolar cycloaddition dataset (spec16rev). All
-previous labeling experiments (789-rxn ADF, 3504-rxn cohort,
-spec14/15 validations, m1/m2/m3 delta learners) have been removed —
-those labels turned out to be incorrect and would cause confusion
-with the current authoritative labels being produced now.
+**Current status (2026-09-14):** B3LYP-EDA labels on the Coley 5269
+dipolar-cycloaddition dataset are the only authoritative labeling.
+5,265 / 5,269 reactions built and parsed under the graph fragmentation
+rule (spec16rev + spec17rev2 relabel), aggregated in
+`labels_all.json` (5,260 status=ok after excluding 5 rxns:
+3090/3766/4252/3400/5783). All prior experiments (789-rxn ADF,
+3,504-rxn Bath-1480 tt cohort, spec14/15 validations, m1/m2/m3 delta
+learners) have been deleted — they turned out to be incorrect or
+scope-limited and would cause confusion with the current labels.
 
 Folder/distribution name: `eda-asm-prediction` (hyphenated).
 Python import name: `eda_asm`.
@@ -92,9 +95,9 @@ Python import name: `eda_asm`.
 ```
 analysis/
   b3lyp_full/            spec16rev — current label pipeline
-                         (5262 rxns × 5 SPEs, B3LYP EDA-NOCV)
-  bath1480_probe/        experiment scripts only (results removed;
-                         code kept for future reuse)
+                         (5265/5269 built, 6-channel EDA-NOCV + strain)
+  otfm_train/            OTFM training pipeline (labels consumer)
+  otfm_guess/            spec18 — GUESS-mode OTFM (xTB path)
 src/eda_asm/             shared Python package
   datasets/              dataset loaders (dipolar, qmrxn20)
   asr_v1/                model / backbone / training utilities
@@ -112,7 +115,8 @@ Full B3LYP-D3(BJ)/def2-TZVP CPCM(water) EDA-NOCV on the Coley 5269
 dipolar cycloaddition dataset. Per reaction:
 - 5 ORCA single-point calculations run in parallel:
   `eda` + `frag1_dist` + `frag2_dist` + `frag1_rel` + `frag2_rel`
-- 5-channel EDA labels + strain corrections
+- 6-channel EDA labels (elst / pauli / oi / disp / cpcm / cds)
+  + 2 strain terms (d1, d2)
 - Self-chaining orchestrator (`orch_b3full.sh`) handles the 47h
   wall-time limit by automatically re-submitting itself
   (`--dependency=afterany:$SLURM_JOB_ID`)
