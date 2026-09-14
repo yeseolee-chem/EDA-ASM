@@ -52,7 +52,7 @@ E5 = ["xtb_e_barrier_kcal", "xtb_dist_dipole_kcal", "xtb_dist_dipolarophile_kcal
 CHAN8 = ["ch_strain_1", "ch_strain_2", "ch_elst", "ch_Pauli", "ch_oi",
          "ch_disp", "ch_cpcm", "ch_cds"]
 ESPLEY54 = D_STRUCT41 + E5 + CHAN8
-FEATURE_SETS = {"E5": E5, "ESPLEY54": ESPLEY54}
+FEATURE_SETS = {"ESPLEY54": ESPLEY54}
 
 TARGETS = ["dft_barrier_kcal", "dft_d1_kcal", "dft_d2_kcal", "dft_eint_spe_kcal", "dft_e_bond_kcal",
            "dft_elst_dft", "dft_pauli_dft", "dft_oi_dft", "dft_disp_dft", "dft_cpcm_dft", "dft_cds_dft"]
