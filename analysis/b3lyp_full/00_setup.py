@@ -19,7 +19,7 @@ FORBIDDEN = [
     "bath1480_probe/experiments/cohort_v1/reactions",
     "manifest.parquet",
     "am1_ts",
-    "tt_eda_kisti_results",
+    "tt_eda_kisti_results", "tt_eda_ubai_results",
 ]
 ALLOWED_IN = {"05_compare.py", "00_setup.py"}  # 00 self holds the forbidden-list literals
 
