@@ -3,7 +3,7 @@
 # 5 GFN2-xTB/ALPB(water) SPEs per rxn on Coley DFT geometries (no re-optimisation).
 # Before sbatch (login node, shell only):  mkdir -p /gpfs/tmp_cpu2/yeseo1ee/espley_xtb/{logs,slices}
 #SBATCH --job-name=xtb_espley
-#SBATCH --time=12:00:00
+#SBATCH --time=48:00:00
 #SBATCH --partition=cpu1,cpu2
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=2 --mem=8G
 #SBATCH --array=0-17%10
