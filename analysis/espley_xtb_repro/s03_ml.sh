@@ -7,5 +7,7 @@
 set -euo pipefail
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
+# XGBoost isn't in reactot by default; first-run pip install then no-op thereafter.
+python -c "import xgboost" 2>/dev/null || pip install --user --quiet xgboost
 cd /home1/yeseo1ee/projects/eda-asm-prediction/analysis/espley_xtb_repro
 python train_ml.py

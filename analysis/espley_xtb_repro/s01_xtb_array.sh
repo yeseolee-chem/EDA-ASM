@@ -1,7 +1,7 @@
 #!/bin/bash
-# Array element = one slice of the 5,260 accepted rxns (18 slices x ~293).
-# 5 GFN2-xTB/ALPB(water) SPEs per rxn on Coley DFT geometries (no re-optimisation).
-# Before sbatch (login node, shell only):  mkdir -p /gpfs/tmp_cpu2/yeseo1ee/espley_xtb/{logs,slices}
+# 55-feature xTB pipeline: distances(11) + Mulliken(15) + APT_surrogate(15) +
+# xTB energies(6) + GFN2-xTB channels(8). Gas-phase tblite (no ALPB).
+# Before sbatch: mkdir -p /gpfs/tmp_cpu2/yeseo1ee/espley_xtb/{logs,slices}
 #SBATCH --job-name=xtb_espley
 #SBATCH --time=48:00:00
 #SBATCH --partition=cpu1,cpu2
