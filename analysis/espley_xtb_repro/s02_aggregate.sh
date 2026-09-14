@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=xtb_agg
 #SBATCH --time=48:00:00
-#SBATCH --partition=cpu2
+#SBATCH --partition=cpu1,cpu2
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=1 --mem=4G
 #SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/logs/aggregate.%j.out
 set -euo pipefail

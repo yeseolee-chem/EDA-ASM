@@ -1,24 +1,33 @@
 #!/usr/bin/env python3
-"""aggregate.py — merge partial slice parquets into xtb_features.parquet."""
+"""aggregate.py — merge slice parquets into xtb_features.parquet with completeness gates."""
+import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-SLICES = Path("/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/slices")
-OUT = Path("/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/xtb_features.parquet")
+ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
+SLICES, OUT = ROOT / "slices", ROOT / "xtb_features.parquet"
+N_SLICES = int(os.environ.get("ESPLEY_NSLICES", "18"))
+N_EXPECTED = 5260          # 5,265 labels − 5 excluded (3090, 3766, 4252, 3400, 5783)
 
 
 def main():
     paths = sorted(SLICES.glob("slice_*.parquet"))
-    if not paths:
-        sys.exit("no slice parquets found")
-    dfs = [pd.read_parquet(p) for p in paths]
-    df = pd.concat(dfs, ignore_index=True).sort_values("rxn_id").reset_index(drop=True)
+    if len(paths) != N_SLICES:
+        sys.exit(f"GATE: expected {N_SLICES} slice files, found {len(paths)}: {[p.name for p in paths]}")
+    df = pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True).sort_values("rxn_id").reset_index(drop=True)
+    if len(df) != N_EXPECTED or df.rxn_id.nunique() != N_EXPECTED:
+        sys.exit(f"GATE: expected {N_EXPECTED} unique rxns, got {len(df)} rows / {df.rxn_id.nunique()} unique")
     df.to_parquet(OUT, index=False)
+    st = dict(df["xtb_status"].value_counts())
     print(f"aggregated {len(df)} rows from {len(paths)} slices -> {OUT}")
-    print(f"columns ({len(df.columns)}): {list(df.columns)}")
-    print(f"xtb_status distribution: {dict(df['xtb_status'].value_counts())}")
+    print(f"xtb_status: {st}")
+    ok = df[df.xtb_status == "ok"]
+    print(f"ok={len(ok)}  solvation tags: {dict(ok.xtb_solvation.value_counts())}")
+    print(f"ok rows with NaN in any xtb_*/q_* column: {int(ok.filter(regex='^(xtb_|q_)').isna().any(axis=1).sum())}")
+    if len(ok) < 0.99 * N_EXPECTED:
+        sys.exit(f"GATE: xTB success rate {len(ok)/N_EXPECTED:.3%} < 99% — inspect failures before ML")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ distortion-interaction ML pipeline, but with two changes:
 1. Replace **AM1** with **GFN2-xTB** (semi-empirical DFTB) for the 5 SPE
    species per reaction (gs1, gs2, dist1, dist2, ts).
 2. Replace the Bath 1480 tt subset (3,504 rxns) with **Coley 5269 dipolar
-   cycloaddition** (5,260 status=ok records in `labels_all.json`).
+   cycloaddition** (5,260 records = 5,265 − 5 excluded (3090, 3766, 4252:
+   foreign bond; 3400, 5783: oi_dft > 0); the 172 `eda_sum_mismatch`
+   records are valid and included).
 
 No pre-filtering: all 5,260 records are attempted. Reactions whose xTB SPE
 fails are recorded with NaN xTB fields (not dropped) so the failure mode is
@@ -32,16 +34,27 @@ visible in the final table.
   which TS atoms belong to fragment 1 (dipole) vs fragment 2
   (dipolarophile). Deterministic and consistent with the labeling.
 - **Charges**: `charge1`, `charge2` from labels_all; total `q_tot = q1+q2`.
-- **Solvation**: ALPB water (Grimme). If tblite refuses, gas phase (logged).
+- **Solvation**: ALPB water via `Calculator.add('alpb-solvation','water')`;
+  a failure is recorded as `spe_fail` (no silent gas-phase fallback).
 - **Features** (5, no q_barrier): `xtb_e_barrier`, `xtb_dist_dipole`,
   `xtb_dist_dipolarophile`, `xtb_sum_distortion`, `xtb_interaction`.
+  `xtb_interaction_kcal = E_ts − E_dist1 − E_dist2` (negative;
+  = e_barrier − sum_distortion). Extra ESPLEY-set features: Mulliken
+  charges of the 4 reacting atoms in TS/distorted/GS structures (`q_*`),
+  `reacting_distance_0/1/diff_ts` from the SMILES-defined forming bonds.
 - **Targets** (from labels_all, DFT B3LYP-D3(BJ)/def2-TZVP CPCM(SMD water)):
   `dft_barrier` (= (e_ab − e_frag1_rel − e_frag2_rel) × 627.5), `d1_kcal`
   (dipole strain), `d2_kcal` (dipolarophile strain), `e_bond_kcal` (EDA
   interaction), plus 6 individual EDA channels (elst/pauli/oi/disp/cpcm/cds).
-- **ML models**: LinearRegression (baseline), Ridge, RandomForest,
-  GradientBoosting. 5-fold CV, seed 42.
-- **ML metrics**: MAE, RMSE, r² (per fold + aggregated).
+- **ML**: Protocol A (Espley): 80/10/10 × seeds 22/23/14/1/2,
+  StandardScaler + Ridge/KRR/SVR tuned by GridSearchCV(5-fold) on the
+  seed-23 train split; reports pre-ML MAE, train/test MAE ± sd, test
+  range, MAE % range (`ml_table_espley.csv`). Protocol B: 5-fold OOF
+  with Linear/Ridge/RF/GBR.
+
+Design note: features are xTB single points at the Coley DFT geometries,
+i.e. an upper bound; deployment on React-OT geometries is a separate
+experiment.
 
 ## Deliverables
 
