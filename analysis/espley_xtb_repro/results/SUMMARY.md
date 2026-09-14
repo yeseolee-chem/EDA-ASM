@@ -244,11 +244,14 @@ Prerequisites: xtb 6.7.1 in `/home1/yeseo1ee/xtb-dist/`, `reactot` env with dftd
 
 원본: [`margin_calibration.csv`](margin_calibration.csv).
 
-### 후속으로 남긴 항목 (S2, S4, S6, S7)
+### 이미 만족된 항목 (S4)
 
-이번 라운드에서 처리하지 않음 — 각각 상당한 재계산 또는 리팩터가 필요:
+- **S4 — Ridge / KRR / SVR / XGB HP 재튠**: 감사 초안에는 재실험 항목으로 적혀 있었지만, 현재 파이프라인이 이미 이 요구를 만족한다. [`train_ml_single.py:107-112`](../train_ml_single.py#L107-L112) 에서 `GridSearchCV(cv=KFold(5, shuffle=True, random_state=23), scoring="neg_mean_absolute_error")` 를 4 모델 각각에 별도로 실행 (Ridge α 5-grid, KRR α×γ 16-grid, SVR C×γ×ε 36-grid, XGB n_est×depth×lr 12-grid) 후 seed 23의 train fold에서 정해진 best HP를 5개 seed 재사용. **KRR이 8/11 타깃에서 최적**이라는 관찰은 편향 없는 재튠 후 결과다. 별도 추가 실행 불필요.
 
-- **S2 — xTB 기하 민감도**: 현재는 DFT TS 기하 위 xTB SPE(성능 상한). `xtb --opt` 로 로컬 최적화한 기하에서 재추출 후 5개 seed 재학습, 배포 성능 확인. 5,260 × 5 SPE × 최적화(수 분/구조) ≈ 새 array job.
-- **S4 — Ridge/SVR/XGB HP 재튠**: 현 KRR a priori는 seed 23 grid 재사용. SVR/XGB에도 같은 5-fold GridSearchCV를 걸어 편향 없이 다시 비교하면 KRR 선호가 강화되는지 재검증. 학습만 하면 되므로 상대적으로 가벼움.
-- **S6 — 채널 sum 재조정 실험**: S1 결과를 받아 barrier / eint_spe 재조정 스킴 (예: `disp_scale`, `xc_missing` 학습 채널). 라벨 재정의를 건드리므로 별도 spec.
-- **S7 — `is_charged` 를 명시 feature로 추가**: `charge2` 는 이미 `xtb_features` 에 들어가지만 KRR RBF에서 활용도가 낮음. one-hot 표시자 + q_minus2 그룹 신뢰도 하한 학습.
+### 후속으로 남긴 항목 (S2, S6, S7)
+
+이번 라운드에서 처리하지 않음 — 각각 상당한 재계산 또는 스킴 변경이 필요:
+
+- **S2 — xTB 기하 민감도**: 현재는 DFT TS 기하 위 xTB SPE(성능 상한). `xtb --opt` 로 로컬 최적화한 기하에서 재추출 후 5개 seed 재학습, 배포 성능 확인. 5,260 × 3 구조 최적화(~1분/구조) + full SPE 재계산 ≈ 새 array job.
+- **S6 — 채널 sum 재조정 실험**: S1 결과를 받아 barrier / eint_spe 재조정 스킴 (예: `disp_scale`, `xc_missing` 학습 채널). 라벨 정의를 건드리므로 별도 spec.
+- **S7 — `is_charged` 를 명시 feature로 추가**: `charge2` 컬럼은 이미 `xtb_features.parquet` 에 존재하나 `AUX18` 에는 안 들어감. 새 arm `ESPLEY73 = ESPLEY72 + [charge2]` 로 재학습하면 이온 그룹 MAE 개선 여부 정량 확인 가능. s03 array 1회로 완료.
