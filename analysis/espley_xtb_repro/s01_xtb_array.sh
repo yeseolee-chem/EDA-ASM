@@ -8,7 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
-#SBATCH --array=0-19%10
+#SBATCH --array=0-17%10
 #SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/logs/xtb_slice_%a.%j.out
 
 set -euo pipefail
@@ -18,4 +18,4 @@ conda activate reactot
 CODE=/home1/yeseo1ee/projects/eda-asm-prediction/analysis/espley_xtb_repro
 OUT=/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/slices/slice_$(printf '%02d' ${SLURM_ARRAY_TASK_ID}).parquet
 
-python "$CODE/xtb_slice.py" ${SLURM_ARRAY_TASK_ID} 20 "$OUT"
+python "$CODE/xtb_slice.py" ${SLURM_ARRAY_TASK_ID} 18 "$OUT"
