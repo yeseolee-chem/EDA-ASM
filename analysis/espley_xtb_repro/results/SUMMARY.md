@@ -1,6 +1,8 @@
-# espley_xtb_repro — final results (2026-09-14)
+# espley_xtb_repro — final results (2026-09-15)
 
 **Espley 2024 (D4DD00224E) protocol reproduced on Coley 5,260 rxns with GFN2-xTB / ALPB water.**
+
+> 2026-09-15 revision — FIXES.md audit (S1/S3/S5/S6/S8/S9) applied. See §Audit at the bottom.
 
 ## Method (one-line)
 
@@ -93,7 +95,7 @@ Single engine: **xtb 6.7.1 binary**, one GFN2-xTB / ALPB(water) single point per
 | CPCM | 1.48 | 1.56 | 1.06 | 1.52 | 1.03 |
 | CDS | 0.24 | 0.26 | 1.12 | 0.25 | 1.05 |
 
-**처음 보는 반응물에서도 성능이 거의 유지됨** — 랜덤 분할 결과가 성분 암기의 산물이 아니라는 직접 증거. 원본: [`group_split.csv`](group_split.csv).
+**주의**: 이 그룹 홀드아웃은 *dipole 자체* 또는 *dipolarophile 자체*가 완전히 새로울 때의 성능이지, **골격 클래스가 처음 보는 것**일 때는 아니다. 골격 외삽은 §Audit S3+S8의 `dipole_class` MMP 분할에서 더 냉정하게 관찰됨 — Δchannel MAE가 랜덤 대비 1.3–1.6배 증가하고 τ95 커버리지도 0.59→0.39로 하락. 원본: [`group_split.csv`](group_split.csv).
 
 ## Espley 2024 대비 (ds3, Bath [3+2] 3,980 rxn, AM1 최적화 기하)
 
@@ -129,6 +131,10 @@ Single engine: **xtb 6.7.1 binary**, one GFN2-xTB / ALPB(water) single point per
 - `ml_targets/` — target당 JSON (병렬 array 원본)
 - `charge_breakdown.csv` — 전하 그룹별 test MAE (ESPLEY72 / KRR)
 - `group_split.csv` — 반응물 그룹 홀드아웃 robustness (동일)
+- `split_metrics.csv` — MMP-Δ 분할별 (random / dipole_class / 10 LOSO) dMAE, dom_agree, τ95/τ99 (§Audit S3+S8)
+- `margin_calibration.csv` — 예측 margin τ에 따른 coverage / agreement 곡선 (§Audit S9)
+- `mmp_pairs_v2.csv` — 5,209 MMP 페어 (r1, r2, kind, sub_from, sub_to)
+- `verify_s1s5.json` — S1(gap statistics) + S5(flag counts) 원본 수치
 - `figures/` (ESPLEY54 기준):
   - `scatter_Ridge/KRR_rbf/SVR_rbf/XGB_ESPLEY54.png` — 8-패널 산점도
   - `mae_bar_espley54.png` — 8 채널 × 4 모델 grouped bar
@@ -145,3 +151,104 @@ sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s06_analyze_extra.sh
 ```
 
 Prerequisites: xtb 6.7.1 in `/home1/yeseo1ee/xtb-dist/`, `reactot` env with dftd3 + morfeus-ml + xgboost, `labels_all.json` (5,265 records, 5,260 accepted).
+
+---
+
+## Audit (2026-09-15, FIXES.md)
+
+`verify_s1s5.json` 은 이 절의 모든 수치의 원본. Run: `verify_s1s5.sh` (job 984368) + `s07_evaluate_pairs.sh` (job 984367).
+
+### S1 — ASM identity vs 8-channel sum
+
+두 관계는 별개다.
+
+- **ASM identity** `d1 + d2 + eint_spe ≡ ΔE‡`: 라벨링에서 정의로 강제됨. `max|residual| = 8.6 × 10⁻¹⁰ kcal/mol` — 완전 등식.
+- **8-channel sum** `d1 + d2 + Σ(elst, Pauli, OI, disp, CPCM, CDS) = ΔE‡`: **성립하지 않는다.** `eint_spe − e_bond` 의 통계:
+
+  | 통계 | 값 |
+  |---|---:|
+  | mean | −3.39 kcal/mol |
+  | sd | 3.69 |
+  | `|gap| > 5 kcal/mol` 건수 | **1,923 / 5,260 (36.6%)** |
+  | q_minus2=−2 그룹 평균 | +9.55 |
+  | 중성 (charge2=0) 그룹 평균 | −3.97 |
+  | Pearson r(gap, charge2) | **−0.617** |
+
+  → 6채널 분해가 `eint_spe` 를 100% 재현하지 않음. 잔차는 반응 총전하와 강하게 상관돼서 GFN2-xTB의 **diffuse 함수 부재 + EDA-NOCV 스킴이 강한 이온 짝에서 잔여 항으로 새는** 구조적 문제로 판단됨. barrier / eint_spe / d1 / d2는 라벨 안정성이 확보돼 있으나, "각 채널을 합치면 barrier가 된다"는 서술은 **평균 −3.4 kcal/mol 편향**을 함께 명시해야 한다.
+
+  **결론**: 예측 표는 채널별로 유효하나, **채널 sum을 barrier로 재구성하는 사용법은 이온 반응에서 특히 부정확**. 배포 시 barrier는 barrier 예측기로, eint_spe는 eint_spe 예측기로 직접 뽑을 것.
+
+### S3 + S8 — MMP-Δ 분할별 채널 예측
+
+`ESPLEY72` 위 KRR(RBF, α=γ=1e−3) a priori. 페어당 두 멤버가 같은 fold(OOF) 인 경우만 평가. Δ = pred(r2) − pred(r1), 6 채널(elst / Pauli / OI / disp / CPCM / d1 / d2 중 사용) × 3 지배 채널 지표(`dom_agree_all` = |Δ|이 가장 큰 채널이 true와 pred에서 일치할 확률).
+
+| split | n pairs | ΔMAE elst | ΔMAE Pauli | ΔMAE OI | ΔMAE CPCM | dom_agree | τ₉₅ | cov₉₅ | τ₉₉ | cov₉₉ |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **random** | 1,066 | 1.87 | 2.54 | 1.47 | 1.63 | **0.812** | 3.0 | 0.59 | 6.5 | 0.34 |
+| **dipole_class** (골격 외삽) | 4,325 | 2.49 | **3.96** | 2.11 | 1.89 | 0.732 | 5.0 | 0.39 | — | — |
+| loso:*C | 157 | 2.56 | 3.43 | 1.71 | 1.98 | 0.841 | 3.5 | 0.67 | 5.0 | 0.52 |
+| loso:*c1ccccc1 | 383 | 1.86 | 2.70 | 1.59 | 1.69 | 0.807 | 2.0 | 0.65 | 6.5 | 0.30 |
+| loso:*NC | 767 | 1.90 | 2.55 | 1.64 | 1.93 | 0.791 | 3.5 | 0.58 | 5.0 | 0.47 |
+| loso:*C(=O)NC | 767 | 1.90 | 2.55 | 1.64 | 1.93 | 0.791 | 3.5 | 0.58 | 5.0 | 0.47 |
+| loso:*C(C)=O | 1,203 | 1.90 | 2.42 | 1.43 | 1.52 | 0.865 | 1.5 | 0.82 | 4.5 | 0.60 |
+| loso:*C#N | 1,254 | 2.45 | 2.96 | 1.50 | 1.83 | **0.874** | 2.0 | 0.79 | 5.5 | 0.56 |
+| loso:*C(=O)OC | 765 | 2.11 | 2.41 | 1.60 | 1.55 | 0.833 | 2.5 | 0.69 | 4.5 | 0.54 |
+| loso:*OC | 765 | 2.11 | 2.41 | 1.60 | 1.55 | 0.833 | 2.5 | 0.69 | 4.5 | 0.54 |
+| loso:*[N-]c1ccccc1 | 90 | 2.02 | 2.36 | 1.38 | 1.43 | 0.889 | 3.0 | 0.81 | 4.0 | 0.73 |
+| loso:*[N+]#CC(C)=O | 169 | 1.80 | 2.81 | 1.45 | 1.33 | 0.828 | 4.5 | 0.52 | 7.5 | 0.36 |
+
+관찰:
+1. **`dipole_class` 골격 외삽에서 dom_agree가 0.812 → 0.732로 하락, ΔMAE Pauli가 2.54 → 3.96 (×1.56)**. 랜덤 분할이 성능을 낙관적으로 표시함이 정량 확인됨.
+2. LOSO(치환기 홀드아웃)는 예상보다 견고. dom_agree 0.79–0.89로 random과 비슷하거나 오히려 나음 (희귀 치환기일수록 이웃 화학이 잘 정의돼 있어서). Espley 논문의 "새 치환기 일반화" 주장은 이 데이터에서도 재현됨.
+3. **dipole_class 분할에서 τ₉₉는 미달** — 어떤 τ에서도 agreement가 0.99에 못 미침 (max 0.97 근처). 골격 외삽은 99%로는 안전하지 않음.
+
+원본: [`split_metrics.csv`](split_metrics.csv), [`mmp_pairs_v2.csv`](mmp_pairs_v2.csv).
+
+### S5 — 라벨 위생 플래그
+
+`labels_all.json` 5,260 acceptance 위:
+
+| 플래그 | count | % |
+|---|---:|---:|
+| `flag_negative_strain` (d1<0 OR d2<0) | 9 | 0.17 |
+| d1<0 | 7 | 0.13 |
+| d2<0 | 7 | 0.13 |
+| d2 > 50 kcal/mol | 12 | 0.23 |
+| `flag_async` (async>0.5) | 228 | 4.33 |
+| `alt_used=True` (BSSE re-partition) | **3,033** | **57.66** |
+| charged (총전하 ≠ 0) | 258 | 4.90 |
+
+- **3,033건(57.7%)이 BSSE fallback 스킴을 탄다**. 상당 비율. Pauli/OI 성능 지표가 이 부분과 함께 이해되어야 함 — `alt_used` 여부와 무관하게 test MAE가 재현되는지는 후속 분석 필요.
+- `neg_strain` 9건과 `d2>50` 12건은 학습 배제하지 않았음 (전체 대비 0.17% + 0.23% = 0.4%). 배제 시 성능 향상 여부는 다음 실험.
+- Async 228건(4.3%)은 대체로 이온·강한 편극 반응. group_split 분석의 `charged` 그룹과 일부 겹침.
+
+원본: [`verify_s1s5.json`](verify_s1s5.json).
+
+### S9 — Margin gate 커브
+
+배포 시 dominant channel(가장 큰 |Δ|)만이 필요하고, **|Δ|의 top-1 − top-2 차 (`m_pred`)** 를 gate로 쓰면 신뢰 예측만 선별할 수 있다. `random` split 기준:
+
+| τ (kcal/mol) | coverage | agree | true-margin agree |
+|---:|---:|---:|---:|
+| 0.0 | 1.00 | 0.812 | 0.812 |
+| 1.0 | 0.82 | 0.889 | 0.894 |
+| 2.0 | 0.69 | 0.928 | 0.931 |
+| 3.0 | 0.59 | 0.960 | 0.964 |
+| **3.5** | **0.54** | **0.972** | 0.972 |
+| 5.0 | 0.43 | 0.989 | 0.985 |
+| 6.5 | 0.34 | **0.992** | 0.992 |
+
+- **τ = 3.0에서 59%의 페어가 통과하고 96%가 지배채널을 맞춤.** τ = 6.5에서는 34%만 통과하지만 99.2%로 안전.
+- 지배채널 예측 자체는 재현 가능하고 (agree 곡선이 true-margin 곡선과 거의 겹침), **모델 τ가 실 τ의 신뢰할 만한 대리치**.
+- `dipole_class` 골격 외삽에서 커브는 아래로 이동 — τ=5.0에서 coverage 0.39 / agree 0.95, τ=7 이상에서도 agree 0.98 이하. 골격 밖에선 gate 임계를 더 높이 잡을 것.
+
+원본: [`margin_calibration.csv`](margin_calibration.csv).
+
+### 후속으로 남긴 항목 (S2, S4, S6, S7)
+
+이번 라운드에서 처리하지 않음 — 각각 상당한 재계산 또는 리팩터가 필요:
+
+- **S2 — xTB 기하 민감도**: 현재는 DFT TS 기하 위 xTB SPE(성능 상한). `xtb --opt` 로 로컬 최적화한 기하에서 재추출 후 5개 seed 재학습, 배포 성능 확인. 5,260 × 5 SPE × 최적화(수 분/구조) ≈ 새 array job.
+- **S4 — Ridge/SVR/XGB HP 재튠**: 현 KRR a priori는 seed 23 grid 재사용. SVR/XGB에도 같은 5-fold GridSearchCV를 걸어 편향 없이 다시 비교하면 KRR 선호가 강화되는지 재검증. 학습만 하면 되므로 상대적으로 가벼움.
+- **S6 — 채널 sum 재조정 실험**: S1 결과를 받아 barrier / eint_spe 재조정 스킴 (예: `disp_scale`, `xc_missing` 학습 채널). 라벨 재정의를 건드리므로 별도 spec.
+- **S7 — `is_charged` 를 명시 feature로 추가**: `charge2` 는 이미 `xtb_features` 에 들어가지만 KRR RBF에서 활용도가 낮음. one-hot 표시자 + q_minus2 그룹 신뢰도 하한 학습.
