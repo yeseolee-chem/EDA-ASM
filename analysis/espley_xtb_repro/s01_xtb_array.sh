@@ -21,7 +21,10 @@ export XTB_THREADS=1
 export OMP_NUM_THREADS=1
 
 python -c "import pyarrow, networkx, numpy, pandas, dftd3, morfeus; print('py env ok')"
-"$XTB_BIN" --version | head -2
+# xtb --version writes many lines; head closing early gives xtb a SIGPIPE and
+# with pipefail that fails the script. Capture output first, then print head.
+xtb_ver=$("$XTB_BIN" --version 2>&1 || true)
+echo "$xtb_ver" | head -2
 
 CODE=/home1/yeseo1ee/projects/eda-asm-prediction/analysis/espley_xtb_repro
 OUT=/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/slices/slice_$(printf '%02d' ${SLURM_ARRAY_TASK_ID}).parquet
