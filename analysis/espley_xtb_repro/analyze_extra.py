@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 RES = HERE / "results"
 CSV = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv")
 SEEDS = [22, 23, 14, 1, 2]
-HEADLINE_MODEL, HEADLINE_ARM = "KRR_rbf", 72
+HEADLINE_MODEL, HEADLINE_ARM = "KRR_rbf", 73
 
 feat = pd.read_parquet(RES / "xtb_features.parquet")
 pred = pd.read_parquet(RES / "predictions.parquet")
@@ -100,14 +100,16 @@ rows = []
 for tg, node in report.items():
     if tg == "dft_disp_dft":                       # b_disp == target: not a prediction task
         continue
-    bp = node["protocol_A"][f"ESPLEY{HEADLINE_ARM}"][HEADLINE_MODEL]["best_params"]
-    P = dict(alpha=bp["kernelridge__alpha"], gamma=bp["kernelridge__gamma"])
+    per_seed = node["protocol_A"][f"ESPLEY{HEADLINE_ARM}"][HEADLINE_MODEL]["per_seed_best_params"]
     X, y = feat[F].values, feat[tg].values
     out = {}
     for mode, groups in [("random", None), ("group_dipolarophile", feat.dph.values),
                          ("group_dipole", feat.dipole.values)]:
         maes = []
-        for seed in SEEDS:
+        for si, seed in enumerate(SEEDS):
+            bp = per_seed[si]                       # HP is now per-seed (nested CV)
+            P = {"alpha": bp["regressor__kernelridge__alpha"],
+                 "gamma": bp["regressor__kernelridge__gamma"]}
             if groups is None:
                 tr, rest = train_test_split(np.arange(len(feat)), test_size=0.20, random_state=seed)
                 _, te = train_test_split(rest, test_size=0.50, random_state=seed)

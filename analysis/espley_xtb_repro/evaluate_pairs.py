@@ -18,7 +18,7 @@ pairs = build_pairs(feat)
 print(f"pairs {len(pairs)}  {pairs.kind.value_counts().to_dict()}")
 src = open(RES + "/../train_ml_single.py").read(); ns = {}
 exec(src[src.index("DIST11"):src.index("TARGETS =")], ns)
-X = feat[ns["FEATURE_SETS"]["ESPLEY72"]].values
+X = feat[ns["FEATURE_SETS"]["ESPLEY73"]].values
 CH = {"d1": "dft_d1_kcal", "d2": "dft_d2_kcal", "elst": "dft_elst_dft", "pauli": "dft_pauli_dft",
       "oi": "dft_oi_dft", "cpcm": "dft_cpcm_dft"}
 EXACT = {"disp": "dft_disp_dft"}                      # b_disp == target, 예측 대상 아님

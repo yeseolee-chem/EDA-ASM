@@ -1,12 +1,13 @@
 #!/bin/bash
-# Array element = one target (0..10). Each runs Protocol A (Ridge/KRR/SVR/XGB)
-# + Protocol B (Linear/Ridge/RF/GBR/XGB) on both E5 and ESPLEY54 feature sets.
-# 11 targets -> array of 11, %10 concurrent (MaxJobs=10 UBAI limit).
+# Array element = one target (0..11). Each runs Protocol A (Ridge/KRR/SVR/XGB
+# with per-seed GridSearchCV, y-standardized) + Protocol B (5-fold OOF) on
+# three feature sets (ESPLEY46 / ESPLEY54 / ESPLEY73). 12 targets -> array of
+# 12, %10 concurrent (MaxJobs=10 UBAI limit).
 #SBATCH --job-name=xtb_ml
 #SBATCH --time=48:00:00
 #SBATCH --partition=cpu1,cpu2
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=8 --mem=16G
-#SBATCH --array=0-10%10
+#SBATCH --array=0-11%10
 #SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/logs/ml_target_%a.%j.out
 set -euo pipefail
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
