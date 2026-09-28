@@ -1,0 +1,66 @@
+# D1 autodE pilot — config. Method parameters are FROZEN (they define parity with the
+# D0 labels); only the "host" block may be edited to fit the cluster.
+
+# ---------------------------------------------------------------- host (editable)
+repo_root: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction
+scratch: /gpfs/tmp_cpu2/yeseo1ee/d1_autode_pilot          # all heavy output; never committed
+conda_sh: /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
+conda_env: reactot
+venv: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/env/d1ade   # autodE 1.4.5 on top of reactot (install_env.sh); reactot itself has no autodE
+orca_bin: /home1/yeseo1ee/orca_6_1_1_avx2/orca
+xtb_bin: /home1/yeseo1ee/xtb-dist/bin/xtb
+mpi_root: /usr/mpi/gcc/openmpi-4.1.7a1
+g16_bin: null            # set to the g16 executable ONLY if S0 finds Gaussian 16 (see SPEC §3.2)
+cpus_per_task: 8
+maxcore_mb: 3000         # autodE %maxcore per core (TS stage); SPs keep 3500 (frozen below)
+
+# ---------------------------------------------------------------- D0 references (read-only)
+labels_all: labels_all.json                                   # relative to repo_root
+d0_profiles: /gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/extracted/full_dataset_profiles
+d0_csv: /gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv
+d0_inputs_standalone: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/label_true/work/inputs   # frag*_{dist,rel}.inp
+d0_inputs_eda_smd: /gpfs/tmp_cpu2/yeseo1ee/eda_smd_relabel/inputs                              # SMD eda.inp
+
+# ---------------------------------------------------------------- method (FROZEN)
+ts_stage:                       # = Stuyver/Jorner/Coley 2023 protocol, doi:10.1038/s41597-023-02043-z
+  engine: orca                  # orca | g16  (g16 only if g16_bin is set and S0 passes for it)
+  functional: B3LYP
+  dispersion: D3BJ
+  opt_basis: def2-SVP
+  sp_basis: def2-TZVP
+  solvent: water
+  solvation: smd
+  temp_K: 298.15
+  hmethod_conformers: false     # Coley: ade.Config.hmethod_conformers = False
+  free_energy: true             # Coley: calculate_reaction_profile(free_energy=True)
+  orca_optts_block: "\n%geom\nCalc_Hess true\nRecalc_Hess 30\nTrust -0.1\nMaxIter 100\nend"
+  # Recalc_Hess 30 / Trust -0.1 (fixed 0.1 bohr) / MaxIter 100 mirror Coley's G16
+  # Opt=(TS,CalcFC,NoEigenTest,MaxCycles=100,MaxStep=10,NoTrustUpdate,RecalcFC=30)
+  g16_ts: "Opt=(TS, CalcFC, NoEigenTest, MaxCycles=100, MaxStep=10, NoTrustUpdate, RecalcFC=30)"
+  g16_iop: "IOp(2/9=2000)"
+  g16_disp: "EmpiricalDispersion=GD3BJ"
+
+sp_stage:                       # = label_true (SMD_RELABEL.md) — byte-parity gate in S0
+  eda_level: "B3LYP D3BJ def2-TZVP SMD(water) NoSym TightSCF"          # header gets EDA before TightSCF
+  frag_level: "B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF"        # + %cpcm smd block
+  frag_solv_block: "%cpcm\n  smd true\n  smdsolvent \"water\"\nend\n\n"
+  maxcore_mb: 3500
+  eda_nprocs: 1                 # label_true relabel ran EDA serially; energies do not depend on it
+  covalent_factor: 1.25         # fragmenter.FACTOR
+
+# ---------------------------------------------------------------- gates
+gates:
+  identity_tol: 1.0e-6          # |d1+d2+eint_spe-barrier|
+  bond_ref_tol: 0.02            # |E(AB)-E(eda_frag1)-E(eda_frag2) - Bond Energy|
+  closure_tol: 0.11             # |sum6ch - Bond| and 8-channel closure (ORCA table, max 0.108 in D0)
+  enuc_tol_eh: 1.0e-6           # E_nuc(eda_fragk real atoms) == E_nuc(fragk_dist)
+  min_imag_cm: -40              # autodE Config.min_imag_freq
+  forming_max_A: 3.0            # > 3.0 -> flag_async (same as D0 builder)
+  forming_min_A: 1.6
+  mode_share_min: 0.5           # forming-bond stretch share of the imaginary mode
+  d_min_kcal: -0.5              # d1,d2 below this -> reference is not the minimum
+  control_barrier_tol: 1.0      # D0 control: |barrier(autodE path) - labels_all|
+  control_channel_tol: 1.0
+  control_dform_tol_A: 0.05
+
+seed: 20260929
