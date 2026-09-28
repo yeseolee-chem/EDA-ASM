@@ -77,15 +77,23 @@
 EDA (Energy Decomposition Analysis) + ASM (Activation Strain Model)
 proxy prediction of 6-channel decomposed activation energies.
 
-**Current status (2026-09-14):** B3LYP-EDA labels on the Coley 5269
-dipolar-cycloaddition dataset are the only authoritative labeling.
-5,265 / 5,269 reactions built and parsed under the graph fragmentation
-rule (spec16rev + spec17rev2 relabel), aggregated in
-`labels_all.json` (5,260 status=ok after excluding 5 rxns:
-3090/3766/4252/3400/5783). All prior experiments (789-rxn ADF,
-3,504-rxn Bath-1480 tt cohort, spec14/15 validations, m1/m2/m3 delta
-learners) have been deleted — they turned out to be incorrect or
-scope-limited and would cause confusion with the current labels.
+**Current status (2026-09-28):** B3LYP-D3(BJ)/def2-TZVP **SMD(water)**
+EDA labels on the Coley 5269 dipolar-cycloaddition dataset are the only
+authoritative labeling. 5,265 / 5,269 reactions built under the graph
+fragmentation rule. All 5,265 EDA runs were redone in 2026-09 with the
+`SMD(water)` keyword so ORCA's EDA fragment SCFs carry SMD-CDS (the old
+`CPCM(water)` + `%cpcm smd` block did not reach them), and the labels are
+assembled by **method ①** (d1/d2/eint_spe from the standalone
+`frag*_dist.out`; `bsse_shift_kcal` = eint_spe − e_bond as its own column).
+Repo-root `labels_all.json`: 5,265 records = 5,260 ok + 5 excluded
+(3090/3766/4252 foreign bond; 3400/5783 `oi_dft>0`, a CPCM-era reason that
+no longer holds — pending review). Pipeline, audit and gates:
+`label_true/SMD_RELABEL.md`, rebuild with `label_true/scripts/smd_final_pipeline.sh`.
+Downstream ML: `analysis/espley_xtb_repro/results/SUMMARY.md` (rev 3).
+All prior experiments (789-rxn ADF, 3,504-rxn Bath-1480 tt cohort,
+spec14/15 validations, m1/m2/m3 delta learners) have been deleted — they
+turned out to be incorrect or scope-limited and would cause confusion with
+the current labels.
 
 Folder/distribution name: `eda-asm-prediction` (hyphenated).
 Python import name: `eda_asm`.
@@ -93,9 +101,12 @@ Python import name: `eda_asm`.
 ## Repository layout
 
 ```
+label_true/              label build + 2026-09 SMD(water) relabel → labels_all.json
+                         (SMD_RELABEL.md, scripts/smd_*, scripts/stage3_parse.py)
 analysis/
-  b3lyp_full/            spec16rev — current label pipeline
+  b3lyp_full/            spec16rev — original label pipeline design
                          (5265/5269 built, 6-channel EDA-NOCV + strain)
+  espley_xtb_repro/      Espley 2024 protocol, GFN2-xTB features (results rev 3)
   otfm_train/            OTFM training pipeline (labels consumer)
   otfm_guess/            spec18 — GUESS-mode OTFM (xTB path)
 src/eda_asm/             shared Python package
@@ -109,10 +120,17 @@ docs/                    documentation
 CLAUDE.md                this file
 ```
 
-## Current label pipeline (spec16rev b3lyp_full)
+## Label pipeline design (spec16rev b3lyp_full)
 
-Full B3LYP-D3(BJ)/def2-TZVP CPCM(water) EDA-NOCV on the Coley 5269
-dipolar cycloaddition dataset. Per reaction:
+> The SMD(water) relabel (2026-09, `label_true/SMD_RELABEL.md`) supersedes the
+> solvation line below: EDA runs now use the `SMD(water)` keyword in the header
+> and FRAG strings; standalone `frag*_dist` / `frag*_rel` keep `CPCM(water)` +
+> `%cpcm smd true smdsolvent "water"` (the same SMD model). The per-reaction
+> structure below is unchanged.
+
+Full B3LYP-D3(BJ)/def2-TZVP EDA-NOCV (originally CPCM(water) + `%cpcm smd`;
+now SMD(water), see above) on the Coley 5269 dipolar cycloaddition dataset.
+Per reaction:
 - 5 ORCA single-point calculations run in parallel:
   `eda` + `frag1_dist` + `frag2_dist` + `frag1_rel` + `frag2_rel`
 - 6-channel EDA labels (elst / pauli / oi / disp / cpcm / cds)

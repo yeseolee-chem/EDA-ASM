@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """plot_results.py — scatter (per-model) + MAE bar (combined).
 
-One feature set (ESPLEY_PLOT_FS, default 73 = ESPLEY73), all 12 targets:
-barrier, the ASM terms (d1, d2, eint_spe), e_bond and its 6 EDA channels, and
-c_ghost (barrier = d1 + d2 + e_bond + c_ghost, method ①).
+One feature set (ESPLEY_PLOT_FS, default 73 = ESPLEY73), the 9 reported targets:
+barrier, d1, d2 and the 6 EDA channels (e_bond, eint_spe and c_ghost are trained
+but not plotted: derived quantities / method artefact).
 
 Outputs (in <ROOT>/figures/; existing PNGs there are removed first):
     scatter_<model>_ESPLEY<fs>.png   × 4 models (Ridge/KRR/SVR/XGB)
-    mae_bar_espley<fs>.png           — grouped bars: 12 targets × 4 models
+    mae_bar_espley<fs>.png           — grouped bars: 9 targets × 4 models
 """
 from __future__ import annotations
 
@@ -25,19 +25,19 @@ ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
 FIG_DIR = ROOT / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
+# Reported targets: the barrier and its 8 channels. e_bond (= sum of the 6 EDA
+# channels) and eint_spe are derived quantities, and c_ghost is a method
+# artefact (BSSE + cavity) reported once in the SI, so none of them is plotted.
 CHANNELS = [
     ("dft_barrier_kcal",  "barrier"),
     ("dft_d1_kcal",       "strain_1 (dipole)"),
     ("dft_d2_kcal",       "strain_2 (dipolarophile)"),
-    ("dft_eint_spe_kcal", "E_int (own basis)"),
-    ("dft_e_bond_kcal",   "E_bond (EDA)"),
     ("dft_elst_dft",      "elst"),
     ("dft_pauli_dft",     "Pauli"),
     ("dft_oi_dft",        "OI"),
     ("dft_disp_dft",      "disp"),
     ("dft_cpcm_dft",      "CPCM"),
     ("dft_cds_dft",       "CDS"),
-    ("dft_c_ghost_kcal",  "c_ghost (BSSE+cavity)"),
 ]
 MODELS = ["Ridge", "KRR_rbf", "SVR_rbf", "XGB"]
 MODEL_COLORS = {"Ridge": "#4C72B0", "KRR_rbf": "#DD8452",
@@ -49,7 +49,7 @@ LABELS_NOTE = "labels: SMD(water) relabel, method ① (d1/d2 from own-basis frag
 
 def scatter_one(preds, model):
     sub = preds[(preds["model"] == model) & (preds["feature_set"] == N_FEATS)]
-    fig, axes = plt.subplots(3, 4, figsize=(15, 11))
+    fig, axes = plt.subplots(3, 3, figsize=(12, 11))
     for k, (col, label) in enumerate(CHANNELS):
         ax = axes.flat[k]
         s = sub[sub["target"] == col]
@@ -81,9 +81,9 @@ def scatter_one(preds, model):
 
 
 def mae_bar(report):
-    """Grouped bar: 12 targets (x) × 4 models (bars). Uses Protocol A test_mae from ml_report.json."""
+    """Grouped bar: 9 targets (x) × 4 models (bars). Uses Protocol A test_mae from ml_report.json."""
     per_t = report["per_target"]
-    fig, ax = plt.subplots(figsize=(16, 6.5))
+    fig, ax = plt.subplots(figsize=(13, 6.5))
     x = np.arange(len(CHANNELS))
     w = 0.20
     for i_m, m in enumerate(MODELS):
