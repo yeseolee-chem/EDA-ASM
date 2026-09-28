@@ -167,7 +167,7 @@ def post(labels_path):
     exc = {int(d["rxn_id"]) for d in data if d["status"] == "excluded"}
     g.check(exc == EXCLUDED, f"excluded = {sorted(exc)}")
     g.info(f"promoted eda_sum_mismatch -> ok: {sum(1 for d in data if d.get('sum_mismatch_promoted'))}; "
-           f"exclusion notes: {[int(d['rxn_id']) for d in data if d.get('exclusion_note')]}")
+           f"exclusion reasons: { {int(d['rxn_id']): d.get('exclusion_reason') for d in data if d['status'] == 'excluded'} }")
     return g.finish()
 
 

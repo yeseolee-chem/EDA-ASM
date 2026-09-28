@@ -7,15 +7,18 @@ workflow, see TRANSFER.md § "미결 결정 두 가지"):
      to status=ok. Residual is kept in the record for downstream re-filtering.
   2. Exclude 5 rxns for physical/quality reasons and mark status=excluded:
      3090, 3766, 4252 (flag_foreign_bond — TS mismatched with fragments)
-     3400, 5783        (oi_dft > 0 — nonsensical orbital interaction)
+     3400, 5783        (no_forming_bond_ts — both forming bonds >= 3.3 A at the
+                        TS, so it is not a bond-forming cycloaddition TS; every
+                        accepted rxn has its shorter forming bond <= 3.18 A.
+                        The earlier CPCM-era reason, oi_dft > 0, does not hold
+                        with the SMD labels.)
+     Excluded records keep their stage3 status as status_stage3.
 
 Writes labels_all.json to the repo root next to CLAUDE.md.
 
 Usage: postprocess_labels_all.py [SRC [DST]]   (defaults below). SRC defaults to
 the SMD build label_true/work_smd/labels_all.json; label_true/work/labels_all.json
-is the CPCM-era build and must not reach the repo root. DST is written atomically. An
-exclusion whose stated reason no longer holds in SRC (oi_dft>0 with
-oi_dft <= 0) stays excluded but gets an exclusion_note for review.
+is the CPCM-era build and must not reach the repo root. DST is written atomically.
 """
 import json
 import os
@@ -30,9 +33,10 @@ EXCLUDED = {
     3090: "flag_foreign_bond",
     3766: "flag_foreign_bond",
     4252: "flag_foreign_bond",
-    3400: "oi_dft>0",
-    5783: "oi_dft>0",
+    3400: "no_forming_bond_ts",
+    5783: "no_forming_bond_ts",
 }
+NO_BOND_A = 3.3        # shorter forming bond at or above this: no bond is forming at the TS
 
 
 def main():
@@ -43,22 +47,30 @@ def main():
     for r in data:
         rid = int(r["rxn_id"])
         if rid in EXCLUDED:
+            r["status_stage3"] = r["status"]
             r["status"] = "excluded"
             r["exclusion_reason"] = EXCLUDED[rid]
-            if EXCLUDED[rid] == "oi_dft>0" and r.get("oi_dft", 1.0) <= 0:
-                r["exclusion_note"] = (f"reason taken from the CPCM-era labels; here oi_dft = "
-                                       f"{r['oi_dft']:.4f} kcal/mol, so it no longer holds -- review")
-                print(f"note: rxn {rid} excluded for oi_dft>0 but oi_dft={r['oi_dft']:.4f}")
+            if EXCLUDED[rid] == "no_forming_bond_ts":
+                d = sorted((float(r["formed_d1"]), float(r["formed_d2"])))
+                if d[0] < NO_BOND_A:
+                    print(f"WARNING: rxn {rid} shorter forming bond {d[0]:.2f} A < {NO_BOND_A}")
+                r["exclusion_detail"] = (f"both forming bonds >= {NO_BOND_A} A at the TS "
+                                         f"({d[0]:.2f} / {d[1]:.2f} A): not a bond-forming TS")
             excluded += 1
         elif r["status"] == "eda_sum_mismatch":
             r["status"] = "ok"
             r["sum_mismatch_promoted"] = True     # provenance: was above 0.02 tolerance
             promoted += 1
+    # the no-forming-bond rule must not also describe an accepted rxn
+    same = [int(r["rxn_id"]) for r in data if r["status"] != "excluded"
+            and min(float(r["formed_d1"]), float(r["formed_d2"])) >= NO_BOND_A]
+    if same:
+        print(f"WARNING: accepted rxns with both forming bonds >= {NO_BOND_A} A: {same}")
     after = Counter(r["status"] for r in data)
     print(f"pre  status counts: {dict(before)}")
     print(f"post status counts: {dict(after)}")
     print(f"promoted eda_sum_mismatch -> ok : {promoted}")
-    print(f"excluded (foreign_bond / oi>0)  : {excluded}")
+    print(f"excluded (foreign_bond / no_forming_bond_ts): {excluded}")
     tmp = DST.with_name(DST.name + ".tmp")
     with open(tmp, "w") as fh:
         json.dump(data, fh, indent=2)

@@ -46,7 +46,7 @@ for tg, g in p.groupby("target"):
             r[f"mae_{lab}"] = mean_absolute_error(sub.y, sub.yhat)
             r[f"n_{lab}"] = int(sub.rxn_id.nunique())
     rows.append(r)
-pd.DataFrame(rows).round(3).to_csv(RES / "charge_breakdown.csv", index=False)
+pd.DataFrame(rows).round(4).to_csv(RES / "charge_breakdown.csv", index=False)
 print("wrote results/charge_breakdown.csv")
 
 # ---------------------------------------------------------------- (B) grouped split
@@ -124,5 +124,5 @@ for tg, node in report.items():
     print(f"  {tg:20s} random {out['random']:.2f}  grp-dph {out['group_dipolarophile']:.2f} "
           f"({out['ratio_dph']:.2f}x)  grp-dip {out['group_dipole']:.2f} ({out['ratio_dip']:.2f}x)", flush=True)
 pd.DataFrame(rows)[["target", "random", "group_dipolarophile", "ratio_dph",
-                    "group_dipole", "ratio_dip"]].round(3).to_csv(RES / "group_split.csv", index=False)
+                    "group_dipole", "ratio_dip"]].round(4).to_csv(RES / "group_split.csv", index=False)
 print("wrote results/group_split.csv")

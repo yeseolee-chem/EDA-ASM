@@ -45,6 +45,9 @@ MODEL_COLORS = {"Ridge": "#4C72B0", "KRR_rbf": "#DD8452",
 N_FEATS = int(os.environ.get("ESPLEY_PLOT_FS", "73"))
 FS = f"ESPLEY{N_FEATS}"
 LABELS_NOTE = "labels: SMD(water) relabel, method ① (d1/d2 from own-basis fragments)"
+# b_disp (feature) is the target by definition: its "prediction" is read off, not learned
+DISP = "dft_disp_dft"
+DISP_NOTE = "same quantity as the b_disp feature\n(analytic identity, not a prediction)"
 
 
 def scatter_one(preds, model):
@@ -72,6 +75,9 @@ def scatter_one(preds, model):
         ax.set_xlabel("actual (kcal/mol)"); ax.set_ylabel("predicted")
         ax.tick_params(labelsize=8)
         ax.grid(alpha=0.25)
+        if col == DISP:
+            ax.text(0.04, 0.96, DISP_NOTE, transform=ax.transAxes, va="top", ha="left", fontsize=8,
+                    bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", lw=0.6))
     fig.suptitle(f"{model} · {FS}  —  5-seed test-fold predictions\n{LABELS_NOTE}", fontsize=12, y=0.995)
     fig.tight_layout(rect=[0, 0, 1, 0.955])
     out = FIG_DIR / f"scatter_{model}_{FS}.png"
@@ -105,6 +111,9 @@ def mae_bar(report):
                 ax.text(x[j] + offset, v + sd + 0.05, f"{v:.2f}",
                         ha="center", va="bottom", fontsize=6.5, rotation=90)
     ax.set_ylim(0, ax.get_ylim()[1] * 1.12)          # headroom for the rotated value labels
+    j = [c for c, _ in CHANNELS].index(DISP)
+    ax.text(x[j], 0.55, DISP_NOTE, ha="center", va="bottom", fontsize=7.5,
+            bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", lw=0.6))
     ax.set_xticks(x)
     ax.set_xticklabels([lbl for _, lbl in CHANNELS], rotation=25, ha="right")
     ax.set_ylabel("test MAE (kcal/mol, mean ± sd over 5 seeds)")

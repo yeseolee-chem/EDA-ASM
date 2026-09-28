@@ -75,7 +75,8 @@
 ## Project overview
 
 EDA (Energy Decomposition Analysis) + ASM (Activation Strain Model)
-proxy prediction of 6-channel decomposed activation energies.
+proxy prediction of 8-channel decomposed activation energies (d1, d2 + 6 EDA
+channels: elst / pauli / oi / disp / cpcm / cds).
 
 **Current status (2026-09-28):** B3LYP-D3(BJ)/def2-TZVP **SMD(water)**
 EDA labels on the Coley 5269 dipolar-cycloaddition dataset are the only
@@ -86,8 +87,9 @@ fragmentation rule. All 5,265 EDA runs were redone in 2026-09 with the
 assembled by **method ①** (d1/d2/eint_spe from the standalone
 `frag*_dist.out`; `bsse_shift_kcal` = eint_spe − e_bond as its own column).
 Repo-root `labels_all.json`: 5,265 records = 5,260 ok + 5 excluded
-(3090/3766/4252 foreign bond; 3400/5783 `oi_dft>0`, a CPCM-era reason that
-no longer holds — pending review). Pipeline, audit and gates:
+(3090/3766/4252 foreign bond; 3400/5783 `no_forming_bond_ts`: both forming
+bonds >= 3.3 A at the TS, while every accepted rxn has its shorter forming bond
+<= 3.18 A). Pipeline, audit and gates:
 `label_true/SMD_RELABEL.md`, rebuild with `label_true/scripts/smd_final_pipeline.sh`.
 Downstream ML: `analysis/espley_xtb_repro/results/SUMMARY.md` (rev 3).
 All prior experiments (789-rxn ADF, 3,504-rxn Bath-1480 tt cohort,

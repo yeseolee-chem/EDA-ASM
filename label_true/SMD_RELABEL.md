@@ -68,7 +68,7 @@ An independent hand recomputation of 36 sample reactions from the raw ORCA files
 - **ok: 5,260.** 167 of them had |Σ6ch − Bond| > 0.02 and were promoted, with `sum_mismatch_promoted` set and the residual kept.
 - **excluded: 5.**
   - 3090, 3766, 4252: `flag_foreign_bond`.
-  - 3400, 5783: `oi_dft>0`. That reason came from the CPCM-era labels; with SMD, oi_dft = −2.84 and −3.07, so `exclusion_note` asks for review.
+  - 3400, 5783: `no_forming_bond_ts`. Both forming bonds are >= 3.3 Å at the TS (3400: 3.63 / 3.65 Å; 5783: 3.34 / 3.56 Å), so it is not a bond-forming cycloaddition TS. Every accepted reaction has its shorter forming bond <= 3.18 Å. The record carries the distances in `exclusion_detail`. The earlier reason (`oi_dft>0`, CPCM-era labels) does not hold with SMD (oi_dft −2.84 / −3.07).
 
 **Other notes:**
 - In 212 reactions the supermolecule energy differs from the old run by up to 1.1e-4 Eh. This is SCF convergence noise, and the new runs are better converged.

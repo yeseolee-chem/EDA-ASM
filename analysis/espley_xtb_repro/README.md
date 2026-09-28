@@ -14,7 +14,7 @@ This reproduces the Espley 2024 protocol (DOI: 10.1039/D4DD00224E) on the Coley 
 - **Headline arm.** **`ESPLEY73` = 41 structural + 5 energies + 8 per-channel calculated values (B_CH8) + 19 auxiliary (AUX19)**.
 - **Reactions.** 5,260 reactions: the `labels_all.json` accepted set minus 5 excluded.
   - 3090, 3766 and 4252: foreign bond.
-  - 3400 and 5783: excluded for `oi_dft > 0` in the CPCM-era labels. With the SMD labels their oi_dft is negative, so the exclusion is pending review.
+  - 3400 and 5783: `no_forming_bond_ts`. Both forming bonds are >= 3.3 Å at the TS (3.63 / 3.65 and 3.34 / 3.56 Å), so these are not bond-forming TSs; every accepted reaction has its shorter forming bond <= 3.18 Å.
 
   The hygiene filter (d1 < 0, d2 < 0, d2 > 50) removes 26 more, which leaves **n = 5,234** for ML.
 

@@ -16,6 +16,7 @@
   - e_bond(= 6채널 합)와 ΔE_int(자기 basis)는 파생값이라 타깃에서 제외. 학습 결과는 `ml_table_espley.csv`에 남아 있고, ΔE_int는 Espley 비교표의 기준선으로만 쓴다.
   - 타깃 12번 `dft_barrier_eda`(= d1 + d2 + e_bond, 방법 ② 혼합량)는 제거하고 그 자리를 `dft_c_ghost_kcal`로 채웠다. c_ghost는 계산 방법이 남긴 흔적(BSSE + cavity)이라 보고 대상이 아니다 → 아래 SI 한 줄.
 - 프로토콜(N1–N3, 5-seed nested CV, y-std)과 행 수 동일: **n = 5,234** (위생 필터 26행 동일).
+- 제외 5 rxn (5,265 → 5,260): 3090 / 3766 / 4252는 foreign bond, 3400 / 5783은 **형성결합 두 개가 모두 ≥ 3.3 Å**(3.63 / 3.65, 3.34 / 3.56 Å)라 결합이 생기는 TS가 아니다 — 수락된 5,260 rxn은 짧은 쪽 형성결합이 모두 ≤ 3.18 Å. (CPCM 시기의 사유 `oi_dft > 0`은 SMD 라벨에서 성립하지 않아 교체.)
 - 그림을 **ESPLEY73, 9 타깃** 기준으로 교체 (`figures/scatter_<model>_ESPLEY73.png` × 4, `figures/mae_bar_espley73.png`). ESPLEY54 그림은 삭제.
 
 ### Headline — `ESPLEY73` + KRR(RBF) (a priori), 5-seed 80/10/10, n = 5,234
@@ -54,7 +55,7 @@
 - **KRR 사전 고정 유지.** 9 타깃 중 KRR이 최적이 아닌 경우와 손실: d2 +0.044 (XGB), disp +0.009 (Ridge, 해석적 등식), d1 +0.003 (SVR), cds +0.000.
 - **Arm ablation (KRR):** barrier 1.68 / 1.50 / 1.45, CPCM 2.93 / 1.18 / 1.01 (46 / 54 / 73).
 - **그룹 분할 robustness** (`group_split.csv`): 같은 파일의 random 열 대비 1.20× 이내 (최대 d2 dipolarophile 분할 1.20×; 헤드라인 5-seed MAE 대비로는 d2 1.22×).
-- **전하별** (`charge_breakdown.csv`, KRR/73): barrier 중성 1.44 vs 하전 1.67 (q2 = +1: 2.81, 5-seed test fold 합집합의 고유 24 rxn), CPCM 중성 0.96 vs 하전 1.81 — 하전 반응이 여전히 약점.
+- **전하별** (`charge_breakdown.csv`, KRR/73): barrier 중성 1.44 vs 하전 1.67 (q2 = +1: 2.81, 5-seed test fold 합집합의 고유 24 rxn), CPCM 중성 0.97 vs 하전 1.81 — 하전 반응이 여전히 약점.
 - **MMP 쌍** (`split_metrics.csv`, random split 1,066 쌍): ΔMAE Pauli 2.54 / elst 1.79 / OI 1.39, dominant-channel 일치 0.826.
 
 ### SI 한 줄 — 8채널 합과 장벽
@@ -139,17 +140,17 @@ rev 2 재학습 후 수치. 각 seed의 자기 train fold 위에서 GridSearchCV
 
 ## 전하 그룹별 test MAE (ESPLEY73 / KRR, rev 3)
 
-n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 기준.
+n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 기준. 표 값은 `charge_breakdown.csv`(소수 넷째 자리)에서 반올림.
 
 | target | all | neutral (n=2044) | charged (n=104) | q₂=−2 (80) | q₂=+1 (24) |
 |---|---:|---:|---:|---:|---:|
 | barrier | 1.45 | 1.44 | 1.67 | 1.36 | 2.81 |
 | d1 | 1.12 | 1.11 | 1.33 | 1.15 | 2.02 |
 | d2 | 0.82 | 0.82 | 0.72 | 0.57 | 1.27 |
-| elst | 1.52 | 1.48 | 2.30 | 1.87 | 3.92 |
+| elst | 1.52 | 1.48 | 2.30 | 1.87 | 3.93 |
 | Pauli | 2.02 | 1.97 | 2.99 | 2.42 | 5.16 |
 | OI | 1.16 | 1.12 | 1.80 | 1.70 | 2.17 |
-| CPCM | 1.00 | 0.96 | 1.81 | 1.74 | 2.05 |
+| CPCM | 1.01 | 0.97 | 1.81 | 1.74 | 2.05 |
 | CDS | 0.23 | 0.23 | 0.20 | 0.15 | 0.36 |
 
 - **rev 2 → rev 3 (charged 그룹):** CPCM 2.56 → 1.81, elst 2.40 → 2.30, OI 1.91 → 1.80, Pauli 3.02 → 2.99. 라벨 교정으로 하전 반응의 용매화 채널이 가장 크게 좋아짐.
@@ -165,7 +166,7 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 | barrier | 1.50 | 1.64 | 1.10 | 1.51 | 1.01 |
 | d1 | 1.12 | 1.09 | 0.97 | 1.11 | 0.99 |
 | d2 | 0.83 | 1.00 | 1.20 | 0.85 | 1.02 |
-| elst | 1.53 | 1.60 | 1.05 | 1.58 | 1.03 |
+| elst | 1.54 | 1.61 | 1.05 | 1.58 | 1.03 |
 | Pauli | 2.06 | 2.10 | 1.02 | 2.08 | 1.01 |
 | OI | 1.18 | 1.15 | 0.97 | 1.15 | 0.97 |
 | CPCM | 1.02 | 1.06 | 1.04 | 1.01 | 0.99 |
@@ -175,10 +176,12 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 
 ## Espley 2024 대비 (ds3 = Coley [3+2] 데이터셋의 3,510 rxn 부분집합)
 
-비교 조건 — Espley 본문·ESI(ChemRxiv v1)와 저자 GitHub(`the-grayson-group/distortion-interaction_ML`)로 2026-09-28 확인. RSC 게재본의 Correction(10.1039/d5dd90005k)은 원문을 읽지 못했다.
+비교 조건 — Espley 본문·ESI(ChemRxiv v1)와 저자 GitHub(`the-grayson-group/distortion-interaction_ML`)로 2026-09-28 확인.
+
+**Correction (10.1039/D5DD90005K, 2025-02-06):** RSC·미러 모두 403이라 원문을 직접 읽지는 못했다. 검색 색인에 잡힌 본문 요약과 직접 확인한 Bath 데이터 아카이브 v2 공지(BATH-01480, 2025-01-31: "correct an error with ts_100_dft.log in the malonate data set")가 일치한다: 데이터 아카이브의 malonate 데이터셋 파일 하나를 바로잡은 것이고, "data, results and conclusions presented in the paper are unaffected". ds3 수치·반응 수·계산 수준은 바뀌지 않는다 (간접 확인).
 
 - **데이터 — 같은 원천의 부분집합.** ds3는 Stuyver/Jorner/Coley 2023의 `coleygroup/dipolar_cycloaddition_dataset`(ESI S1.3), 즉 우리와 같은 원천 데이터다. 논문에는 반응 수가 없고, 저자 GitHub ML 로그 기준 **3,510 rxn**(Coley 5,269의 약 67%, 선별 기준 미기재; test n = 351). 이전 판의 "Bath [3+2] 3,980 rxn"은 틀렸다.
-- **DFT 수준 — 명목상 같음.** ds3의 장벽(ΔE‡, ΔG‡)과 relaxed 반응물 에너지는 Coley 값(B3LYP-D3(BJ)/def2-TZVP//def2-SVP, SMD(water), Gaussian 16)을 그대로 쓰고, 뒤틀린 fragment 단일점만 "같은 수준·같은 용매"로 새로 계산했다(본문 + `get_energies.py`). ESI S3.3 그림 캡션의 "ωB97X-D/def2-TZVP"는 ds3 본문 서술·코드와 맞지 않는다(다른 데이터셋 문구로 보임). 우리 라벨도 Coley 기하 위 B3LYP-D3(BJ)/def2-TZVP SMD(water)라, 차이는 프로그램(Gaussian vs ORCA)과 세부 설정 정도다.
+- **DFT 수준 — 명목상 같음.** ds3의 장벽(ΔE‡, ΔG‡)과 relaxed 반응물 에너지는 Coley 값(B3LYP-D3(BJ)/def2-TZVP//def2-SVP, SMD(water), Gaussian 16)을 그대로 쓰고, 뒤틀린 fragment 단일점만 "같은 수준·같은 용매"로 새로 계산했다(본문 + `get_energies.py`). ESI S3.3 그림 캡션의 "ωB97X-D/def2-TZVP"는 ds3 본문 서술·코드와 맞지 않는다(다른 데이터셋 문구로 보임). Bath 아카이브 메타데이터도 네 데이터셋 전체에 "AM1 // ωB97X-D/def2-TZVP (IEFPCM=Water)"라는 공통 한 줄만 적고 있어, ds3 DFT .log의 route line을 아카이브(`data_archive_files.zip`)에서 직접 확인하면 확정된다. 우리 라벨도 Coley 기하 위 B3LYP-D3(BJ)/def2-TZVP SMD(water)라, 차이는 프로그램(Gaussian vs ORCA)과 세부 설정 정도다.
 - **상호작용 정의 — 같음.** Espley는 ΔE_int = ΔE‡ − ΣΔE_dist(counterpoise 없음, EDA 없음)로, 우리 ΔE_int(자기 basis)와 같은 정의다. 그래서 이 표에서만 ΔE_int를 기준선으로 쓴다.
 - **반경험 feature — 다름.** Espley는 AM1(Gaussian 16, 암시적 용매) 46개 수동 선택 feature, 모델은 SVR(RBF). AM1 기하를 재최적화했는지는 본문에 없다(코드상 AM1 opt+freq로 추정). 우리는 DFT TS 기하 위 GFN2-xTB/ALPB 단일점(성능 상한).
 - **오차 막대 — 다름.** Espley의 ±는 test set 안 |오차|의 표준오차(seed 평균), 우리의 ±는 seed 간 sd라 직접 비교할 수 없다. %range가 그나마 공정하다.
@@ -287,7 +290,7 @@ S1 / S3+S8 / S5 / S9는 rev 3 라벨·결과로 갱신했다 (원본: `split_met
 
 관찰:
 1. **`dipole_class` 골격 외삽에서 dom_agree가 0.826 → 0.749로 하락, ΔMAE Pauli가 2.54 → 3.99 (×1.57)**. 랜덤 분할이 성능을 낙관적으로 표시함이 정량 확인됨.
-2. LOSO(치환기 홀드아웃)는 예상보다 견고. dom_agree 0.82–0.89로 random과 비슷하거나 오히려 나음. Espley 논문의 "새 치환기 일반화" 주장은 이 데이터에서도 재현됨.
+2. **LOSO(치환기 홀드아웃)는 예상보다 견고** — 우리 결과: 치환기 하나를 통째로 뺀 10개 분할 모두 dom_agree 0.82–0.89로 random(0.826)과 비슷하거나 오히려 높다. 이 데이터에서는 새 치환기로의 외삽이 골격 외삽(dipole_class 0.749)보다 훨씬 쉽다. (이전 판은 이를 Espley 논문 주장의 재현으로 적었으나 오기 — Espley는 [3+2]에서 그런 주장을 하지 않았고, 외부 검증은 Diels-Alder 문헌 두 세트에서만 했다.)
 3. **dipole_class 분할에서 τ₉₉는 미달** — τ = 8.0에서도 agreement 0.977. 골격 외삽은 99%로는 안전하지 않음.
 4. rev 2 대비 CPCM ΔMAE가 전 분할에서 크게 감소 (random 1.62 → 1.12) — 라벨 교정 효과.
 
