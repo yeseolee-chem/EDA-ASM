@@ -176,14 +176,14 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 
 ## Espley 2024 대비 (ds3 = Coley [3+2] 데이터셋의 3,510 rxn 부분집합)
 
-비교 조건 — Espley 본문·ESI(ChemRxiv v1)와 저자 GitHub(`the-grayson-group/distortion-interaction_ML`)로 2026-09-28 확인.
+비교 조건 — Espley 본문·ESI(ChemRxiv v1), 저자 GitHub(`the-grayson-group/distortion-interaction_ML`), 그리고 **Bath 데이터 아카이브 BATH-01480 v2의 실제 계산 파일**로 확인 (2026-09-28/29). 아카이브(`data_archive_files.zip`, 4.3 GB, 61,267 파일)는 HTTP range 요청으로 목록과 ds3 로그만 받아 Gaussian route line을 읽었다.
 
-**Correction (10.1039/D5DD90005K, 2025-02-06):** RSC·미러 모두 403이라 원문을 직접 읽지는 못했다. 검색 색인에 잡힌 본문 요약과 직접 확인한 Bath 데이터 아카이브 v2 공지(BATH-01480, 2025-01-31: "correct an error with ts_100_dft.log in the malonate data set")가 일치한다: 데이터 아카이브의 malonate 데이터셋 파일 하나를 바로잡은 것이고, "data, results and conclusions presented in the paper are unaffected". ds3 수치·반응 수·계산 수준은 바뀌지 않는다 (간접 확인).
+**Correction (10.1039/D5DD90005K, 2025-02-06):** RSC·미러 모두 403이라 원문을 직접 읽지는 못했다. 검색 색인에 잡힌 본문 요약과 직접 확인한 Bath 아카이브 v2 공지(2025-01-31: "correct an error with ts_100_dft.log in the malonate data set")가 일치한다: 데이터 아카이브의 malonate 데이터셋 파일 하나를 바로잡은 것이고, "data, results and conclusions presented in the paper are unaffected". ds3 수치·반응 수·계산 수준은 바뀌지 않는다.
 
-- **데이터 — 같은 원천의 부분집합.** ds3는 Stuyver/Jorner/Coley 2023의 `coleygroup/dipolar_cycloaddition_dataset`(ESI S1.3), 즉 우리와 같은 원천 데이터다. 논문에는 반응 수가 없고, 저자 GitHub ML 로그 기준 **3,510 rxn**(Coley 5,269의 약 67%, 선별 기준 미기재; test n = 351). 이전 판의 "Bath [3+2] 3,980 rxn"은 틀렸다.
-- **DFT 수준 — 명목상 같음.** ds3의 장벽(ΔE‡, ΔG‡)과 relaxed 반응물 에너지는 Coley 값(B3LYP-D3(BJ)/def2-TZVP//def2-SVP, SMD(water), Gaussian 16)을 그대로 쓰고, 뒤틀린 fragment 단일점만 "같은 수준·같은 용매"로 새로 계산했다(본문 + `get_energies.py`). ESI S3.3 그림 캡션의 "ωB97X-D/def2-TZVP"는 ds3 본문 서술·코드와 맞지 않는다(다른 데이터셋 문구로 보임). Bath 아카이브 메타데이터도 네 데이터셋 전체에 "AM1 // ωB97X-D/def2-TZVP (IEFPCM=Water)"라는 공통 한 줄만 적고 있어, ds3 DFT .log의 route line을 아카이브(`data_archive_files.zip`)에서 직접 확인하면 확정된다. 우리 라벨도 Coley 기하 위 B3LYP-D3(BJ)/def2-TZVP SMD(water)라, 차이는 프로그램(Gaussian vs ORCA)과 세부 설정 정도다.
+- **데이터 — 같은 원천의 부분집합.** ds3는 Stuyver/Jorner/Coley 2023의 `coleygroup/dipolar_cycloaddition_dataset`(ESI S1.3), 즉 우리와 같은 원천 데이터다. 논문에는 반응 수가 없다. 아카이브의 `three_two_cycloaddition/`에는 DFT fragment 단일점이 **3,979 TS**(이전 판 "3,980"의 출처), AM1 TS 최적화가 3,663 TS 있고, 최종 ML 세트는 저자 GitHub 로그 기준 **3,510 rxn**(Coley 5,269의 약 67%, 선별 기준 미기재; test n = 351). 이전 판의 "Bath [3+2] 3,980 rxn"은 틀렸다.
+- **DFT 수준 — 같음 (아카이브로 확정).** ds3의 장벽(ΔE‡, ΔG‡)과 relaxed 반응물 에너지는 Coley 값(B3LYP-D3(BJ)/def2-TZVP//def2-SVP, SMD(water), Gaussian 16)을 그대로 쓰고(`get_energies.py`), 새로 계산한 것은 뒤틀린 fragment 단일점뿐이다. 그 단일점의 route line은 `# b3lyp def2tzvp EmpiricalDispersion=GD3BJ scrf=(smd,solvent=water)` (Gaussian 16 C.01; `splits/dft/ts_{0,100,1500,2900}_reactant_*_SPE.log` 표본 4개 모두 동일, 정상 종료, ωB97X 0건) — 즉 **B3LYP-D3(BJ)/def2-TZVP SMD(water)**. ESI S3.3 그림 캡션과 아카이브 메타데이터의 "ωB97X-D/def2-TZVP (IEFPCM=Water)"는 ds3에 해당하지 않는다(다른 데이터셋 문구). 우리 라벨도 Coley 기하 위 B3LYP-D3(BJ)/def2-TZVP SMD(water)라, 차이는 프로그램(Gaussian vs ORCA)과 세부 설정 정도다.
 - **상호작용 정의 — 같음.** Espley는 ΔE_int = ΔE‡ − ΣΔE_dist(counterpoise 없음, EDA 없음)로, 우리 ΔE_int(자기 basis)와 같은 정의다. 그래서 이 표에서만 ΔE_int를 기준선으로 쓴다.
-- **반경험 feature — 다름.** Espley는 AM1(Gaussian 16, 암시적 용매) 46개 수동 선택 feature, 모델은 SVR(RBF). AM1 기하를 재최적화했는지는 본문에 없다(코드상 AM1 opt+freq로 추정). 우리는 DFT TS 기하 위 GFN2-xTB/ALPB 단일점(성능 상한).
+- **반경험 feature — 다름.** Espley는 AM1 46개 수동 선택 feature, 모델은 SVR(RBF). AM1 기하는 **AM1로 재최적화** (아카이브로 확정: TS `# am1 opt=(calcfc,ts,noeigen,maxcycles=80,maxstep=3) freq=noraman scrf=(smd,solvent=water)`, GS `# am1 opt=(calcfc,...) freq scrf=(smd,solvent=water)`, 뒤틀린 fragment는 AM1 freq 단일점) — 용매 모델은 IEFPCM이 아니라 SMD(water). 우리는 DFT TS 기하 위 GFN2-xTB/ALPB 단일점(성능 상한).
 - **오차 막대 — 다름.** Espley의 ±는 test set 안 |오차|의 표준오차(seed 평균), 우리의 ±는 seed 간 sd라 직접 비교할 수 없다. %range가 그나마 공정하다.
 
 | 양 | Espley pre-ML AM1 | Espley SVR test MAE ± SE (%range) | 이번 pre-ML GFN2/ALPB | 이번 KRR test MAE ± sd (%range) [SVR] |
