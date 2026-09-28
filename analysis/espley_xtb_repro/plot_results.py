@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """plot_results.py — scatter (per-model) + MAE bar (combined).
 
-Only ESPLEY54 feature set (E5 removed). 8 b^ch channels shown.
+One feature set (ESPLEY_PLOT_FS, default 73 = ESPLEY73), all 12 targets:
+barrier, the ASM terms (d1, d2, eint_spe), e_bond and its 6 EDA channels, and
+c_ghost (barrier = d1 + d2 + e_bond + c_ghost, method ①).
 
-Outputs (in <ROOT>/figures/):
-    scatter_<model>_ESPLEY54.png   × 4 models (Ridge/KRR/SVR/XGB)
-    mae_bar_espley54.png           — grouped bars: 8 channels × 4 models
+Outputs (in <ROOT>/figures/; existing PNGs there are removed first):
+    scatter_<model>_ESPLEY<fs>.png   × 4 models (Ridge/KRR/SVR/XGB)
+    mae_bar_espley<fs>.png           — grouped bars: 12 targets × 4 models
 """
 from __future__ import annotations
 
@@ -24,24 +26,30 @@ FIG_DIR = ROOT / "figures"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 CHANNELS = [
-    ("dft_d1_kcal",   "strain_1 (dipole)"),
-    ("dft_d2_kcal",   "strain_2 (dipolarophile)"),
-    ("dft_elst_dft",  "elst"),
-    ("dft_pauli_dft", "Pauli"),
-    ("dft_oi_dft",    "OI"),
-    ("dft_disp_dft",  "disp"),
-    ("dft_cpcm_dft",  "CPCM"),
-    ("dft_cds_dft",   "CDS"),
+    ("dft_barrier_kcal",  "barrier"),
+    ("dft_d1_kcal",       "strain_1 (dipole)"),
+    ("dft_d2_kcal",       "strain_2 (dipolarophile)"),
+    ("dft_eint_spe_kcal", "E_int (own basis)"),
+    ("dft_e_bond_kcal",   "E_bond (EDA)"),
+    ("dft_elst_dft",      "elst"),
+    ("dft_pauli_dft",     "Pauli"),
+    ("dft_oi_dft",        "OI"),
+    ("dft_disp_dft",      "disp"),
+    ("dft_cpcm_dft",      "CPCM"),
+    ("dft_cds_dft",       "CDS"),
+    ("dft_c_ghost_kcal",  "c_ghost (BSSE+cavity)"),
 ]
 MODELS = ["Ridge", "KRR_rbf", "SVR_rbf", "XGB"]
 MODEL_COLORS = {"Ridge": "#4C72B0", "KRR_rbf": "#DD8452",
                 "SVR_rbf": "#55A868", "XGB": "#C44E52"}
-N_FEATS = 54   # ESPLEY54 only
+N_FEATS = int(os.environ.get("ESPLEY_PLOT_FS", "73"))
+FS = f"ESPLEY{N_FEATS}"
+LABELS_NOTE = "labels: SMD(water) relabel, method ① (d1/d2 from own-basis fragments)"
 
 
 def scatter_one(preds, model):
     sub = preds[(preds["model"] == model) & (preds["feature_set"] == N_FEATS)]
-    fig, axes = plt.subplots(2, 4, figsize=(14, 7))
+    fig, axes = plt.subplots(3, 4, figsize=(15, 11))
     for k, (col, label) in enumerate(CHANNELS):
         ax = axes.flat[k]
         s = sub[sub["target"] == col]
@@ -64,25 +72,25 @@ def scatter_one(preds, model):
         ax.set_xlabel("actual (kcal/mol)"); ax.set_ylabel("predicted")
         ax.tick_params(labelsize=8)
         ax.grid(alpha=0.25)
-    fig.suptitle(f"{model} · ESPLEY54  —  5-seed test-fold predictions", fontsize=13, y=0.995)
-    fig.tight_layout(rect=[0, 0, 1, 0.965])
-    out = FIG_DIR / f"scatter_{model}_ESPLEY54.png"
+    fig.suptitle(f"{model} · {FS}  —  5-seed test-fold predictions\n{LABELS_NOTE}", fontsize=12, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.955])
+    out = FIG_DIR / f"scatter_{model}_{FS}.png"
     fig.savefig(out, dpi=140)
     plt.close(fig)
     return out
 
 
 def mae_bar(report):
-    """Grouped bar: 8 channels (x) × 4 models (bars). Uses Protocol A test_mae from ml_report.json."""
+    """Grouped bar: 12 targets (x) × 4 models (bars). Uses Protocol A test_mae from ml_report.json."""
     per_t = report["per_target"]
-    fig, ax = plt.subplots(figsize=(13, 6))
+    fig, ax = plt.subplots(figsize=(16, 6.5))
     x = np.arange(len(CHANNELS))
     w = 0.20
     for i_m, m in enumerate(MODELS):
         maes = []
         sds = []
         for col, _ in CHANNELS:
-            A = per_t.get(col, {}).get("protocol_A", {}).get("ESPLEY54", {})
+            A = per_t.get(col, {}).get("protocol_A", {}).get(FS, {})
             r = A.get(m)
             if r is None:
                 maes.append(np.nan); sds.append(0)
@@ -95,15 +103,16 @@ def mae_bar(report):
         for j, (v, sd) in enumerate(zip(maes, sds)):
             if np.isfinite(v):
                 ax.text(x[j] + offset, v + sd + 0.05, f"{v:.2f}",
-                        ha="center", fontsize=7, rotation=0)
+                        ha="center", va="bottom", fontsize=6.5, rotation=90)
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.12)          # headroom for the rotated value labels
     ax.set_xticks(x)
     ax.set_xticklabels([lbl for _, lbl in CHANNELS], rotation=25, ha="right")
     ax.set_ylabel("test MAE (kcal/mol, mean ± sd over 5 seeds)")
-    ax.set_title("ESPLEY54  ·  Per-channel test MAE  ·  4 models")
+    ax.set_title(f"{FS}  ·  Per-target test MAE (Protocol A)  ·  4 models\n{LABELS_NOTE}", fontsize=11)
     ax.grid(axis="y", alpha=0.3)
-    ax.legend(loc="upper left", ncol=4)
+    ax.legend(loc="upper right", ncol=4)
     fig.tight_layout()
-    out = FIG_DIR / "mae_bar_espley54.png"
+    out = FIG_DIR / f"mae_bar_{FS.lower()}.png"
     fig.savefig(out, dpi=140)
     plt.close(fig)
     return out

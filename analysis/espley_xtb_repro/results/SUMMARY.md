@@ -1,9 +1,74 @@
-# espley_xtb_repro — final results (2026-09-15, rev 2)
+# espley_xtb_repro — final results (2026-09-28, rev 3)
 
 **Espley 2024 (D4DD00224E) protocol reproduced on Coley 5,260 rxns with GFN2-xTB / ALPB water.**
 
 > 2026-09-15 rev 1: FIXES.md audit (S1/S3/S5/S8/S9). See §Audit.
-> 2026-09-15 rev 2: **B2 + N1–N3 재학습**. `dft_barrier_eda`(8-채널 닫힌 총량) 추가, KRR 격자 α[1e-5..1] γ[3e-4..1] 확장, TransformedTargetRegressor(StandardScaler)로 y 표준화, per-seed nested CV, 위생 필터(d1<0/d2<0/d2>50) 26행 제외, `is_charged` AUX 편입 → **ESPLEY73**. 아래 표는 rev 2 결과.
+> 2026-09-15 rev 2: **B2 + N1–N3 재학습**. `dft_barrier_eda`(8-채널 닫힌 총량) 추가, KRR 격자 α[1e-5..1] γ[3e-4..1] 확장, TransformedTargetRegressor(StandardScaler)로 y 표준화, per-seed nested CV, 위생 필터(d1<0/d2<0/d2>50) 26행 제외, `is_charged` AUX 편입 → **ESPLEY73**.
+> 2026-09-28 rev 3: **SMD 재계산 라벨 + 방법 ① 조립으로 재학습.** 타깃 12번 `dft_barrier_eda` → `dft_c_ghost_kcal`. xTB 재계산 없음. 아래 §Rev 3가 현재 결과이며, 그 아래 rev 2 절들은 이력으로 남긴다.
+
+## Rev 3 (2026-09-28) — SMD relabel, method ① labels
+
+### 바뀐 것
+
+- **라벨.** repo 루트 `labels_all.json`을 2026-09-28 재생성. 5,265 반응의 EDA를 모두 `SMD(water)` 키워드(헤더 + FRAG1/FRAG2 문자열)로 재계산해 ORCA 내부 fragment SCF(`eda_frag*.out`)에도 SMD-CDS가 들어가도록 했고, **방법 ①**로 조립했다: d1/d2/eint_spe는 자기 basis의 단독 `frag*_dist.out` 기준(순수 변형 에너지), ORCA Bond Energy와 6채널은 `eda_frag*.out`(ghost basis, AB cavity) 기준, 둘의 차이는 별도 열 `c_ghost = eint_spe − e_bond`. 전수검사(파일/입력/SMD 통일/3 게이트) 통과 — `label_true/scripts/smd_final_pipeline.sh`.
+- **타깃만 교체, xTB 재계산 없음** (`refresh_targets.py`). 변화: d1, d2, disp, cds는 0행; **cpcm, e_bond, elst, oi, pauli는 5,260행 전부** (max |Δ| 38.3 / 15.6 / 24.4 / 11.3 / 2.8 kcal/mol); barrier, eint_spe는 2,978행이 SCF 수렴 수준(max 0.068)으로만 변함.
+- **타깃 12번:** `dft_barrier_eda`(= d1 + d2 + e_bond, 방법 ② 혼합량) 제거 → **`dft_c_ghost_kcal`**. barrier = d1 + d2 + e_bond + c_ghost (정확). c_ghost = ghost-basis BSSE + AB-cavity 용매화 차이, 평균 +0.10, sd 0.77 kcal/mol.
+- 프로토콜(N1–N3, 5-seed nested CV, y-std)과 행 수 동일: **n = 5,234** (위생 필터 26행 동일).
+- 그림을 **ESPLEY73, 12 타깃** 기준으로 교체 (`figures/scatter_<model>_ESPLEY73.png` × 4, `figures/mae_bar_espley73.png`). ESPLEY54 그림은 삭제.
+
+### Headline — `ESPLEY73` + KRR(RBF) (a priori), 5-seed 80/10/10, n = 5,234
+
+| Target | test MAE ± sd | NMAE | r² | % of range | group-split MAE (dph / dip) | rev 2 MAE |
+|---|---:|---:|---:|---:|---:|---:|
+| ΔE‡ (barrier) | **1.45 ± 0.05** | 0.201 | 0.956 | 2.46 | 1.64 / 1.51 | 1.45 |
+| d1 (dipole strain) | 1.12 ± 0.03 | 0.187 | 0.960 | 2.31 | 1.09 / 1.11 | 1.12 |
+| d2 (dipolarophile strain) | 0.82 ± 0.02 | 0.170 | 0.966 | 1.93 | 1.00 / 0.85 | 0.82 |
+| ΔE_int (own basis) | 0.77 ± 0.03 | 0.156 | 0.971 | 1.93 | 0.83 / 0.84 | 0.77 |
+| Bond E (EDA) | **0.82 ± 0.04** | 0.162 | 0.968 | 2.13 | 0.86 / 0.88 | 1.17 |
+| elst | **1.52 ± 0.04** | 0.111 | 0.985 | 1.40 | 1.61 / 1.58 | 1.62 |
+| Pauli | 2.02 ± 0.08 | 0.078 | 0.992 | 0.96 | 2.10 / 2.08 | 2.00 |
+| OI | **1.16 ± 0.05** | 0.074 | 0.993 | 0.92 | 1.15 / 1.15 | 1.23 |
+| CPCM | **1.01 ± 0.02** | 0.251 | 0.945 | 1.81 | 1.06 / 1.01 | 1.46 |
+| CDS | 0.23 ± 0.01 | 0.342 | 0.879 | 3.38 | 0.26 / 0.24 | 0.23 |
+| c_ghost (신규) | 0.27 ± 0.01 | 0.479 | 0.754 | 4.28 | 0.30 / 0.28 | — |
+| *disp* | *0.01 (b_disp와 해석적 등식)* | — | 1.000 | — | — | 0.01 |
+
+### 4개 모델 — Protocol A, `ESPLEY73`, test MAE (kcal/mol), rev 3 [rev 2]
+
+| Target | Ridge | KRR | SVR | XGB |
+|---|---:|---:|---:|---:|
+| barrier | 1.93 [1.93] | **1.45** [1.45] | 1.48 [1.48] | 1.75 [1.77] |
+| d1 | 1.41 [1.41] | 1.12 [1.12] | **1.12** [1.12] | 1.18 [1.18] |
+| d2 | 1.05 [1.05] | 0.82 [0.82] | 0.81 [0.81] | **0.77** [0.77] |
+| eint_spe | 1.18 [1.18] | 0.77 [0.77] | **0.77** [0.77] | 1.02 [1.02] |
+| e_bond | 1.26 [1.61] | **0.82** [1.17] | 0.82 [1.18] | 1.06 [1.42] |
+| elst | 2.48 [2.62] | **1.52** [1.62] | 1.55 [1.65] | 2.25 [2.41] |
+| Pauli | 3.93 [3.90] | **2.02** [2.00] | 2.18 [2.17] | 3.19 [3.18] |
+| OI | 1.98 [2.03] | **1.16** [1.23] | 1.23 [1.28] | 1.93 [1.99] |
+| CPCM | 1.33 [1.96] | **1.01** [1.46] | 1.02 [1.46] | 1.23 [1.67] |
+| CDS | 0.35 [0.35] | 0.23 [0.23] | **0.23** [0.23] | 0.26 [0.26] |
+| c_ghost | 0.38 [—] | 0.27 [—] | **0.27** [—] | 0.29 [—] |
+| disp | **0.00** [0.00] | 0.01 [0.01] | 0.11 [0.11] | 0.04 [0.04] |
+
+전체 324행(12 target × 3 arm × 9 model, Protocol A + B)은 `ml_table_espley.csv`, rev 2 대비 열은 `rev3_vs_rev2.csv`.
+
+### 관찰
+
+- **라벨이 바뀐 채널에서만 변화, 전부 개선 또는 동일.** CPCM 1.46 → **1.01** (−31%, r² 0.894 → 0.945, NMAE 0.339 → 0.251), Bond E 1.17 → **0.82** (−30%), elst 1.62 → 1.52 (−6%), OI 1.23 → 1.16 (−6%), Pauli 2.00 → 2.02 (±1%). 라벨이 (거의) 같은 barrier / d1 / d2 / eint_spe / disp / cds는 KRR 기준 소수 셋째 자리까지 rev 2와 동일, 다른 모델은 ±0.03 이내 (예: XGB barrier 1.77 → 1.75) — 파이프라인 재현성 확인.
+- **KRR 사전 고정 유지.** `ESPLEY73`에서 KRR이 최적이 아닌 타깃과 최적 대비 손실: d2 +0.044 (XGB), disp +0.009 (Ridge, 해석적 등식), d1 +0.003 (SVR), c_ghost +0.002 (SVR), cds/eint_spe +0.000.
+- **c_ghost는 상대적으로 가장 예측이 어려운 타깃** (NMAE 0.48, r² 0.75): 절대 오차는 작지만(0.27) 분포 폭도 작다. arm별 KRR MAE 0.39 (46) → 0.32 (54) → 0.27 (73), AUX 블록 기여가 크다.
+- **Arm ablation (KRR):** barrier 1.68 / 1.50 / 1.45, Bond E 1.23 / 0.89 / 0.82, CPCM 2.93 / 1.18 / 1.01 (46 / 54 / 73).
+- **그룹 분할 robustness** (`group_split.csv`): 같은 파일의 random 열 대비 1.20× 이내 (최대 d2 dipolarophile 분할 1.20×, c_ghost 1.09×; 헤드라인 5-seed MAE 대비로는 d2 1.22×).
+- **전하별** (`charge_breakdown.csv`, KRR/73): barrier 중성 1.44 vs 하전 1.67 (q2 = +1: 2.82, 5-seed test fold 합집합의 고유 24 rxn), CPCM 중성 0.97 vs 하전 1.81 — 하전 반응이 여전히 약점.
+- **MMP 쌍** (`split_metrics.csv`, random split 1,066 쌍): ΔMAE pauli 2.55 / elst 1.79 / OI 1.39, dominant-channel 일치 0.826.
+
+### Rev 3 파일
+
+`ml_report.json`, `ml_table_espley.csv`, `rev3_vs_rev2.csv` (신규), `predictions.parquet`, `xtb_features.parquet` (dft_* 교체본), `ml_targets/target_00…11_*.json` (11 = `dft_c_ghost_kcal`), `figures/*ESPLEY73*.png`, `charge_breakdown.csv`, `group_split.csv`, `split_metrics.csv`, `margin_calibration.csv`, `mmp_pairs_v2.csv`. `verify_s1s5.json`은 rev 1/2 검증 기록.
+
+---
+
+아래는 **rev 2 (2026-09-15) 기록** — CPCM 시기 채널 라벨 기준, rev 3로 대체됨. 방법·feature 블록·게이트 설명은 rev 3에도 그대로 적용된다 (G3의 derived 열만 rev 3에서 `dft_c_ghost_kcal`, `is_charged`).
 
 ## Method (one-line)
 
@@ -35,7 +100,7 @@ Single engine: **xtb 6.7.1 binary**, one GFN2-xTB / ALPB(water) single point per
 
 **Ridge / SVR / XGB의 결과는 `ml_table_espley.csv`에 전부 기록** (324 행: 12 target × 3 arm × 9 model).
 
-## Final headline model — **`ESPLEY73` + KRR(RBF), 5-seed 80/10/10 (nested CV, y-std)**
+## (rev 2, superseded by §Rev 3) Final headline model — **`ESPLEY73` + KRR(RBF), 5-seed 80/10/10 (nested CV, y-std)**
 
 rev 2 재학습 후 수치. 각 seed의 자기 train fold 위에서 GridSearchCV(5-fold)를 별도로 실행 (seed 23 단일 튜닝 leak 제거), KRR α∈[1e-5..1] γ∈[3e-4..1] 격자, TransformedTargetRegressor(StandardScaler)로 y 표준화. n=5,234.
 
@@ -138,10 +203,11 @@ rev 2 재학습 후 수치. 각 seed의 자기 train fold 위에서 GridSearchCV
 ## 산출물 (`results/`)
 
 - `SUMMARY.md` — 이 문서
-- `ml_report.json` — 11 target × 3 arm × (Protocol A 4 + Protocol B 5) 전 metric (NMAE, pre_ml_r 포함)
-- `ml_table_espley.csv` — 297 행
-- `predictions.parquet` — 3.7 MB, 5-seed 폴드 예측
-- `xtb_features.parquet` — 3.6 MB, 5,260 rxn × 72 feature + 11 target + 메타
+- `ml_report.json` — 12 target × 3 arm × (Protocol A 4 + Protocol B 5) 전 metric (NMAE, pre_ml_r 포함; rev 3)
+- `ml_table_espley.csv` — 324 행 (rev 3)
+- `rev3_vs_rev2.csv` — rev 3 표에 rev 2 test MAE / r² 열을 붙인 비교표
+- `predictions.parquet` — 5-seed 폴드 예측
+- `xtb_features.parquet` — 5,260 rxn × feature + 12 target(`dft_*`, rev 3 라벨) + 메타
 - `ml_targets/` — target당 JSON (병렬 array 원본)
 - `charge_breakdown.csv` — 전하 그룹별 test MAE (ESPLEY73 / KRR)
 - `group_split.csv` — 반응물 그룹 홀드아웃 robustness (동일)
@@ -149,9 +215,9 @@ rev 2 재학습 후 수치. 각 seed의 자기 train fold 위에서 GridSearchCV
 - `margin_calibration.csv` — 예측 margin τ에 따른 coverage / agreement 곡선 (§Audit S9)
 - `mmp_pairs_v2.csv` — 5,209 MMP 페어 (r1, r2, kind, sub_from, sub_to)
 - `verify_s1s5.json` — S1(gap statistics) + S5(flag counts) 원본 수치
-- `figures/` (ESPLEY54 기준, rev 2 재생성):
-  - `scatter_Ridge/KRR_rbf/SVR_rbf/XGB_ESPLEY54.png` — 8-패널 산점도
-  - `mae_bar_espley54.png` — 8 채널 × 4 모델 grouped bar
+- `figures/` (ESPLEY73 기준, rev 3):
+  - `scatter_Ridge/KRR_rbf/SVR_rbf/XGB_ESPLEY73.png` — 12-패널 산점도 (12 target)
+  - `mae_bar_espley73.png` — 12 target × 4 모델 grouped bar
 
 ## 재현
 
@@ -162,7 +228,11 @@ sbatch                            analysis/espley_xtb_repro/s03_ml_array.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s04_aggregate_ml.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s05_plot.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s06_analyze_extra.sh
+sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s07_evaluate_pairs.sh    # outputs to CWD -> move into results/
 ```
+
+라벨만 바뀐 경우(rev 3처럼)는 s01/s02 대신 타깃만 교체한다:
+`python refresh_targets.py labels_all.json <ROOT>/xtb_features.parquet <ROOT>/xtb_features.parquet` (sbatch로 실행) → s03 smoketest → s03_ml_array → s04 → s05 → s06/s07.
 
 Prerequisites: xtb 6.7.1 in `/home1/yeseo1ee/xtb-dist/`, `reactot` env with dftd3 + morfeus-ml + xgboost, `labels_all.json` (5,265 records, 5,260 accepted).
 

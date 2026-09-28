@@ -64,13 +64,13 @@ FEATURE_SETS = {"ESPLEY46": ESPLEY46, "ESPLEY54": ESPLEY54, "ESPLEY73": ESPLEY73
 
 TARGETS = ["dft_barrier_kcal", "dft_d1_kcal", "dft_d2_kcal", "dft_eint_spe_kcal", "dft_e_bond_kcal",
            "dft_elst_dft", "dft_pauli_dft", "dft_oi_dft", "dft_disp_dft", "dft_cpcm_dft", "dft_cds_dft",
-           "dft_barrier_eda"]                    # B2: 8-channel closed total
+           "dft_c_ghost_kcal"]                   # 9th term: barrier = d1 + d2 + e_bond + c_ghost (method ①)
 PRE_ML = {"dft_barrier_kcal": "xtb_e_barrier_kcal", "dft_d1_kcal": "xtb_dist_dipole_kcal",
           "dft_d2_kcal": "xtb_dist_dipolarophile_kcal", "dft_eint_spe_kcal": "xtb_interaction_kcal",
           "dft_e_bond_kcal": "xtb_interaction_kcal",
           "dft_elst_dft": "b_elst", "dft_pauli_dft": "b_pauli", "dft_oi_dft": "b_oi",
           "dft_disp_dft": "b_disp", "dft_cpcm_dft": "b_cpcm", "dft_cds_dft": "b_cds",
-          "dft_barrier_eda": "xtb_e_barrier_kcal"}
+          }
 SEEDS = [22, 23, 14, 1, 2]
 TUNE_SEED = 23                                    # kept only for record; N3 nested CV tunes per seed
 

@@ -19,7 +19,7 @@ for name, (est, grid) in GRIDS.items():
     print(f'{name}: unknown grid keys = {missing}')
 import pandas as pd
 df = pd.read_parquet('/gpfs/tmp_cpu2/yeseo1ee/espley_xtb/xtb_features.parquet')
-must = {'dft_barrier_eda','dft_bsse_gap','is_charged'}
+must = {'dft_c_ghost_kcal','is_charged'}
 missing_cols = must - set(df.columns)
 print(f'derived-cols missing in parquet: {missing_cols}')
 print(f'is_charged sum: {int(df.is_charged.sum())}')

@@ -20,18 +20,20 @@ def main():
     if len(df) != N_EXPECTED or df.rxn_id.nunique() != N_EXPECTED:
         sys.exit(f"GATE: expected {N_EXPECTED} unique rxns, got {len(df)} rows / {df.rxn_id.nunique()} unique")
 
-    df["dft_barrier_eda"] = df["dft_d1_kcal"] + df["dft_d2_kcal"] + df["dft_e_bond_kcal"]
-    df["dft_bsse_gap"] = df["dft_barrier_kcal"] - df["dft_barrier_eda"]
+    # c_ghost = ghost-reference correction (BSSE + cavity) = ghost − own-basis = −(e_bond − eint_spe).
+    # Closed budget (method ①): barrier = d1 + d2 + e_bond + c_ghost  (exact).
+    # d1 + d2 + e_bond alone mixes two reference frames (method ②) — NOT a barrier target.
+    df["dft_c_ghost_kcal"] = df["dft_barrier_kcal"] - (df["dft_d1_kcal"] + df["dft_d2_kcal"] + df["dft_e_bond_kcal"])
     df["is_charged"] = (df["charge2"].fillna(0).astype(int) != 0).astype(int)
 
     ok_mask = df["xtb_status"] == "ok"
-    for col in ("dft_barrier_eda", "dft_bsse_gap"):
+    for col in ("dft_c_ghost_kcal",):
         nan_ok = int(df.loc[ok_mask, col].isna().sum())
         if nan_ok:
             sys.exit(f"GATE: derived column {col} has {nan_ok} NaN in ok rows")
-    gap_mean = float(df.loc[ok_mask, "dft_bsse_gap"].mean())
-    gap_sd = float(df.loc[ok_mask, "dft_bsse_gap"].std())
-    print(f"derived: dft_barrier_eda / dft_bsse_gap (mean {gap_mean:+.3f}, sd {gap_sd:.3f}) / is_charged  ({int(df.is_charged.sum())} rxns)")
+    gap_mean = float(df.loc[ok_mask, "dft_c_ghost_kcal"].mean())
+    gap_sd = float(df.loc[ok_mask, "dft_c_ghost_kcal"].std())
+    print(f"derived: dft_c_ghost_kcal (mean {gap_mean:+.3f}, sd {gap_sd:.3f}) / is_charged  ({int(df.is_charged.sum())} rxns)")
 
     df.to_parquet(OUT, index=False)
     st = dict(df["xtb_status"].value_counts())
