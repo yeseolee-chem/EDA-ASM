@@ -28,23 +28,30 @@ Channel convention (identical to the repo / phase5 labels):
 All values are taken from the Hartree column and converted with 627.5094740631.
 The raw 8 table entries are also stored (eda_raw_eh) for auditing.
 
-Fragment reference convention (BSSE-consistent, 2026-09-15 fix):
-    e_frag1_dist_eh, e_frag2_dist_eh are taken from **eda_frag1.out** and
-    **eda_frag2.out** — ORCA's internal fragment SPEs with ghost basis
-    (counterpoise) from the other fragment. This matches the reference
-    state that ORCA EDA-NOCV uses when producing the 6-channel decomposition
-    and Bond Energy, so:
-        eint_spe = (e_ab - e_frag1_dist - e_frag2_dist) * EH_TO_KCAL == e_bond_kcal
-        d1 + d2 + eint_spe == barrier (ASM identity, exact)
-        d1 + d2 + Σ(6 channels) == barrier (channel sum closure, exact)
-    The old convention used the standalone frag*_dist.out SCFs (no ghost)
-    which produced a systematic 3–8 kcal/mol gap between eint_spe and e_bond
-    (BSSE). Standalone values are retained in the record for provenance under
-    e_frag{1,2}_dist_standalone_eh.
+Fragment reference convention (2026-09-28, option ①):
+    d1/d2 and eint_spe use the standalone distorted-fragment SPEs
+    **frag{1,2}_dist.out** (own basis, own cavity), so d1/d2 are pure
+    deformation energies at one level with frag{1,2}_rel.out:
+        d1 = E(frag1_dist) - E(frag1_rel)          (d2 likewise)
+        eint_spe = E(AB) - E(frag1_dist) - E(frag2_dist)
+        d1 + d2 + eint_spe == barrier               (ASM identity, exact)
+    ORCA's Bond Energy (and the 6 channels) are defined against ORCA's own
+    fragment SCFs eda_frag{1,2}.out (ghost basis of the other fragment, AB
+    cavity). The difference is kept as its own column:
+        bsse_shift_kcal = eint_spe - e_bond         (bsse_shift{1,2}_kcal per fragment)
+        d1 + d2 + e_bond + bsse_shift == barrier    (exact)
+        d1 + d2 + Σ(6 channels) + bsse_shift == barrier + eda_sum_minus_bond
+                                                    (ORCA table closure only)
+    Rejected: ② counterpoise-correcting only the interaction (d1 + d2 + bond !=
+    barrier); ③ taking d1/d2 from eda_frag*.out (the 2026-09-15 scheme) —
+    the 8-channel sum closes, but d1/d2 then carry ghost-basis and AB-cavity
+    terms and are no longer deformation energies. The eda_frag values stay in
+    the record as e_frag{1,2}_dist_ghost_eh.
 
-A reaction is labelled "ok" only if all 5 SPEs terminated normally, each has
-exactly one FINAL SINGLE POINT ENERGY, the EDA table has all 8 rows, and
-|sum(6 channels) - Bond Energy| < 0.02 kcal/mol.
+A reaction is labelled "ok" only if all 7 SPEs terminated normally, each has
+exactly one FINAL SINGLE POINT ENERGY, the EDA table has all 8 rows,
+|sum(6 channels) - Bond Energy| < 0.02 kcal/mol, and Bond Energy equals
+E(AB) - E(eda_frag1) - E(eda_frag2) within 0.02 kcal/mol.
 """
 import json
 import re
@@ -68,12 +75,11 @@ LABEL_TO_KEY = {
     "Delta CPCM Dielectric": "cpcm", "Delta SMD CDS correction": "smd_cds",
 }
 NEED = ("elst", "pauli", "xc", "orb", "disp", "cpcm", "smd_cds", "bond")
-# Distorted-fragment SPE now comes from eda_frag{1,2}.out (ghost basis,
-# BSSE-corrected). Standalone frag{1,2}_dist.out are still parsed for
-# provenance but no longer drive d1/d2/eint_spe.
+# d1/d2/eint_spe come from the standalone frag{1,2}_dist.out; eda_frag{1,2}.out
+# (ghost basis) only define ORCA's Bond Energy and the bsse_shift column.
 SPES = ("eda", "eda_frag1", "eda_frag2", "frag1_dist", "frag2_dist", "frag1_rel", "frag2_rel")
 SUM_TOL_KCAL = 0.02
-IDENTITY_TOL_KCAL = 0.02      # gap = eint_spe − e_bond must be near zero under new BSSE-consistent scheme
+IDENTITY_TOL_KCAL = 0.02      # Bond Energy vs E(AB) - E(eda_frag1) - E(eda_frag2)
 
 
 def read_fspe(path, expected_count=1):
@@ -143,25 +149,35 @@ def parse_one_rxn(rdir, meta_row):
         d["status"] = "parse_fail"; d["_error"] = str(err)
         return d
     d["e_ab_eh"] = e["eda"]
-    # NEW (2026-09-15): distorted fragment reference uses ghost-basis SPE from eda_frag{1,2}.out
-    d["e_frag1_dist_eh"] = e["eda_frag1"]; d["e_frag2_dist_eh"] = e["eda_frag2"]
-    d["e_frag1_dist_standalone_eh"] = e["frag1_dist"]           # kept for provenance / BSSE audit
-    d["e_frag2_dist_standalone_eh"] = e["frag2_dist"]
+    # option ① (2026-09-28): distorted fragment = standalone frag{1,2}_dist.out
+    d["e_frag1_dist_eh"] = e["frag1_dist"]; d["e_frag2_dist_eh"] = e["frag2_dist"]
+    d["e_frag1_dist_ghost_eh"] = e["eda_frag1"]                  # ORCA EDA fragment SCF (ghost basis, AB cavity)
+    d["e_frag2_dist_ghost_eh"] = e["eda_frag2"]
     d["e_frag1_rel_eh"] = e["frag1_rel"];   d["e_frag2_rel_eh"] = e["frag2_rel"]
-    d["d1_kcal"] = (e["eda_frag1"] - e["frag1_rel"]) * EH_TO_KCAL      # strain of frag1 (BSSE-consistent)
-    d["d2_kcal"] = (e["eda_frag2"] - e["frag2_rel"]) * EH_TO_KCAL      # strain of frag2 (BSSE-consistent)
-    d["eint_spe_kcal"] = (e["eda"] - e["eda_frag1"] - e["eda_frag2"]) * EH_TO_KCAL
+    d["d1_kcal"] = (e["frag1_dist"] - e["frag1_rel"]) * EH_TO_KCAL     # deformation energy of frag1
+    d["d2_kcal"] = (e["frag2_dist"] - e["frag2_rel"]) * EH_TO_KCAL     # deformation energy of frag2
+    d["eint_spe_kcal"] = (e["eda"] - e["frag1_dist"] - e["frag2_dist"]) * EH_TO_KCAL
     d["barrier_kcal"] = (e["eda"] - e["frag1_rel"] - e["frag2_rel"]) * EH_TO_KCAL
-    d["bsse_shift_kcal"] = ((e["eda_frag1"] - e["frag1_dist"]) + (e["eda_frag2"] - e["frag2_dist"])) * EH_TO_KCAL
     d["eda_raw_eh"] = raw
     d.update(channels_from_table(raw))
-    d["eint_spe_minus_bond_kcal"] = d["eint_spe_kcal"] - d["e_bond_kcal"]
+    d["bsse_shift1_kcal"] = (e["eda_frag1"] - e["frag1_dist"]) * EH_TO_KCAL
+    d["bsse_shift2_kcal"] = (e["eda_frag2"] - e["frag2_dist"]) * EH_TO_KCAL
+    d["bsse_shift_kcal"] = d["eint_spe_kcal"] - d["e_bond_kcal"]
     d["identity_residual_kcal"] = d["d1_kcal"] + d["d2_kcal"] + d["eint_spe_kcal"] - d["barrier_kcal"]
+    # Bond Energy must be E(AB) - E(eda_frag1) - E(eda_frag2): otherwise the
+    # 6 channels and bsse_shift refer to fragment SCFs other than these files
+    d["bond_reference_residual_kcal"] = ((e["eda"] - e["eda_frag1"] - e["eda_frag2"]) * EH_TO_KCAL
+                                         - d["e_bond_kcal"])
+    d["channel_closure_residual_kcal"] = (d["d1_kcal"] + d["d2_kcal"] + d["elst_dft"] + d["pauli_dft"]
+                                          + d["oi_dft"] + d["disp_dft"] + d["cpcm_dft"] + d["cds_dft"]
+                                          + d["bsse_shift_kcal"] - d["barrier_kcal"])
+    # reference check first: eda_sum_mismatch records are promoted to ok downstream,
+    # so they must not hide a Bond Energy built from other fragment SCFs
+    if abs(d["bond_reference_residual_kcal"]) > IDENTITY_TOL_KCAL:
+        d["status"] = "bsse_reference_mismatch"          # eda_frag*.out & Bond Energy inconsistent — investigate
+        return d
     if abs(d["eda_sum_minus_bond_kcal"]) > SUM_TOL_KCAL:
         d["status"] = "eda_sum_mismatch"
-        return d
-    if abs(d["eint_spe_minus_bond_kcal"]) > IDENTITY_TOL_KCAL:
-        d["status"] = "bsse_reference_mismatch"          # eda_frag*.out & Bond Energy inconsistent — investigate
         return d
     d["status"] = "ok"
     return d
@@ -241,7 +257,7 @@ def main():
         "n_target": len(meta), "n_labeled_ok": len(labels), "n_failures": len(failures),
         "status_counts": dict(stats),
         "channel_convention": "pauli_dft = Pauli Energy + Delta E^0(XC); all from Hartree column x 627.5094740631",
-        "fragment_reference_convention": "e_frag{1,2}_dist_eh from eda_frag{1,2}.out (ghost basis, BSSE-consistent); standalone frag*_dist.out retained as e_frag{1,2}_dist_standalone_eh. Under this scheme eint_spe == e_bond (tol 0.02 kcal/mol) and d1+d2+eint_spe == barrier exactly.",
+        "fragment_reference_convention": "option ① (2026-09-28): e_frag{1,2}_dist_eh = standalone frag{1,2}_dist.out (own basis, own cavity); d1/d2 = deformation energies vs frag{1,2}_rel.out; eint_spe = E(AB) - E(frag1_dist) - E(frag2_dist), so d1+d2+eint_spe == barrier exactly. ORCA Bond Energy / 6 channels refer to eda_frag{1,2}.out (ghost basis, AB cavity; kept as e_frag{1,2}_dist_ghost_eh); bsse_shift_kcal = eint_spe - e_bond, so d1+d2+e_bond+bsse_shift == barrier exactly and d1+d2+sum(6ch)+bsse_shift == barrier + eda_sum_minus_bond_kcal.",
         "config": cfg, "spec_reference": "SPEC.md",
     }, open(work / "metadata.json", "w"), indent=2)
     (work / "GATE3_STATUS.txt").write_text(f"labeled_ok={len(labels)} failures={len(failures)}\n")

@@ -1,0 +1,52 @@
+# Bundle configuration — edit to fit the host, don't touch method parameters.
+
+# ---- Paths (relative to bundle root; out_dir may be absolute) ----
+raw_dir: raw
+work_dir: work
+out_dir: /scratch/e1977a01/b3lyp_eda_out         # Nurion: /scratch has PB of space
+                                                 # NOTE /scratch purges files untouched for 15 days;
+                                                 # move the tarballs to /home01 when stage 4 finishes.
+
+# ---- ORCA ----
+orca_bin: /home01/e1977a01/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/orca
+# NURION: 1, not 5.  ORCA 6.1.1 is dynamically linked against OpenMPI 4.1.8
+# (libmpi.so.40); Nurion only provides openmpi/3.1.0 and 3.1.6, so the
+# orca_*_mpi binaries cannot load.  nprocs=1 makes the EDA step serial, which
+# leaves the computed energies untouched -- CLAUDE.md explicitly permits
+# changing parallelism to fit the host.  Throughput is recovered by raising
+# parallel_rxns instead (see below); the tt EDA campaign ran 3504 reactions
+# this way at 2320-way concurrency with zero failures.
+mpi_procs_per_rxn: 1
+maxcore_mb: 3500
+
+# ---- Parallelism ----
+# parallel_rxns × (mpi_procs_per_rxn + 4) ≤ available cores.
+# Nurion KNL node = 68 cores, ~82 GB usable.  With mpi=1 each reaction runs its
+# 5 SPEs concurrently, so a reaction occupies 5 processes:
+#   parallel_rxns × 5 ≤ 68  ->  13 max on cores.
+# MEMORY, not cores, is what actually binds: measured peak RSS in the tt
+# campaign was 0.3-0.95 GB per ORCA process (far below %maxcore 3500), so
+# 12 × 5 × ~1 GB = ~60 GB of the 82 GB.  Start at 12 and confirm with the
+# pilot before scaling.
+parallel_rxns: 12
+
+# ---- Retry ----
+max_retries: 3
+exclude_nodes: []                     # auto-populated by stage2 on repeat SIGBUS
+
+# ---- Data source (do NOT change) ----
+figshare_article_id: 21707888
+figshare_version: 5
+expected_n_profiles: 5269
+expected_csv_rows: 5269
+
+# ---- Fragmentation constants (do NOT change) ----
+# The graph rule uses a single covalent-distance factor when building
+# the bond graph. This is baked into scripts/fragmenter.py:FACTOR and
+# is duplicated here only as documentation.
+covalent_factor: 1.25
+
+# ---- Output ----
+run_tag: b3lyp_eda
+include_gbw_in_full: true
+keep_gbw: all            # all | eda | none  (must match kisti/submit_rxn.sh KEEP_GBW)

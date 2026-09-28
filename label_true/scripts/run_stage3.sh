@@ -5,6 +5,12 @@
 #SBATCH --nodes=1 --ntasks=1 --cpus-per-task=1 --mem=8G
 #SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/label_true_logs/stage3.%j.out
 set -euo pipefail
+# Superseded 2026-09-28: label_true/work/inputs holds the CPCM-era eda*.out, so this
+# would parse the old EDA runs. SMD labels come from smd_final_pipeline.sh.
+# Set RUN_CPCM_STAGE3=1 to parse the old outputs anyway (writes label_true/work/ only).
+if [ -z "${RUN_CPCM_STAGE3:-}" ]; then
+    echo "run_stage3.sh is superseded by smd_final_pipeline.sh (set RUN_CPCM_STAGE3=1 to force)"; exit 1
+fi
 mkdir -p /gpfs/tmp_cpu2/yeseo1ee/label_true_logs
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate reactot
@@ -20,13 +26,13 @@ for s, rs in sorted(by_status.items()):
     print(f'  {s:30s} {len(rs)}')
 ok = by_status.get('ok', [])
 if ok:
-    gaps = [abs(r['eint_spe_minus_bond_kcal']) for r in ok]
+    gaps = [abs(r['bond_reference_residual_kcal']) for r in ok]
     ids  = [abs(r['identity_residual_kcal']) for r in ok]
-    eight = [abs((r['d1_kcal']+r['d2_kcal']+r['elst_dft']+r['pauli_dft']+r['oi_dft']+r['disp_dft']+r['cpcm_dft']+r['cds_dft']) - r['barrier_kcal']) for r in ok]
+    eight = [abs(r['channel_closure_residual_kcal']) for r in ok]
     print(f'ok={len(ok)}')
-    print(f'  max |eint_spe − e_bond|     = {max(gaps):.6e} kcal/mol')
-    print(f'  max |ASM identity residual| = {max(ids):.6e} kcal/mol')
-    print(f'  max |8ch sum − barrier|     = {max(eight):.6e} kcal/mol')
+    print(f'  max |Bond − (AB − eda_frag1 − eda_frag2)| = {max(gaps):.6e} kcal/mol')
+    print(f'  max |ASM identity residual|              = {max(ids):.6e} kcal/mol')
+    print(f'  max |8ch + bsse_shift − barrier|         = {max(eight):.6e} kcal/mol')
     bsse = [r['bsse_shift_kcal'] for r in ok]
     print(f'  BSSE shift: mean {statistics.mean(bsse):.3f}  sd {statistics.stdev(bsse):.3f}  min {min(bsse):.3f}  max {max(bsse):.3f}')
 PY
