@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -320,9 +321,58 @@ def a5_e2e(c, eng, run):
     return dict(n=len(df), per_target=per, frac_barrier_within=ref, table=df, passed=passed)
 
 
-def classify(stage, reason, v7_verdict, job, v7_job):
+# ---------------------------------------------------------------- D-1 engine guard
+# ORCA / xtb outputs of an autodE ts/ tree judged with autodE 1.4.5's own termination rules
+# (wrappers/ORCA.py and wrappers/XTB.py terminated_normally_in). autodE names outputs
+# f"{name}_{method.name}" and appends a number on a name clash (calculations/executors.py).
+# xtb's "normal termination of xtb" goes to stderr, which run_external does not write to .out: not used.
+NO_TS = "autodE found no transition state"
+ORCA_OUT = re.compile(r"_orca\d*\.out$")
+XTB_OUT = re.compile(r"_xtb\d*\.out$")
+ORCA_TERM = ("$end", "ORCA TERMINATED NORMALLY", "The optimization did not converge")
+
+
+def _orca_ok(lines):                 # autodE 1.4.5 ORCA.terminated_normally_in (last 31 lines)
+    for n, l in enumerate(reversed(lines)):
+        if any(s in l for s in ORCA_TERM):
+            return True
+        if n > 30:
+            return False
+    return False
+
+
+def _xtb_ok(lines):                  # autodE 1.4.5 XTB.terminated_normally_in (no ERROR in last 21 lines)
+    for n, l in enumerate(reversed(lines)):
+        if "ERROR" in l:
+            return False
+        if n > 20:
+            return True
+    return False
+
+
+def engine_scan(ts_dir: Path) -> dict:
+    """Read-only. ORCA/xtb outputs under an autodE ts/ tree that autodE itself would call abnormal."""
+    if not ts_dir.is_dir():
+        return dict(tree=False, n_orca=0, n_xtb=0, orca_abnormal=["<ts tree missing>"], xtb_abnormal=[])
+    orca, xtb = [], []
+    n_o = n_x = 0
+    for f in sorted(ts_dir.rglob("*.out")):
+        if ORCA_OUT.search(f.name):
+            n_o += 1
+            if not _orca_ok(f.read_text(errors="replace").splitlines()):
+                orca.append(str(f.relative_to(ts_dir)))
+        elif XTB_OUT.search(f.name):
+            n_x += 1
+            if not _xtb_ok(f.read_text(errors="replace").splitlines()):
+                xtb.append(str(f.relative_to(ts_dir)))
+    return dict(tree=True, n_orca=n_o, n_xtb=n_x, orca_abnormal=orca, xtb_abnormal=xtb)
+
+
+def classify(stage, reason, v7_verdict, job, v7_job, eng=None, guard=True):
     r = reason or ""
-    if stage == "ts" and r.startswith("autodE found no transition state"):
+    if stage == "ts" and r.startswith(NO_TS):
+        if guard and eng and eng.get("orca_abnormal"):              # D-1 guard, before the V7 verdict
+            return "engine_abnormal"
         return "chemical_no_saddle" if (job == v7_job and v7_verdict == "no_saddle_confirmed") else "no_ts_unconfirmed"
     if stage == "ts" and r.startswith("TS check failed"):
         return "gate"
@@ -333,20 +383,37 @@ def classify(stage, reason, v7_verdict, job, v7_job):
 
 def a1(c, v7):
     A = c.P["A1"]
+    guard = bool(A.get("engine_abnormal_is_pipeline", False))
     pm = pd.read_csv(c.V["pilot_manifest"], keep_default_na=False)
-    rows = []
+    # (row, job whose markers count, pilot copy?, source, autodE ts/ tree) — ts trees are only read
+    specs = []
     for j in pm.job_id[pm.kind == "D1"]:
-        src, pil = (f"V6c_{j}", False) if j == c.V["v6c_job"] else (j, True)
-        lab, fl = c.label(src, pil), c.fail(src, pil)
-        rows.append(dict(row=j, source=("V6c (F1)" if not pil else "pilot"), ok=lab is not None,
-                         fail_stage=fl[0] if fl else None, fail_reason=fl[1] if fl else None))
+        if j == c.V["v6c_job"]:
+            specs.append((j, f"V6c_{j}", False, "V6c (F1)", c.jd(f"V6c_{j}") / "ts"))
+        else:
+            specs.append((j, j, True, "pilot", Path(c.cfg["pilot_scratch"]) / "jobs" / j / "ts"))
     for j in c.jobs("V6a"):
-        lab, fl = c.label(j), c.fail(j)
-        rows.append(dict(row=j, source="V6a", ok=lab is not None, fail_stage=fl[0] if fl else None,
-                         fail_reason=fl[1] if fl else None))
+        specs.append((j, j, False, "V6a", c.jd(j) / "ts"))
+    rows, eng_files = [], {}
+    for row, src, pil, source, tsd in specs:
+        lab, fl = c.label(src, pil), c.fail(src, pil)
+        r = dict(row=row, source=source, ok=lab is not None, fail_stage=fl[0] if fl else None,
+                 fail_reason=fl[1] if fl else None, n_orca_out=None, orca_abnormal=None, n_xtb_out=None,
+                 xtb_abnormal_n=None)
+        eng = None
+        if fl and fl[0] == "ts" and fl[1].startswith(NO_TS):          # engine_scan on no-TS rows only
+            eng = engine_scan(tsd)
+            r.update(n_orca_out=eng["n_orca"], orca_abnormal=";".join(eng["orca_abnormal"][:10]),
+                     n_xtb_out=eng["n_xtb"], xtb_abnormal_n=len(eng["xtb_abnormal"]))
+            if eng["orca_abnormal"]:
+                eng_files[row] = eng["orca_abnormal"]
+        r["class"] = None if r["ok"] else (
+            classify(r["fail_stage"], r["fail_reason"], v7.get("verdict"), row, c.V["v7_job"], eng, guard)
+            if fl else "incomplete")
+        rows.append(r)
     df = pd.DataFrame(rows)
-    df["class"] = [None if r.ok else (classify(r.fail_stage, r.fail_reason, v7.get("verdict"), r.row, c.V["v7_job"])
-                                      if r.fail_stage else "incomplete") for r in df.itertuples()]
+    counts = {"ok": int(df.ok.sum()), **{x: int((df["class"] == x).sum()) for x in
+              ("gate", "no_ts_unconfirmed", "chemical_no_saddle", "engine_abnormal", "pipeline", "incomplete")}}
     k, n = int(df.ok.sum()), len(df)
     lo, hi = st.wilson(k, n, c.P["ci_level"])
     policy = str(A.get("no_ts_unconfirmed_policy", "strict"))          # D-1
@@ -358,7 +425,9 @@ def a1(c, v7):
     judged = n == int(A["n_total"]) and policy in ("strict", "allowed")
     notes = ([] if n == int(A["n_total"]) else [f"{n} rows instead of {A['n_total']} (V6a manifest missing)"]) + \
             ([] if policy in ("strict", "allowed") else [f"no_ts_unconfirmed_policy = {policy}: not implemented / not decided"])
-    return dict(k=k, n=n, wilson=(lo, hi), table=df, pipeline_bugs=int((df["class"] == "pipeline").sum()),
+    return dict(k=k, n=n, wilson=(lo, hi), table=df,
+                pipeline_bugs=int(df["class"].isin(["pipeline", "engine_abnormal"]).sum()),
+                class_counts=counts, engine_abnormal_files=eng_files,
                 policy=policy, n_no_ts=n_nots, no_ts_wilson=(nlo, nhi),
                 coley_rate_within_ci=bool(nlo <= rate <= nhi) if np.isfinite(nlo) else None,
                 passed=(bool(k >= int(A["n_ok_min"]) and fails_ok) if judged else None), note="; ".join(notes))
@@ -584,8 +653,9 @@ def final(c):
 
     L.append("## 2. 판정표 (A1–A10)\n\n| id | value | 95% CI | result | note |\n|---|---|---|---|---|")
     L.append(f"| A1 | {r1['k']}/{r1['n']} ok, pipeline bugs {r1['pipeline_bugs']} | {fmt(r1['wilson'][0])}–{fmt(r1['wilson'][1])} | {pf(r1['passed'])} | "
-             f"policy {r1['policy']}; no-TS {r1['n_no_ts']}/{r1['n']} (CI {fmt(r1['no_ts_wilson'][0])}–{fmt(r1['no_ts_wilson'][1])}, "
-             f"Coley 12.3% within: {r1['coley_rate_within_ci']}) {r1['note']} |")
+             f"policy {r1['policy']}; classes {json.dumps(r1['class_counts'])}; no-TS {r1['n_no_ts']}/{r1['n']} "
+             f"(CI {fmt(r1['no_ts_wilson'][0])}–{fmt(r1['no_ts_wilson'][1])}, Coley 12.3% within: {r1['coley_rate_within_ci']}) "
+             f"{r1['note']} |")
     L.append(f"| A2 | {len(r2['bad'])} of {r2['n_labels']} labels with a failed gate | | {pf(r2['passed'])} | |")
     L.append(f"| A3 | {r3['n_ok']}/{r3['n_required']}, max \\|Δ\\| {fmt(r3['max_abs'], 4)} kcal/mol | | {pf(r3['passed'])} | "
              f"{'incomplete: ' + ', '.join(r3['incomplete']) if r3['incomplete'] else ''}"
@@ -601,6 +671,8 @@ def final(c):
     L.append(f"| A9 | {fmt(r9['mean'], 2)} core-h/row (n={r9['n']}); 2,846 rows ≈ {fmt(r9['total_extrap'], 0)} core-h, {fmt(r9['wall_days'], 1)} d | {fmt(r9['ci'][0], 2)}–{fmt(r9['ci'][1], 2)} | report only | |")
     L.append(f"| A10 | J07 ok: {r10['j07_ok']}; J03: {r10['j03_verdict']} | | {pf(r10['passed'])} | |")
 
+    L.append(f"\n**A1 engine_abnormal files** (ORCA outputs autodE 1.4.5 would call abnormal, no-TS rows): "
+             + (json.dumps(r1["engine_abnormal_files"]) if r1["engine_abnormal_files"] else "none"))
     L.append("\n## 3. 가설 판정 자료 (H0 / H1 / H2)\n")
     L.append(f"**V1 (H0):** A6(a) runs {json.dumps([{k: r.get(k) for k in ('src_job', 'max_abs_dE_eh', 'max_abs_dlabel_kcal')} for r in r6['a']['runs']])}; "
              f"A6(b) {json.dumps([{k: r.get(k) for k in ('src_job', 'max_abs_dE_eh')} for r in r6['b']['runs']])}; A6(c) {json.dumps(r6['c'].get('runs'))}\n")

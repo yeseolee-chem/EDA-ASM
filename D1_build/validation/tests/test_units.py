@@ -183,6 +183,31 @@ def fB_level_checks_positive_control():
     assert od.level_ok("L1", dict(chk, rijcosx=None, ri_lines=[]))["rijcosx_on"] is False
 
 
+@test
+def d1_engine_guard_rules():
+    """D-1 guard: autodE 1.4.5 termination rules, synthetic lines."""
+    import validation_report as vr
+    assert vr._orca_ok(["x"] * 5 + ["                             ****ORCA TERMINATED NORMALLY****",
+                                    "TOTAL RUN TIME: 0 days 0 hours 1 minutes 2 seconds 3 msec"])
+    assert vr._orca_ok(["x"] * 5 + ["The optimization did not converge but reached the maximum number"])
+    assert not vr._orca_ok(["x"] * 50), "killed mid-run must be abnormal"
+    assert not vr._orca_ok([])
+    assert vr._xtb_ok(["x"] * 30 + [" * finished run on 2026/09/29"])
+    assert not vr._xtb_ok(["x"] * 30 + ["#ERROR! setup failed"])
+    assert not vr._xtb_ok([])
+    assert vr.ORCA_OUT.search("TS_abc_optts_orca.out") and vr.ORCA_OUT.search("r0_opt_orca1.out")
+    assert vr.XTB_OUT.search("r0_conf0_opt_xtb.out") and not vr.ORCA_OUT.search("r0_conf0_opt_xtb.out")
+
+
+@test
+def d1_engine_guard_j03():
+    """D-1 guard on the pilot J03 ts tree (read-only). Printed, not asserted: a non-empty ORCA list is a STOP."""
+    import validation_report as vr
+    e = vr.engine_scan(Path(cfg["pilot_scratch"]) / "jobs" / "J03" / "ts")
+    print(f"      J03 ts tree: tree={e['tree']} ORCA outs {e['n_orca']} (abnormal: {e['orca_abnormal'] or 'none'}), "
+          f"xtb outs {e['n_xtb']} (abnormal: {len(e['xtb_abnormal'])})")
+
+
 n_fail = sum(not ok for _, ok in RESULTS)
 print(f"\nUNIT TESTS {'PASS' if n_fail == 0 else f'FAIL ({n_fail})'}: {len(RESULTS) - n_fail}/{len(RESULTS)}")
 sys.exit(1 if n_fail else 0)

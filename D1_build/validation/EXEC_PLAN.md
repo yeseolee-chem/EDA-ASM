@@ -113,9 +113,15 @@
 
 **지시와 다르게 구현한 한 가지 (F-B):** 지시문의 `cosx_seen = rijcosx == "on" or "COSX" in ri_lines`는 NORI 출력에 `RIJ-COSX (...).... off` 줄이 찍히면 COSX를 본 것으로 처리해 L2를 잘못 FAIL시킵니다. 그래서 COSX가 들어간 줄은 값이 `on`으로 끝날 때만 셉니다. 합성 `off` 줄로 확인하는 테스트도 넣었습니다.
 
-**D-1 (사용자 결정 대기):** `prereg.A1.no_ts_unconfirmed_policy: TBD`. 값이 `TBD`이면 `submit_validation.sh`가 제출을 거부합니다.
-- 보고서는 (a) `strict`와 (b) `allowed`를 이미 구현했습니다. no-TS 비율의 Wilson CI와 Coley 12.3%의 비교는 정책과 무관하게 항상 보고합니다.
-- (c) `scan`은 선택되면 구현합니다.
+**D-1 = allowed + engine_abnormal 가드 (결정 2026-09-29).** 가드는 ORCA 출력에 autodE 1.4.5 종료 규칙을 적용합니다(`prereg.A1.no_ts_unconfirmed_policy: allowed`, `engine_abnormal_is_pipeline: true`). 근거:
+- Coley 2023은 실패를 스캔 없이 제외했다(D0 대칭).
+- (a)는 결함 없는 파이프라인도 65–73% 확률로 FAIL시킨다.
+- (c)의 relaxed scan은 TS의 부재를 증명하지 못한다.
+- 본실험 no-TS 표본 스캔 감사는 별도 과제로 한다.
+
+구현: `validation_report.engine_scan`이 no-TS 행의 autodE `ts/` 트리를 읽기만 합니다.
+- `*_orca\d*.out` 중 autodE가 비정상으로 볼 출력이 있으면 `engine_abnormal`로 분류하고, pipeline으로 셉니다. 허용 실패가 아닙니다.
+- xtb 출력은 보고만 합니다.
 
 ## 5. 코드 작성 중 확인한 사실
 
