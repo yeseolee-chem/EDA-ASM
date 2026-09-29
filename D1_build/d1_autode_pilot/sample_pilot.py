@@ -91,10 +91,18 @@ def main():
     ap.add_argument("--controls", type=int, default=2)
     ap.add_argument("--coley-csv"); ap.add_argument("--labels")
     ap.add_argument("--max-jobs", type=int, default=15, help="SLURM MaxSubmit is 20 tasks: jobs + 1 report task must fit with headroom")
+    ap.add_argument("--exclude-ts", default="",
+                    help="TS_IDs to leave out of the pool: comma list, or a CSV with a ts_id column (validation V6a)")
+    ap.add_argument("--id-prefix", default="J", help="job_id prefix (validation V6a uses V6a_)")
     a = ap.parse_args()
     rng = random.Random(a.seed)
 
     ts = load_rows(a.xlsx)
+    if a.exclude_ts:
+        p = Path(a.exclude_ts)
+        excl = set(pd.read_csv(p)["ts_id"].astype(str)) if p.is_file() else set(a.exclude_ts.split(","))
+        ts = ts[~ts["TS_ID"].astype(str).isin(excl)].reset_index(drop=True)
+        print(f"excluded {len(excl)} TS ids", file=sys.stderr)
     ts["n_unspec"] = ts["dipole SMILES (전체)"].map(unspecified_db)
     print(f"backbone pool: {ts['셀ID'].nunique()} cells / {len(ts)} TS rows", file=sys.stderr)
     print(ts.groupby("panel").size().to_string(), file=sys.stderr)
@@ -151,7 +159,7 @@ def main():
                                  d0_G_act_kcal=float(c.G_act), **{f"d0_{k}": L[k] for k in CH}))
 
     out = pd.DataFrame(jobs)
-    out.insert(0, "job_id", [f"J{i:02d}" for i in range(len(out))])
+    out.insert(0, "job_id", [f"{a.id_prefix}{i:02d}" for i in range(len(out))])
     if len(out) > a.max_jobs:
         sys.exit(f"STOP: {len(out)} jobs > --max-jobs {a.max_jobs} (SLURM MaxSubmit=20). Lower --n or --controls.")
     out.to_csv(a.out, index=False)

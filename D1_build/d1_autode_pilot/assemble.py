@@ -23,6 +23,26 @@ sys.path.insert(0, str(HERE))
 import pilot_common as pc  # noqa: E402
 
 OUTS = ("eda", "eda_frag1", "eda_frag2", "frag1_dist", "frag2_dist", "frag1_rel", "frag2_rel")
+STANDALONE = ("eda", "frag1_dist", "frag2_dist", "frag1_rel", "frag2_rel")     # the 5 processes run_sp starts
+RUNTIME_RE = re.compile(r"TOTAL RUN TIME:\s+(\d+) days (\d+) hours (\d+) minutes (\d+) seconds (\d+) msec")
+
+
+def sp_coreh(spd: Path) -> dict:
+    """F4: core-hours per output = TOTAL RUN TIME x nprocs (eda: %pal of eda.inp; fragments run serially).
+    eda_frag{1,2} are ORCA's own fragment SCFs inside the eda run, so the total counts the 5 processes only."""
+    pal = re.search(r"%pal nprocs (\d+) end", (spd / "eda.inp").read_text()) if (spd / "eda.inp").is_file() else None
+    np_eda = int(pal.group(1)) if pal else 1
+    out = {}
+    for k in OUTS:
+        p = spd / f"{k}.out"
+        m = RUNTIME_RE.findall(p.read_text(errors="replace")) if p.is_file() else []
+        if not m:
+            out[k] = None
+            continue
+        d, h, mi, s, ms = (int(x) for x in m[-1])
+        out[k] = (d * 24 + h + mi / 60 + (s + ms / 1000) / 3600) * (np_eda if k.startswith("eda") else 1)
+    out["total"] = sum(out[k] for k in STANDALONE if out.get(k))
+    return out
 
 
 def uniformity(spd: Path) -> dict:
@@ -124,7 +144,7 @@ def main():
                **{k: v for k, v in rec.items() if not k.startswith("_")},
                sum_mismatch_promoted=promoted, gates=gates, flags=flags,
                audit_problems=audit.get("problems"), audit_stage3_status=audit.get("stage3_status"),
-               uniformity_failed=uni["failed"],
+               uniformity_failed=uni["failed"], sp_coreh=sp_coreh(spd),
                ts_imag_cm=(ts_res.get("imag_freqs_cm") or [None])[0], ts_dipole_config=ts_res.get("ts_dipole_config"),
                reactant_dipole_config=ts_res.get("reactant_dipole_config"),
                autode_dE_act_sp_kcal=ts_res.get("dE_act_sp_kcal"), autode_dG_act_kcal=ts_res.get("dG_act_kcal"),

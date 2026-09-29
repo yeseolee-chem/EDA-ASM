@@ -9,4 +9,5 @@ cd "$PILOT_DIR"
 python report.py --out "$SCRATCH/results"
 mkdir -p "$PILOT_DIR/results"
 cp "$SCRATCH/results/"{pilot_report.md,pilot_summary.csv,labels_d1_pilot.json} "$PILOT_DIR/results/"
+[ -d "$SCRATCH/results/geometries" ] && cp -r "$SCRATCH/results/geometries" "$PILOT_DIR/results/"    # F5
 cp "$SCRATCH/s0/S0_REPORT.md" "$PILOT_DIR/results/" 2>/dev/null || true

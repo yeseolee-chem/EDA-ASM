@@ -57,6 +57,7 @@ import stereo_utils as su  # noqa: E402
 
 HARTREE_KCAL = pc.EH_TO_KCAL
 N_RR = 1000
+REPLAY_LIKE = ("D0_replay", "D0_reopt_L0", "D0_reopt_L2")    # Coley's references (labels_all rel files)
 
 
 class StageFail(Exception):
@@ -344,12 +345,14 @@ def main():
     try:
         orig = pc.read_xyz(jd / "r_dipole_autode.xyz")
         r_dph = pc.read_xyz(jd / "r_dipolarophile_autode.xyz")
-        if job["kind"] == "D0_replay":
+        if job["kind"] in REPLAY_LIKE:
             rel1, rel2 = job["d0_rel1_file"], job["d0_rel2_file"]     # frag1 = dipole in labels_all
             ref_dip = pc.read_xyz(jd / f"d0_{rel1}")
             r_dph = pc.read_xyz(jd / f"d0_{rel2}")
             res.update(source="d0_labels_all", rel1_file=rel1, rel2_file=rel2, alt_used=int("_alt" in rel1))
-            if not a.skip_port:
+            # the port diagnostic belongs to the replay (V5, A4); re-optimisation jobs (V2b) skip it
+            port_wanted = job["kind"] == "D0_replay" or bool(cfg.get("val", {}).get("reopt_port_diagnostic", False))
+            if port_wanted and not a.skip_port:
                 try:
                     port, _ = coley_port(cfg, jd, jd / "ref" / "port", ts_res, fr, orig, None, a.dry_xtb)
                 except StageFail as e:

@@ -106,7 +106,7 @@ def main():
         (spd / f).write_text(t)
     d = sorted(audit.d_formed)
     meta = dict(
-        rxn_id=(999000 if a.job.startswith("S") else 900000) + int(a.job.lstrip("JS") or 0), job_id=a.job, kind=job["kind"], ts_id=job["ts_id"],
+        rxn_id=pc.meta_rxn_id(job), job_id=a.job, kind=job["kind"], ts_id=job["ts_id"],
         ts_file="ts.xyz", n_atoms=len(ts[0]), n_f1=len(P.A), n_f2=len(P.B),
         rel1_file="ref_dipole.xyz", rel2_file="ref_dipolarophile.xyz", role1="dipole", role2="dipolarophile",
         charge1=q1, charge2=q2, alt_used=int(ref_res.get("alt_used", 0)),

@@ -37,6 +37,22 @@ def load_job(job_id: str, manifest: str | Path | None = None) -> dict:
     return row.iloc[0].to_dict()
 
 
+def ade_name(job: dict) -> str:
+    """autodE Reaction name. autodE hashes it into its checkpoint file names, so a job copied from another
+    scratch (validation V6c) keeps the original name to reload those checkpoints (manifest column ade_name)."""
+    return str(job.get("ade_name") or job["job_id"])
+
+
+def meta_rxn_id(job: dict) -> int:
+    """rxn_id written to input_meta.json. Pilot ids (J00, S0) keep the pilot formula; other ids need the
+    manifest column meta_rxn_id (validation job ids such as V5_0020 are not numeric)."""
+    v = job.get("meta_rxn_id")
+    if v not in (None, ""):
+        return int(float(v))
+    jid = str(job["job_id"])
+    return (999000 if jid.startswith("S") else 900000) + int(jid.lstrip("JS") or 0)
+
+
 def job_dir(cfg: dict, job_id: str) -> Path:
     d = Path(cfg["scratch"]) / "jobs" / job_id
     d.mkdir(parents=True, exist_ok=True)

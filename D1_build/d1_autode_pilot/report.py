@@ -23,8 +23,32 @@ TARGETS = ["barrier_kcal", "d1_kcal", "d2_kcal", "elst_dft", "pauli_dft", "oi_df
 N_D1_TOTAL = 2846            # backbone TS rows of D1_설계_v8 (sample_pilot.py pool)
 
 
+GEOMETRIES = ("ts.xyz", "ref_dipole.xyz", "ref_dipolarophile.xyz", "product.xyz")
+
+
 def jload(p: Path):
     return json.loads(p.read_text()) if p.is_file() else {}
+
+
+def ref_corrected(dE, dG, alt_used, port):
+    """F2: autodE's ΔE‡/ΔG‡ are relative to autodE's own reactant dipole. When the Coley-port alt replaced
+    it (alt_used == 1), refer them to the alt, as the label and Coley's G_act are:
+    x_ref = x - port.<x>_alt_minus_orig. Returns (dE_ref, dG_ref); unchanged when no alt was used."""
+    if not alt_used or not port:
+        return dE, dG
+    dEs, dGs = port.get("dEsp_alt_minus_orig_kcal"), port.get("dG_alt_minus_orig_kcal")
+    return (None if dE is None or dEs is None else dE - dEs,
+            None if dG is None or dGs is None else dG - dGs)
+
+
+def copy_geometries(jd: Path, dest: Path):
+    """F5: the small xyz files that define a label, kept with the committed results."""
+    import shutil
+    got = [f for f in GEOMETRIES if (jd / f).is_file()]
+    if got:
+        dest.mkdir(parents=True, exist_ok=True)
+        for f in got:
+            shutil.copy(jd / f, dest / f)
 
 
 def stage_state(jd: Path):
@@ -62,6 +86,8 @@ def main():
     man = pd.read_csv(a.manifest or HERE / "pilot_manifest.csv", keep_default_na=False)
     out = Path(a.out or Path(cfg["scratch"]) / "results"); out.mkdir(parents=True, exist_ok=True)
     g = cfg["gates"]
+    ropt = cfg.get("report", {})
+    use_ref = bool(ropt.get("ref_corrected_autode", False))       # F2; False reproduces the pilot report
     rows, labels = [], []
     for _, j in man.iterrows():
         jd = Path(cfg["scratch"]) / "jobs" / j.job_id
@@ -69,6 +95,9 @@ def main():
         ts, ref, lab = jload(jd / "ts_result.json"), jload(jd / "ref_result.json"), jload(jd / "label.json")
         port = ref.get("port") or ref.get("port_diagnostic") or {}
         tm = timing(jd)
+        if ropt.get("copy_geometries", True):
+            copy_geometries(jd, out / "geometries" / j.job_id)
+        dE_ref, dG_ref = ref_corrected(ts.get("dE_act_sp_kcal"), ts.get("dG_act_kcal"), ref.get("alt_used"), port)
         r = dict(job_id=j.job_id, kind=j.kind, ts_id=j.ts_id, core=j.core, panel=j.panel,
                  n_atoms=(lab.get("n_atoms") or (len(ts.get("A_idx", [])) + len(ts.get("B_idx", [])) or None)),
                  last_stage=last, fail_stage=fail[0] if fail else None, fail_reason=fail[1] if fail else None,
@@ -80,6 +109,7 @@ def main():
                  strict_would_use_alt=port.get("strict_rule_would_use_alt"),
                  port_agrees_coley=port.get("agrees_with_coley"),
                  autode_dE=ts.get("dE_act_sp_kcal"), autode_dG=ts.get("dG_act_kcal"),
+                 autode_dE_ref=dE_ref, autode_dG_ref=dG_ref,
                  status=lab.get("status"), **{k: lab.get(k) for k in TARGETS},
                  gates_failed=",".join(k for k, v in (lab.get("gates") or {}).items() if not v),
                  **{f"coreh_{s}": tm.get(s) for s in ("ts", "ref", "inputs", "sp", "label")})
@@ -92,7 +122,8 @@ def main():
                 r[f"delta_{k}"] = (lab[k] - float(d0)) if (lab.get(k) is not None and d0 != "") else None
             r["delta_dform_max"] = (max(abs(a_ - float(b_)) for a_, b_ in zip(sorted(ts["formed_d"]),
                                     (j.d0_formed_d1, j.d0_formed_d2))) if ts.get("formed_d") else None)
-            r["delta_dG_vs_coley"] = (ts["dG_act_kcal"] - float(j.d0_G_act_kcal)) if ts.get("dG_act_kcal") is not None else None
+            dG_cmp = dG_ref if use_ref else ts.get("dG_act_kcal")
+            r["delta_dG_vs_coley"] = (dG_cmp - float(j.d0_G_act_kcal)) if dG_cmp is not None else None
             r["d0_alt_used"] = j.d0_alt_used
         rows.append(r)
     df = pd.DataFrame(rows)

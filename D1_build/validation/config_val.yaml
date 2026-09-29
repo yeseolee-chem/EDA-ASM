@@ -1,0 +1,153 @@
+# D1 validation — config (VALIDATION_SPEC §6.1). = pilot config.yaml (host + frozen method) with:
+#   scratch -> d1_validation, gates.extra_imag_tol_cm (F1), report options (F2/F5), the `val` block
+#   (executor settings) and the `prereg` block (§7, PRE-REGISTERED: committed before any Phase V job;
+#   the commit hash goes into VALIDATION_REPORT.md; never edited after results are seen).
+
+# ---------------------------------------------------------------- host
+repo_root: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction
+scratch: /gpfs/tmp_cpu2/yeseo1ee/d1_validation            # link D1_build/validation/scratch; never committed
+pilot_scratch: /gpfs/tmp_cpu2/yeseo1ee/d1_autode_pilot    # READ-ONLY: pilot outputs are copied, never written
+conda_sh: /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
+conda_env: reactot
+venv: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/env/d1ade
+orca_bin: /home1/yeseo1ee/orca_6_1_1_avx2/orca
+xtb_bin: /home1/yeseo1ee/xtb-dist/bin/xtb
+mpi_root: /usr/mpi/gcc/openmpi-4.1.7a1
+g16_bin: null
+cpus_per_task: 8
+maxcore_mb: 3000
+
+# ---------------------------------------------------------------- D0 references (read-only)
+labels_all: labels_all.json
+d0_profiles: /gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/extracted/full_dataset_profiles
+d0_csv: /gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv
+d0_inputs_standalone: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/label_true/work/inputs
+d0_inputs_eda_smd: /gpfs/tmp_cpu2/yeseo1ee/eda_smd_relabel/inputs
+
+# ---------------------------------------------------------------- method (FROZEN, = pilot)
+ts_stage:
+  engine: orca
+  functional: B3LYP
+  dispersion: D3BJ
+  opt_basis: def2-SVP
+  sp_basis: def2-TZVP
+  solvent: water
+  solvation: smd
+  temp_K: 298.15
+  hmethod_conformers: false
+  free_energy: true
+  orca_optts_block: "\n%geom\nCalc_Hess true\nRecalc_Hess 30\nTrust -0.1\nMaxIter 100\nend"
+  g16_ts: "Opt=(TS, CalcFC, NoEigenTest, MaxCycles=100, MaxStep=10, NoTrustUpdate, RecalcFC=30)"
+  g16_iop: "IOp(2/9=2000)"
+  g16_disp: "EmpiricalDispersion=GD3BJ"
+
+sp_stage:
+  eda_level: "B3LYP D3BJ def2-TZVP SMD(water) NoSym TightSCF"
+  frag_level: "B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF"
+  frag_solv_block: "%cpcm\n  smd true\n  smdsolvent \"water\"\nend\n\n"
+  maxcore_mb: 3500
+  eda_nprocs: 1
+  covalent_factor: 1.25
+
+# ---------------------------------------------------------------- gates (= pilot + F1)
+gates:
+  identity_tol: 1.0e-6
+  bond_ref_tol: 0.02
+  closure_tol: 0.11
+  enuc_tol_eh: 1.0e-6
+  min_imag_cm: -40
+  extra_imag_tol_cm: -50        # F1: autodE "Had small imaginary modes" (all extra modes > -50 cm-1)
+  forming_max_A: 3.0
+  forming_min_A: 1.6
+  mode_share_min: 0.5
+  d_min_kcal: -0.5
+  control_barrier_tol: 1.0
+  control_channel_tol: 1.0
+  control_dform_tol_A: 0.05
+
+report:
+  ref_corrected_autode: true    # F2
+  copy_geometries: true         # F5
+
+seed: 20260930
+
+# ---------------------------------------------------------------- executor settings (not criteria)
+val:
+  seed: 20260930
+  pilot_dir: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/d1_autode_pilot
+  pilot_manifest: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/d1_autode_pilot/pilot_manifest.csv
+  pilot_labels: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/d1_autode_pilot/results/labels_d1_pilot.json
+  cfg_validation_csv: /gpfs/home1/yeseo1ee/projects/eda-asm-prediction/D1_build/d1_autode_pilot/evidence/cfg_validation_D0.csv
+  # L0 = this autodE-written OptTS header (J10, pilot); Opt = autodE's reactant Opt header (J10, pilot)
+  pilot_optts_inp: /gpfs/tmp_cpu2/yeseo1ee/d1_autode_pilot/jobs/J10/ts/J10/transition_states/TS_LXmTs6_hl_ad_1-10_4-5_optts_orca.inp
+  pilot_opt_inp: /gpfs/tmp_cpu2/yeseo1ee/d1_autode_pilot/jobs/J10/ts/J10/reactants_and_products/p0_C9H11N5_opt_orca.inp
+  l0_modify_internal: true      # re-make autodE's per-TS `%geom modify_internal { B i j A }` blocks (forming bonds)
+  reopt_port_diagnostic: false  # V2b jobs skip the Coley-port diagnostic (V5 owns it)
+  L2_keywords: "! OptTS Freq B3LYP/G NORI D3BJ def2-SVP DefGrid3 TightSCF CPCM(Water)"
+  pool: {max_atoms: 35, neutral: true, exclude_async: true}
+  n_per_stratum: 6
+  n_subset_per_stratum: 2
+  force: {20: S1, 105: S4}
+  v1_src_jobs: [J08, J11]
+  v1c_rxns: [20, 105]
+  v6b_jobs: [J00, J04, J08, J09]
+  v6b_extra_runs: 2
+  v6c_job: J07
+  v7_job: J03
+  v6a_manifest: v6a_manifest.csv   # sample_pilot.py output (needs D1_설계_v8.xlsx); V6a is left out when absent
+  scan: {start: 1.60, end: 3.40, n: 10}
+  worker_safety_h: 8               # a worker stops claiming when less than this is left of its 48 h wall
+  n_d1_total: 2846
+
+# ---------------------------------------------------------------- PRE-REGISTERED criteria (§7)
+prereg:
+  MAE_ref:                       # SUMMARY.md rev 3, ESPLEY73 + KRR test MAE; disp = ESPLEY46 (1.25)
+    barrier_kcal: 1.45
+    d1_kcal: 1.12
+    d2_kcal: 0.82
+    elst_dft: 1.52
+    pauli_dft: 2.02
+    oi_dft: 1.16
+    cpcm_dft: 1.01
+    cds_dft: 0.23
+    disp_dft: 1.25
+  ci_level: 0.95
+  bootstrap_n: 10000
+  bootstrap_seed: 20260930
+  same_ts: {rmsd_A: 0.10, dform_A: 0.02}
+  A1: {n_total: 20, n_ok_min: 16}
+  A2: {pass_fraction: 1.0}
+  A3: {n_required: 24, max_abs_kcal: 0.1}
+  A4: {n_agree_min: 22, n_total: 24, dG_thr: -0.239, dG_band: 0.5, rmsd_thr: 0.05, rmsd_band: 0.03}
+  A5_eng: {bias_frac: 0.2, rms_frac: 0.5, ts_rmsd_median_max_A: 0.05}
+  A5_run: {nf_decision: 1.0}
+  A5_e2e: {bias_frac: 0.2, R_ci_lower_fail: 1.0, ref_barrier_tol: 1.0}
+  A6: {dE_eh: 1.0e-6, label_kcal: 0.001, coord_pass_A: 1.0e-4, coord_fail_A: 0.01}
+  A7: {n_required: 8}
+  A8: {ok_hard_fail_max: 0, foreign_ids: [3090, 3766, 4252]}
+  extra_imag_band_cm: [-50, 0]
+  l0_expected_header: |
+    ! OptTS Freq B3LYP RIJCOSX D3BJ def2-SVP def2/J  CPCM(Water)
+    %geom
+    Calc_Hess true
+    Recalc_Hess 30
+    Trust -0.1
+    MaxIter 100
+    end
+    %cpcm
+    smd true
+    SMDsolvent "water"
+    end
+    %output
+    xyzfile=True
+    end
+    %scf
+    maxiter 250
+    end
+    %output
+    Print[P_Hirshfeld] = 1
+    end
+    % maxcore
+    3000
+    %pal nprocs 8
+    end

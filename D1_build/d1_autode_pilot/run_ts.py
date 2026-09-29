@@ -7,6 +7,12 @@ Job kinds (manifest column `kind`):
   D1, D0_control  autodE computes the profile from the reaction SMILES
   D0_replay       no autodE: the D0 (Coley) TS and reactant geometries are copied in, so the
                   later stages can be checked against labels_all.json on identical geometry
+  D0_reopt_L0/L2  validation V2b (F6): ORCA OptTS+Freq started from the Coley TS at level L0 / L2
+                  (orca_direct.py); the TS gate below is applied to the re-optimised TS
+
+Imaginary-frequency gate (F1): with gates.extra_imag_tol_cm set, extra imaginary modes are accepted
+when every one of them is above that value (autodE 1.2.0-1.4.5 transition_state.py: "Had small
+imaginary modes"), flagged as flag_small_extra_imag; without it exactly one is required (pilot rule).
 
 Writes into <scratch>/jobs/<job>/ :
   ts/<job>/...                 autodE working tree (autodE checkpoints; a rerun resumes)
@@ -85,14 +91,16 @@ def run_autode(cfg, job, jd, res, dry):
     res.update(autode_version=ade.__version__, keywords=pc.hmethod_keywords_summary(), n_cores=ade.Config.n_cores)
     wd = jd / "ts"; wd.mkdir(exist_ok=True)
     os.chdir(wd)
+    name = pc.ade_name(job)
+    res["ade_name"] = name
     try:
-        rxn = ade.Reaction(job["rxn_smiles"], name=job["job_id"], solvent_name=t["solvent"], temp=t["temp_K"])
+        rxn = ade.Reaction(job["rxn_smiles"], name=name, solvent_name=t["solvent"], temp=t["temp_K"])
         rxn.calculate_reaction_profile(free_energy=bool(t["free_energy"]))
     except Exception as e:                                       # noqa: BLE001
         res["traceback"] = traceback.format_exc()
         raise StageFail(f"autodE exception: {type(e).__name__}: {e}")
     for f in ("energies.csv", "methods.txt"):
-        p = wd / job["job_id"] / f
+        p = wd / name / f
         if p.is_file():
             shutil.copy(p, jd / f)
     if rxn.ts is None:
@@ -131,8 +139,59 @@ def load_replay(cfg, job, jd, res):
                 prod=pc.read_xyz(ps[0]) if ps else None, imag=None, mode=None)
 
 
+REOPT = {"D0_reopt_L0": "L0", "D0_reopt_L2": "L2"}
+
+
+def run_reopt(cfg, job, jd, res, level, fr):
+    """F6 / V2b: ORCA OptTS+Freq at `level`, started from Coley's TS; reactants = Coley's plain r*.xyz."""
+    import orca_direct as od
+    got = load_replay(cfg, job, jd, res)
+    coley_ts = got["ts"]
+    r0, r1 = got["reacs"][:2]
+    P = fr.partition(coley_ts, r0, r1)
+    if P.status != "ok":
+        raise StageFail(f"partition of the Coley TS: {P.status}")
+    audit = fr.audit_forming_bonds(P, coley_ts, r0, r1, job["mapped_smiles"])
+    if audit is None:
+        raise StageFail("forming_bond_map_failed on the Coley TS")
+    wd = jd / "ts_reopt"; wd.mkdir(exist_ok=True)
+    header = od.level_header(cfg, level, sorted(audit.formed_ts), n_cores=pc.n_cores())
+    inp = wd / "reopt.inp"
+    if not inp.is_file():
+        od.write_inp(inp, header, *coley_ts, charge=int(job["charge"]), mult=int(job["mult"]))
+    text = od.run(cfg, inp).read_text(errors="replace")
+    res.update(reopt_level=level, reopt_header=header, reopt_output_checks=od.level_checks(text),
+               reopt_hours=od.run_hours(text), reopt_e_final_eh=od.last_fspe(text),
+               coley_ts_formed_pairs=sorted(audit.formed_ts), coley_ts_formed_d=audit.d_formed)
+    res["reopt_level_ok"] = od.level_ok(level, res["reopt_output_checks"])
+    if not od.terminated(text):
+        raise StageFail(f"ORCA OptTS ({level}) did not terminate normally")
+    if not od.opt_converged(text):
+        raise StageFail(f"ORCA OptTS ({level}) did not converge")
+    imag, mode = od.imag_and_mode(wd / "reopt.hess")
+    got.update(ts=pc.read_xyz(wd / "reopt.xyz"), imag=imag, mode=mode)
+    return got
+
+
 class StageFail(Exception):
     pass
+
+
+def imag_gate(imag, g):
+    """(checks, hard failures) from the imaginary frequencies. imag None = not available (replay)."""
+    if imag is None:
+        return dict(one_imag=None, imag_below_min=None), []
+    imag = sorted(imag)
+    tol = g.get("extra_imag_tol_cm")
+    below = (imag[0] <= g["min_imag_cm"]) if imag else (None if tol is None else False)
+    checks = dict(one_imag=len(imag) == 1, imag_below_min=below)
+    if tol is None:                                   # pilot rule: exactly one imaginary mode
+        hard = ["one_imag", "imag_below_min"]
+    else:                                             # F1: autodE's "small imaginary modes" rule
+        checks["extra_imag_small"] = all(v > tol for v in imag[1:])
+        checks["flag_small_extra_imag"] = len(imag) >= 2
+        hard = ["imag_below_min", "extra_imag_small"]
+    return checks, [k for k in hard if checks[k] is False]
 
 
 # ---------------------------------------------------------------- common analysis
@@ -190,19 +249,19 @@ def analyse(cfg, job, jd, res, got, fr):
     dist = lambda u, v: float(np.linalg.norm(ts_xyz[u] - ts_xyz[v]))     # noqa: E731
     res.update(closest_contacts=contacts[:3], regio_sum_formed=dist(i, j) + dist(k, l),
                regio_sum_crossed=dist(i, l) + dist(k, j))
+    ichecks, ihard = imag_gate(imag, g)
     checks = dict(
         flag_regio_ambiguous=res["regio_sum_crossed"] - res["regio_sum_formed"] < 0.3,   # D0: 1st pct 0.885 A, 4/5260 < 0
         shortest_contact_is_forming=contacts[0][1] in fset,
-        one_imag=None if imag is None else len(imag) == 1,
-        imag_below_min=None if not imag else imag[0] <= g["min_imag_cm"],
+        **ichecks,
         no_foreign_bond=len(audit.foreign) == 0,
         forming_in_range=all(g["forming_min_A"] <= d for d in audit.d_formed),
         flag_async=max(audit.d_formed) > g["forming_max_A"],
         imag_mode_on_forming_bonds=None if share is None else share >= g["mode_share_min"],
     )
     res["checks"] = checks
-    hard = [k for k in ("one_imag", "imag_below_min", "no_foreign_bond", "forming_in_range",
-                        "imag_mode_on_forming_bonds") if checks[k] is False]
+    hard = ihard + [k for k in ("no_foreign_bond", "forming_in_range", "imag_mode_on_forming_bonds")
+                    if checks[k] is False]
     if hard:
         raise StageFail("TS check failed: " + ",".join(hard))
 
@@ -220,8 +279,12 @@ def main():
                engine=cfg["ts_stage"]["engine"], dry_xtb=a.dry_xtb)
     t0 = time.time()
     try:
-        got = (load_replay(cfg, job, jd, res) if job["kind"] == "D0_replay"
-               else run_autode(cfg, job, jd, res, a.dry_xtb))
+        if job["kind"] == "D0_replay":
+            got = load_replay(cfg, job, jd, res)
+        elif job["kind"] in REOPT:
+            got = run_reopt(cfg, job, jd, res, REOPT[job["kind"]], fr)
+        else:
+            got = run_autode(cfg, job, jd, res, a.dry_xtb)
         res["wall_s"] = time.time() - t0
         analyse(cfg, job, jd, res, got, fr)
     except StageFail as e:

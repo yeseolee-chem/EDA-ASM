@@ -23,12 +23,18 @@ reference afterwards. This module supplies the geometric pieces:
 from __future__ import annotations
 
 import collections
+import os
 
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from rdkit.Chem import AllChem, rdDetermineBonds
 
 LINEAR_DEG = 165.0      # an sp centre in a dihedral makes it undefined -> '?'
+
+# F3 (VALIDATION_SPEC §3): AssignBondOrdersFromTemplate warns "More than one matching pattern" on every
+# symmetric template (730 KB of S0 log). D1P_RDKIT_WARNINGS=1 turns the warnings back on.
+if os.environ.get("D1P_RDKIT_WARNINGS", "0") != "1":
+    RDLogger.DisableLog("rdApp.warning")
 
 
 # ---------------------------------------------------------------- geometry <-> template

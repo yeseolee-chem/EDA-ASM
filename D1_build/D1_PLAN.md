@@ -5,6 +5,7 @@
 **현재 상태 (2026-09-29 14:24):** 파일럿 실행이 끝났습니다. 제출 09:00, 보고서 11:57로 약 3시간 걸렸습니다.
 - 결과: A1–A4 통과, A5 실패(진단용 기준). D1 8/10이 라벨까지 완료됐습니다.
 - 결과 요약과 남은 결정 사항은 [§11](#11-실행-결과-2026-09-29), 전체 보고서는 [`d1_autode_pilot/results/pilot_report.md`](d1_autode_pilot/results/pilot_report.md)에 있습니다.
+- 다음 단계인 본실험 전 검증은 [`validation/VALIDATION_SPEC.md`](validation/VALIDATION_SPEC.md)와 [`validation/EXEC_PLAN.md`](validation/EXEC_PLAN.md)에 있습니다. 코드만 작성했고 아직 실행하지 않았습니다.
 
 ---
 
