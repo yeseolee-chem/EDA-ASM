@@ -13,6 +13,9 @@ Job kinds (manifest column `kind`):
 Imaginary-frequency gate (F1): with gates.extra_imag_tol_cm set, extra imaginary modes are accepted
 when every one of them is above that value (autodE 1.2.0-1.4.5 transition_state.py: "Had small
 imaginary modes"), flagged as flag_small_extra_imag; without it exactly one is required (pilot rule).
+Distance gates (FIX F-A): with gates.no_bond_A set, not_product_like (longer forming bond >= forming_min_A)
+and forming_bond_present (shorter one < no_bond_A, the D0 NO_BOND_A rule) are hard, a forming bond shorter
+than forming_min_A is only flagged; without it every forming bond must be >= forming_min_A (pilot rule).
 
 Writes into <scratch>/jobs/<job>/ :
   ts/<job>/...                 autodE working tree (autodE checkpoints; a rerun resumes)
@@ -259,8 +262,18 @@ def analyse(cfg, job, jd, res, got, fr):
         flag_async=max(audit.d_formed) > g["forming_max_A"],
         imag_mode_on_forming_bonds=None if share is None else share >= g["mode_share_min"],
     )
+    if g.get("no_bond_A") is not None:
+        # FIX F-A: distance gates symmetric with D0. autodE has no lower distance bound; only a product-like
+        # geometry (both bonds formed) fails, a short bond is flagged (D0: rxn 4295, 1.537 A), and no bond
+        # forming at all (both >= no_bond_A) fails as in D0 (postprocess_labels_all.py NO_BOND_A: 3400, 5783).
+        checks.update(not_product_like=max(audit.d_formed) >= g["forming_min_A"],
+                      flag_short_forming=min(audit.d_formed) < g["forming_min_A"],
+                      forming_bond_present=min(audit.d_formed) < g["no_bond_A"])
+        dist_hard = ("not_product_like", "forming_bond_present")
+    else:                                             # pilot rule: every forming bond >= forming_min_A
+        dist_hard = ("forming_in_range",)
     res["checks"] = checks
-    hard = ihard + [k for k in ("no_foreign_bond", "forming_in_range", "imag_mode_on_forming_bonds")
+    hard = ihard + [k for k in ("no_foreign_bond", *dist_hard, "imag_mode_on_forming_bonds")
                     if checks[k] is False]
     if hard:
         raise StageFail("TS check failed: " + ",".join(hard))

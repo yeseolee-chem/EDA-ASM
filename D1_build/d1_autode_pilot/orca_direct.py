@@ -218,12 +218,23 @@ def level_checks(text: str) -> dict:
     )
 
 
+def cosx_seen(chk: dict) -> bool:
+    """RIJCOSX active according to the output: the RIJ-COSX setting line reads 'on', or another RI/COSX
+    setting line mentioning COSX ends in 'on' (a line printed as 'off' must not count)."""
+    if chk.get("rijcosx") == "on":
+        return True
+    return any(re.search(r"COS-?X", l) and re.search(r"\bon\s*$", l) for l in (chk.get("ri_lines") or []))
+
+
 def level_ok(level: str, chk: dict) -> dict:
-    """§6.3 output checks as booleans (None when the string was not printed)."""
+    """§6.3 output checks as booleans (None when not applicable / not printed). FIX F-B: L0 and L1 must
+    show RIJCOSX (positive control of the parser), so L2's no_rijcosx cannot pass on an empty parse."""
     vwn = chk.get("vwn") or ""
+    seen = cosx_seen(chk)
     return dict(
         vwn_ok=(bool(VWN_V_RE.search(vwn)) if level == "L0" else bool(VWN_III_RE.search(vwn))) if vwn else None,
-        no_rijcosx=None if level != "L2" else (chk.get("rijcosx") in (None, "off")),
+        rijcosx_on=None if level == "L2" else seen,
+        no_rijcosx=None if level != "L2" else (not seen and chk.get("rijcosx") in (None, "off")),
         d3_present=len(chk.get("d3") or {}) == 4,
         smd_ok=chk.get("smd_cds") and chk.get("eps") == "78.3550",
     )

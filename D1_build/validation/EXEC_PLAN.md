@@ -102,6 +102,22 @@
 10. **읽기 전용 준수.** 파일럿 scratch는 읽기만 합니다.
     - 필요한 파일은 `scratch/pilot_copy/`(make_tasks), `v1/<task>/pilot_sp`, `v8/J12`, `v7/J03`, `jobs/V6c_J07/ts`(V6c)로 복사해서 씁니다.
 
+## 4b. FIX_348bc3e 적용 (2026-09-29)
+
+| id | 내용 | 파일 |
+|---|---|---|
+| F-A | 거리 gate를 D0와 대칭으로. `gates.no_bond_A`가 있으면 `not_product_like`(긴 쪽 ≥ 1.6 Å)와 `forming_bond_present`(짧은 쪽 < 3.3 Å, D0 `NO_BOND_A`)를 hard로, 1.6 Å 미만 결합은 `flag_short_forming`으로만 표시. 없으면 파일럿 규칙(`forming_in_range`). N4 검출 조건, V9·A8(`no_bond_ids` 3400, 5783)도 함께 변경 | `run_ts.py`, `config_val.yaml`, `negative_controls.py`, `gate_audit_d0.py`, `validation_report.py` |
+| F-B | `level_ok`에 양성 대조 추가: L0/L1은 `rijcosx_on`이 True여야 함. V2a에서 L0/L1 `rijcosx_on` False 또는 VWN 문자열 없음이면 `result_error.json` + queue STOP | `orca_direct.py`, `val_grad.py` |
+| F-C | `result.json`은 성공 시에만. 오류는 `result_error.json`(재실행 시 덮어씀). V7의 "OptTS 미수렴", "gate 실패"는 과학적 결과로 `result.json` | `val_determinism.py`, `val_grad.py`, `val_scan_j03.py` |
+| F-D | interim A3: 빠진 V5 job에 `.fail_*`가 없으면 FAIL이 아니라 incomplete(`passed=None`). STOP은 쓰되 사유를 "incomplete"로 기록 | `validation_report.py` |
+| F-E | `v6a_manifest.csv` commit — **파일이 전달되지 않음** (첨부가 문서만 도착, 클러스터에도 없음). 받으면 `validation/`에 넣고 commit | — |
+
+**지시와 다르게 구현한 한 가지 (F-B):** 지시문의 `cosx_seen = rijcosx == "on" or "COSX" in ri_lines`는 NORI 출력에 `RIJ-COSX (...).... off` 줄이 찍히면 COSX를 본 것으로 처리해 L2를 잘못 FAIL시킵니다. 그래서 COSX가 들어간 줄은 값이 `on`으로 끝날 때만 셉니다. 합성 `off` 줄로 확인하는 테스트도 넣었습니다.
+
+**D-1 (사용자 결정 대기):** `prereg.A1.no_ts_unconfirmed_policy: TBD`. 값이 `TBD`이면 `submit_validation.sh`가 제출을 거부합니다.
+- 보고서는 (a) `strict`와 (b) `allowed`를 이미 구현했습니다. no-TS 비율의 Wilson CI와 Coley 12.3%의 비교는 정책과 무관하게 항상 보고합니다.
+- (c) `scan`은 선택되면 구현합니다.
+
 ## 5. 코드 작성 중 확인한 사실
 
 - **F1 근거:** autodE 1.4.5 `transition_state.py` 237행이 `if all([freq > -50 for freq in self.imaginary_frequencies[1:]])` 입니다.

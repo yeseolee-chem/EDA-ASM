@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Phase F unit tests (VALIDATION_SPEC §3 completion conditions 2-3, §6.3 parser check, §6.4 RMSD tests)
-plus the L0 header, MAE_ref vs SUMMARY.md, and the new parsers. Plain asserts; run by run_tests.sh on a
-compute node. Pilot scratch and D0 data are only read; temporary files go to a temp dir.
-Exit 1 if any test fails.
+plus the L0 header, MAE_ref vs SUMMARY.md, the new parsers, and the FIX_348bc3e tests (F-A distance
+gates on D0 4295/3400/5783, F-B level-parser positive control). Plain asserts; run by run_tests.sh on a
+compute node. Pilot scratch and D0 data are only read; files are written only to a temp dir and to the
+V9 worker dir <scratch>/v9/tmp/. Exit 1 if any test fails.
 """
 import json
 import re
@@ -151,6 +152,35 @@ def parsers_engrad_runtime_meta():
     assert pc.meta_rxn_id({"job_id": "J05"}) == 900005 and pc.meta_rxn_id({"job_id": "S0"}) == 999000
     assert pc.meta_rxn_id({"job_id": "V5_0020", "meta_rxn_id": "800003"}) == 800003
     assert pc.ade_name({"job_id": "V6c_J07", "ade_name": "J07"}) == "J07" and pc.ade_name({"job_id": "J01", "ade_name": ""}) == "J01"
+
+
+@test
+def fA_distance_gates_d0():
+    """FIX F-A (from FIX_348bc3e.md): 4295 (1.537 A bond) passes, 3400 / 5783 (no bond < 3.3 A) fail."""
+    import gate_audit_d0 as ga
+    ga.init(None)
+    for rid, want in ((4295, ""), (3400, "forming_bond_present"), (5783, "imag_mode_on_forming_bonds")):
+        row = ga.one(dict(rxn_id=rid, status="x"))
+        print(f"      rxn {rid}: hard_fail={row['hard_fail']!r}")
+        assert (want == "" and row["hard_fail"] == "") or (want and want in row["hard_fail"]), (rid, row["hard_fail"])
+
+
+@test
+def fB_level_checks_positive_control():
+    """FIX F-B: the level parser must see RIJCOSX, VWN-V and D3(BJ) in the pilot's own L0 OptTS output."""
+    import orca_direct as od
+    out = Path(cfg["val"]["pilot_optts_inp"]).with_suffix(".out")
+    chk = od.level_checks(out.read_text(errors="replace"))
+    print(f"      J10 L0: rijcosx={chk['rijcosx']!r} vwn={chk['vwn']!r} d3={chk['d3']} eps={chk['eps']!r} smd_cds={chk['smd_cds']}")
+    assert chk["rijcosx"] == "on", chk["rijcosx"]
+    assert od.VWN_V_RE.search(chk["vwn"] or ""), chk["vwn"]
+    assert len(chk["d3"]) == 4, chk["d3"]
+    lo = od.level_ok("L0", chk)
+    assert lo["rijcosx_on"] is True and lo["vwn_ok"] is True, lo
+    off = "RIJ-COSX (HFX calculated with COS-X)).... off"
+    assert od.level_ok("L2", dict(chk, rijcosx="off", ri_lines=[off]))["no_rijcosx"] is True
+    assert od.level_ok("L2", dict(chk))["no_rijcosx"] is False          # an L2 output that shows RIJCOSX on fails
+    assert od.level_ok("L1", dict(chk, rijcosx=None, ri_lines=[]))["rijcosx_on"] is False
 
 
 n_fail = sum(not ok for _, ok in RESULTS)

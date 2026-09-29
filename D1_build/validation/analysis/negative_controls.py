@@ -7,7 +7,7 @@ or D0 profile files copied by run_ts.load_replay); the gate function the pipelin
   N1 eda.inp SMD(water) -> CPCM(water)        build_sp_inputs.check_method_lines, D0 audit
   N2 eda.inp FRAG1_C 0 -> 1                   fragment electron parity, D0 audit (assemble's audit_error path)
   N3 D0 rxn 3090 analysed as a replay         run_ts.analyse no_foreign_bond
-  N4 product geometry + random mode as a TS   run_ts.analyse forming_in_range / imag_mode_on_forming_bonds
+  N4 product geometry + random mode as a TS   run_ts.analyse not_product_like / imag_mode_on_forming_bonds
   N5 'ORCA TERMINATED NORMALLY' removed        run_sp criterion, assemble.uniformity, stage3 status
   N6 SMD CDS line removed                      assemble.uniformity cds, D0 audit no_smd_cds
   N7 plain dipole instead of _alt (rxn 20)     port diagnostic use_alt disagrees (A4); d1 shift from one SP
@@ -139,8 +139,8 @@ def main():
             run_ts.analyse(cfg, dict(job12, job_id="N4"), jd, res, got, fr); outcome = "passed all TS gates"
         except run_ts.StageFail as e:
             outcome = str(e)
-        record("N4", "product geometry + random mode as the TS", "forming_in_range / imag_mode_on_forming_bonds",
-               ("forming_in_range" in outcome) or ("imag_mode_on_forming_bonds" in outcome),
+        record("N4", "product geometry + random mode as the TS", "not_product_like / imag_mode_on_forming_bonds",
+               ("not_product_like" in outcome) or ("imag_mode_on_forming_bonds" in outcome),
                outcome=outcome, formed_d=res.get("formed_d"), share=res.get("imag_mode_forming_share"))
 
     def n5():

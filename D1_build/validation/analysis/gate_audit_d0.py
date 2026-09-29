@@ -70,6 +70,7 @@ def one(rec):
         row.update(partition=(res.get("partition") or {}).get("status"), mode_share=res.get("imag_mode_forming_share"),
                    formed_d=res.get("formed_d"), n_foreign=len(res.get("foreign") or []),
                    flag_regio_ambiguous=c.get("flag_regio_ambiguous"), flag_async=c.get("flag_async"),
+                   flag_short_forming=c.get("flag_short_forming"),
                    regio_margin=(res["regio_sum_crossed"] - res["regio_sum_formed"]) if "regio_sum_formed" in res else None)
     except Exception as e:                                            # noqa: BLE001
         row["hard_fail"] = f"error:{type(e).__name__}: {e}"
@@ -91,12 +92,15 @@ def main():
     df.to_csv(out / "v9_gate_audit.csv", index=False)
     ok = df[df.status == "ok"]
     bad_ok = ok[ok.hard_fail != ""]
-    foreign = [int(x) for x in cfg["prereg"]["A8"]["foreign_ids"]]
-    fdet = {rid: "no_foreign_bond" in str(df.loc[df.rxn_id == rid, "hard_fail"].iloc[0]) if (df.rxn_id == rid).any() else None
-            for rid in foreign}
+    A8 = cfg["prereg"]["A8"]
+    hf = dict(zip(df.rxn_id, df.hard_fail.astype(str)))
+    # foreign-bond rxns must fail on no_foreign_bond; no-bond rxns (FIX F-A) on any hard gate
+    fdet = {int(r): ("no_foreign_bond" in hf[int(r)]) if int(r) in hf else None for r in A8["foreign_ids"]}
+    ndet = {int(r): (hf[int(r)] != "") if int(r) in hf else None for r in A8.get("no_bond_ids", [])}
     res = dict(n_records=len(df), n_ok=len(ok), n_ok_hard_fail=len(bad_ok),
                ok_hard_fail=bad_ok[["rxn_id", "hard_fail"]].to_dict("records"),
-               foreign_detected=fdet,
+               foreign_detected=fdet, no_bond_detected=ndet,
+               n_short_forming_flag_ok=int(ok.flag_short_forming.fillna(False).astype(bool).sum()) if "flag_short_forming" in ok else None,
                excluded=df[df.status != "ok"][["rxn_id", "status", "hard_fail"]].to_dict("records"),
                mode_share_min_ok=float(ok.mode_share.min()), mode_share_p001_ok=float(ok.mode_share.quantile(0.001)),
                n_regio_flag_ok=int((ok.flag_regio_ambiguous == True).sum()),         # noqa: E712

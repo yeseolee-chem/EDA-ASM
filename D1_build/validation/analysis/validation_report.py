@@ -101,12 +101,38 @@ def deltas(c, jobs):
 
 
 def a3(c):
-    df = deltas(c, c.jobs("V5"))
+    """FIX F-D: a V5 job missing without any .fail_* marker (infrastructure) makes A3 incomplete
+    (passed None), not FAIL; a scientific failure (.fail_*) or a label outside the tolerance is FAIL."""
+    jobs = c.jobs("V5")
+    df = deltas(c, jobs)
     n_req, tol = int(c.P["A3"]["n_required"]), float(c.P["A3"]["max_abs_kcal"])
     mx = float(df[TARGETS].abs().to_numpy().max()) if len(df) else float("nan")
     per = df[TARGETS].abs().max(axis=1).tolist() if len(df) else []
-    ok = len(df) == n_req and all(x <= tol for x in per)
-    return dict(n_ok=len(df), n_required=n_req, max_abs=mx, passed=ok, table=df)
+    have = set(df.job_id) if len(df) else set()
+    missing = [j for j in jobs if j not in have]
+    failed = [j for j in missing if c.fail(j)]
+    incomplete = [j for j in missing if not c.fail(j)]
+    if failed or not all(x <= tol for x in per):
+        ok = False
+    elif incomplete:
+        ok = None
+    else:
+        ok = len(df) == n_req
+    return dict(n_ok=len(df), n_required=n_req, max_abs=mx, passed=ok, table=df,
+                failed=failed, incomplete=incomplete)
+
+
+def a8_judge(c, v9):
+    """(passed, foreign detection, no-bond detection): ok hard fails within the limit, every foreign-bond rxn
+    caught by no_foreign_bond and every no-bond rxn (FIX F-A) by a hard gate."""
+    if not v9:
+        return None, {}, {}
+    A = c.P["A8"]
+    fdet, ndet = v9.get("foreign_detected") or {}, v9.get("no_bond_detected") or {}
+    ok = (v9.get("n_ok_hard_fail", 1) <= int(A["ok_hard_fail_max"])
+          and len(fdet) == len(A["foreign_ids"]) and all(fdet.values())
+          and len(ndet) == len(A.get("no_bond_ids", [])) and all(ndet.values()))
+    return ok, fdet, ndet
 
 
 def a4(c):
@@ -323,11 +349,19 @@ def a1(c, v7):
                                       if r.fail_stage else "incomplete") for r in df.itertuples()]
     k, n = int(df.ok.sum()), len(df)
     lo, hi = st.wilson(k, n, c.P["ci_level"])
-    fails_ok = bool(df["class"].dropna().isin(["chemical_no_saddle", "gate"]).all())
-    judged = n == int(A["n_total"])
+    policy = str(A.get("no_ts_unconfirmed_policy", "strict"))          # D-1
+    allowed = {"chemical_no_saddle", "gate"} | ({"no_ts_unconfirmed"} if policy == "allowed" else set())
+    fails_ok = bool(df["class"].dropna().isin(allowed).all())
+    n_nots = int(df["class"].isin(["no_ts_unconfirmed", "chemical_no_saddle"]).sum())
+    nlo, nhi = st.wilson(n_nots, n, c.P["ci_level"])
+    rate = float(A.get("coley_failure_rate", 0.123))
+    judged = n == int(A["n_total"]) and policy in ("strict", "allowed")
+    notes = ([] if n == int(A["n_total"]) else [f"{n} rows instead of {A['n_total']} (V6a manifest missing)"]) + \
+            ([] if policy in ("strict", "allowed") else [f"no_ts_unconfirmed_policy = {policy}: not implemented / not decided"])
     return dict(k=k, n=n, wilson=(lo, hi), table=df, pipeline_bugs=int((df["class"] == "pipeline").sum()),
-                passed=(bool(k >= int(A["n_ok_min"]) and fails_ok) if judged else None),
-                note="" if judged else f"{n} rows instead of {A['n_total']} (V6a missing: D1_설계_v8.xlsx)")
+                policy=policy, n_no_ts=n_nots, no_ts_wilson=(nlo, nhi),
+                coley_rate_within_ci=bool(nlo <= rate <= nhi) if np.isfinite(nlo) else None,
+                passed=(bool(k >= int(A["n_ok_min"]) and fails_ok) if judged else None), note="; ".join(notes))
 
 
 def a2(c):
@@ -453,25 +487,30 @@ def worker_jobs(c):
 def interim(c):
     r3, r4, r6, g, v8, v9 = a3(c), a4(c), a6(c), v2a(c), c.jl(c.scr / "v8" / "result.json"), c.jl(c.scr / "v9" / "result.json")
     a7 = (v8.get("n_detected") == int(c.P["A7"]["n_required"])) if v8 else None
+    a8, fdet, ndet = a8_judge(c, v9)
+    inc = f"; incomplete (no .fail_*): {', '.join(r3['incomplete'])}" if r3["incomplete"] else ""
     L = ["# D1 validation — interim report (priority 0–2)\n",
          f"| check | value | result |\n|---|---|---|",
-         f"| A3 (V5 replay) | {r3['n_ok']}/{r3['n_required']} ok, max \\|Δ\\| {fmt(r3['max_abs'], 4)} kcal/mol | {pf(r3['passed'])} |",
+         f"| A3 (V5 replay) | {r3['n_ok']}/{r3['n_required']} ok, max \\|Δ\\| {fmt(r3['max_abs'], 4)} kcal/mol{inc} | "
+         f"{'incomplete' if r3['passed'] is None and r3['incomplete'] else pf(r3['passed'])} |",
          f"| A4 (V5 port) | {r4['n_agree']}/{r4['n_total']} agree | {pf(r4['passed'])} |",
          f"| A6(a) same input | max \\|ΔE\\| {fmt(r6['a'].get('max_abs_dE_eh'))} Eh, labels {fmt(r6['a'].get('max_abs_dlabel_kcal'))} | {pf(r6['a']['passed'])} |",
          f"| A6(b) nprocs 1 vs 4 | max \\|ΔE\\| {fmt(r6['b'].get('max_abs_dE_eh'))} Eh | {pf(r6['b']['passed'])} |",
          f"| A7 (V8) | {v8.get('n_detected')}/{v8.get('n_controls')} detected | {pf(a7)} |",
-         f"| A8 (V9) | ok hard fails {v9.get('n_ok_hard_fail')}, foreign {v9.get('foreign_detected')} | (final report) |",
+         f"| A8 (V9) | ok hard fails {v9.get('n_ok_hard_fail')}, foreign {fdet}, no-bond {ndet} | {pf(a8)} |",
          f"| V2a | {json.dumps(g.get('summary'))} | diagnostic |"]
-    stop = [k for k, v in (("A3", r3["passed"]), ("A6(a)", r6["a"]["passed"]), ("A6(b)", r6["b"]["passed"]), ("A7", a7))
-            if v is False]
-    L.append(f"\n**STOP conditions (§8 row 1): {'FAIL ' + ', '.join(stop) + ' -> queue STOP written' if stop else 'none'}**")
+    stop = [f"{k} FAIL" for k, v in (("A3", r3["passed"]), ("A6(a)", r6["a"]["passed"]), ("A6(b)", r6["b"]["passed"]),
+                                     ("A7", a7)) if v is False]
+    if r3["passed"] is None and r3["incomplete"]:                     # FIX F-D: infrastructure, not a scientific FAIL
+        stop.append(f"A3 incomplete ({', '.join(r3['incomplete'])}: no .fail_* marker)")
+    L.append(f"\n**STOP conditions (§8 row 1): {'; '.join(stop) + ' -> queue STOP written' if stop else 'none'}**")
     text = "\n".join(L) + "\n"
     (c.scr / "interim_report.md").write_text(text)
     (VAL / "results").mkdir(exist_ok=True)
     (VAL / "results" / "interim_report.md").write_text(text)
     if stop:
         c.Q.mkdir(parents=True, exist_ok=True)
-        (c.Q / "STOP").write_text(f"interim: {', '.join(stop)} FAIL (VALIDATION_SPEC §8)\n")
+        (c.Q / "STOP").write_text(f"interim: {'; '.join(stop)} (VALIDATION_SPEC §8)\n")
     print(text)
 
 
@@ -483,8 +522,7 @@ def final(c):
     eng, eng2 = a5_eng(c, "V2b-L0"), a5_eng(c, "V2b-L2")
     run = a5_run(c); e2e = a5_e2e(c, eng, run)
     a7 = (v8.get("n_detected") == int(c.P["A7"]["n_required"])) if v8 else None
-    fdet = v9.get("foreign_detected") or {}
-    a8 = (v9.get("n_ok_hard_fail", 1) <= int(c.P["A8"]["ok_hard_fail_max"]) and all(fdet.values())) if v9 else None
+    a8, fdet, ndet = a8_judge(c, v9)
     r9, r10, g, tm, xi = a9(c), a10(c, v7), v2a(c), ts_match(c), extra_imag(c)
     a6_all = (r6["a"]["passed"] and r6["b"]["passed"] and r6["c"]["passed"] is not False) if (
         r6["a"]["passed"] is not None and r6["b"]["passed"] is not None) else None
@@ -545,16 +583,21 @@ def final(c):
     L.append(f"\ntasks: {len(c.tasks)} — {counts}\n")
 
     L.append("## 2. 판정표 (A1–A10)\n\n| id | value | 95% CI | result | note |\n|---|---|---|---|---|")
-    L.append(f"| A1 | {r1['k']}/{r1['n']} ok, pipeline bugs {r1['pipeline_bugs']} | {fmt(r1['wilson'][0])}–{fmt(r1['wilson'][1])} | {pf(r1['passed'])} | {r1['note']} |")
+    L.append(f"| A1 | {r1['k']}/{r1['n']} ok, pipeline bugs {r1['pipeline_bugs']} | {fmt(r1['wilson'][0])}–{fmt(r1['wilson'][1])} | {pf(r1['passed'])} | "
+             f"policy {r1['policy']}; no-TS {r1['n_no_ts']}/{r1['n']} (CI {fmt(r1['no_ts_wilson'][0])}–{fmt(r1['no_ts_wilson'][1])}, "
+             f"Coley 12.3% within: {r1['coley_rate_within_ci']}) {r1['note']} |")
     L.append(f"| A2 | {len(r2['bad'])} of {r2['n_labels']} labels with a failed gate | | {pf(r2['passed'])} | |")
-    L.append(f"| A3 | {r3['n_ok']}/{r3['n_required']}, max \\|Δ\\| {fmt(r3['max_abs'], 4)} kcal/mol | | {pf(r3['passed'])} | |")
+    L.append(f"| A3 | {r3['n_ok']}/{r3['n_required']}, max \\|Δ\\| {fmt(r3['max_abs'], 4)} kcal/mol | | {pf(r3['passed'])} | "
+             f"{'incomplete: ' + ', '.join(r3['incomplete']) if r3['incomplete'] else ''}"
+             f"{' scientific fails: ' + ', '.join(r3['failed']) if r3['failed'] else ''} |")
     L.append(f"| A4 | {r4['n_agree']}/{r4['n_total']} agree | | {pf(r4['passed'])} | disagreements: {len(r4['disagreements'])} |")
     L.append(f"| A5-eng | n = {eng['n']}/{eng['n_jobs']}, TS RMSD median {fmt(eng['ts_rmsd_median'], 4)} Å | see §3 | {pf(eng['passed'])} | |")
     L.append(f"| A5-run | NF max {fmt(max((v['nf_all'] for v in run['per_target'].values() if np.isfinite(v['nf_all'])), default=float('nan')))} | | report only | NF > 1: {run['nf_gt1']} |")
     L.append(f"| A5-e2e | n = {e2e['n']}; \\|Δbarrier\\| ≤ 1.0: {fmt(e2e['frac_barrier_within'])} | see §3 | {pf(e2e['passed'])} | |")
     L.append(f"| A6 | (a) {fmt(r6['a'].get('max_abs_dE_eh'))} Eh (b) {fmt(r6['b'].get('max_abs_dE_eh'))} Eh (c) {fmt(r6['c'].get('max_dev_A'))} Å | | {pf(a6_all)} | {r6['c'].get('note', '')} |")
     L.append(f"| A7 | {v8.get('n_detected')}/{v8.get('n_controls')} | | {pf(a7)} | |")
-    L.append(f"| A8 | ok hard fails {v9.get('n_ok_hard_fail')}; foreign {fdet} | | {pf(a8)} | |")
+    L.append(f"| A8 | ok hard fails {v9.get('n_ok_hard_fail')}; foreign {fdet}; no-bond {ndet} | | {pf(a8)} | "
+             f"short-bond flags (ok): {v9.get('n_short_forming_flag_ok')} |")
     L.append(f"| A9 | {fmt(r9['mean'], 2)} core-h/row (n={r9['n']}); 2,846 rows ≈ {fmt(r9['total_extrap'], 0)} core-h, {fmt(r9['wall_days'], 1)} d | {fmt(r9['ci'][0], 2)}–{fmt(r9['ci'][1], 2)} | report only | |")
     L.append(f"| A10 | J07 ok: {r10['j07_ok']}; J03: {r10['j03_verdict']} | | {pf(r10['passed'])} | |")
 

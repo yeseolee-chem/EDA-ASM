@@ -58,7 +58,8 @@ gates:
   min_imag_cm: -40
   extra_imag_tol_cm: -50        # F1: autodE "Had small imaginary modes" (all extra modes > -50 cm-1)
   forming_max_A: 3.0
-  forming_min_A: 1.6
+  forming_min_A: 1.6            # FIX F-A: only a product-like TS (both bonds < this) fails; a short bond is a flag
+  no_bond_A: 3.3                # FIX F-A: label_true/scripts/postprocess_labels_all.py NO_BOND_A (both bonds >= this: no bond forms)
   mode_share_min: 0.5
   d_min_kcal: -0.5
   control_barrier_tol: 1.0
@@ -115,7 +116,15 @@ prereg:
   bootstrap_n: 10000
   bootstrap_seed: 20260930
   same_ts: {rmsd_A: 0.10, dform_A: 0.02}
-  A1: {n_total: 20, n_ok_min: 16}
+  A1:
+    n_total: 20
+    n_ok_min: 16
+    # D-1 (user decision before the prereg commit): a no-TS failure not confirmed by a scan is
+    #   strict  -> not an allowed failure (A1 FAIL if any)      allowed -> allowed failure, and the
+    #   no-TS rate's Wilson CI is reported against Coley's 12.3 %   scan -> a V7-type scan per no-TS row
+    # submit_validation.sh refuses while this is TBD.
+    no_ts_unconfirmed_policy: TBD
+    coley_failure_rate: 0.123
   A2: {pass_fraction: 1.0}
   A3: {n_required: 24, max_abs_kcal: 0.1}
   A4: {n_agree_min: 22, n_total: 24, dG_thr: -0.239, dG_band: 0.5, rmsd_thr: 0.05, rmsd_band: 0.03}
@@ -124,7 +133,7 @@ prereg:
   A5_e2e: {bias_frac: 0.2, R_ci_lower_fail: 1.0, ref_barrier_tol: 1.0}
   A6: {dE_eh: 1.0e-6, label_kcal: 0.001, coord_pass_A: 1.0e-4, coord_fail_A: 0.01}
   A7: {n_required: 8}
-  A8: {ok_hard_fail_max: 0, foreign_ids: [3090, 3766, 4252]}
+  A8: {ok_hard_fail_max: 0, foreign_ids: [3090, 3766, 4252], no_bond_ids: [3400, 5783]}
   extra_imag_band_cm: [-50, 0]
   l0_expected_header: |
     ! OptTS Freq B3LYP RIJCOSX D3BJ def2-SVP def2/J  CPCM(Water)

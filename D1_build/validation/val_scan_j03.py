@@ -11,7 +11,8 @@
    path maximum at the reactant end and no interior maximum -> no saddle point (confirmed);
    otherwise OptTS (L0, modify_internal on the two bonds) from the highest interior maximum, then the
    pilot TS gate (run_ts.analyse, F1): pass -> reclassified "autodE search failure".
-Writes <scratch>/v7/<src>/result.json.
+Writes <scratch>/v7/<src>/result.json for a finished analysis (including "OptTS did not converge" or
+"gate failed", which are scientific results); FIX F-C: missing scan data -> result_error.json + exit 1.
 """
 from __future__ import annotations
 
@@ -117,7 +118,15 @@ def main():
                      *prod, charge=int(job["charge"]), mult=int(job["mult"]))
     text = od.run(cfg, inp).read_text(errors="replace")
     res["scan_hours"] = od.run_hours(text)
+
+    def error(msg):      # FIX F-C: result.json only for a finished scan; a retry overwrites result_error.json
+        res["error"] = msg
+        (wd / "result_error.json").write_text(json.dumps(res, indent=1, default=str))
+        print(msg, file=sys.stderr); sys.exit(1)
+
     grid, source = read_grid(wd, float(s["start"]), float(s["end"]), int(s["n"]))
+    if not grid:
+        error(f"no scan points parsed (ORCA terminated normally: {od.terminated(text)})")
     n = int(s["n"])
     E = np.full((n, n), np.nan)
     for (i, j), (e, _) in grid.items():
@@ -128,8 +137,7 @@ def main():
                orca_terminated=od.terminated(text))
     path = minimax_path(Ek)
     if path is None:
-        res["verdict"] = "scan incomplete: no connected path"
-        (wd / "result.json").write_text(json.dumps(res, indent=1)); sys.exit(1)
+        error("scan incomplete: no connected path")
     pe = [float(Ek[p]) for p in path]
     interior = [q for q in range(1, len(pe) - 1) if pe[q] > pe[q - 1] and pe[q] > pe[q + 1]]
     res.update(path=path, path_kcal=pe, path_argmax=int(np.argmax(pe)), interior_maxima=[path[q] for q in interior])
@@ -139,7 +147,10 @@ def main():
         q = max(interior, key=lambda q: pe[q]) if interior else int(np.argmax(pe))
         step_no = grid[tuple(path[q])][1]
         res["optts_start"] = dict(grid_point=path[q], step=step_no, rel_kcal=pe[q])
-        res.update(optts_attempt(cfg, job, wd, step_no, pairs, fr))
+        att = optts_attempt(cfg, job, wd, step_no, pairs, fr)
+        if att.pop("error", False):
+            res.update(att); error(att["verdict"])
+        res.update(att)          # "did not converge" / "gate failed" / "reclassified" are scientific results
     (wd / "result.json").write_text(json.dumps(res, indent=1, default=str))
     print(res.get("verdict"))
 
@@ -149,7 +160,7 @@ def optts_attempt(cfg, job, wd, step_no, pairs, fr):
     import run_ts
     geo = wd / f"scan.{step_no:03d}.xyz"
     if not geo.is_file():
-        return dict(verdict=f"interior maximum, but {geo.name} is missing: not reclassified")
+        return dict(error=True, verdict=f"interior maximum, but the scan geometry {geo.name} is missing")
     ad = wd / "optts"; ad.mkdir(exist_ok=True)
     inp = ad / "reopt.inp"
     if not inp.is_file():

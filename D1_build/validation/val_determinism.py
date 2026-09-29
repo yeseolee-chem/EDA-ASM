@@ -8,7 +8,8 @@
   python val_determinism.py --mode v1b --src J08 --task V1b_J08
     eda.inp only, with %pal nprocs 4 (pilot: 1); eda / eda_frag1 / eda_frag2 energies compared.
 The pilot outputs are read from a copy (<scratch>/v1/<task>/pilot_sp), never in place.
-Writes <scratch>/v1/<task>/result.json. Idempotent (ORCA skipped for outputs that terminated normally).
+Writes <scratch>/v1/<task>/result.json on success only (errors: result_error.json, overwritten by a retry).
+Idempotent (ORCA skipped for outputs that terminated normally).
 """
 from __future__ import annotations
 
@@ -80,9 +81,9 @@ def main():
         run_parallel(wd, ("eda",))
         names = ("eda", "eda_frag1", "eda_frag2")
     bad = [n for n in names if not orca_ok(wd / f"{n}.out")]
-    if bad:
+    if bad:              # FIX F-C: result.json marks success only; a retry overwrites result_error.json
         res["error"] = f"not terminated normally: {bad}"
-        (base / "result.json").write_text(json.dumps(res, indent=1)); sys.exit(1)
+        (base / "result_error.json").write_text(json.dumps(res, indent=1)); sys.exit(1)
     dE = {n: s3.read_fspe(wd / f"{n}.out", 1) - s3.read_fspe(ref / f"{n}.out", 1) for n in names}
     res.update(dE_eh=dE, max_abs_dE_eh=max(abs(x) for x in dE.values()))
     if a.mode == "v1a":

@@ -9,6 +9,8 @@ for f in config_val.yaml val_d0_set.csv tasks.csv val_manifest.csv; do
     git diff --quiet HEAD -- "$f" || { echo "STOP: $f differs from its committed version"; exit 1; }
 done
 [ -f "$SCR/queue/STOP" ] && { echo "STOP file present: $(head -1 "$SCR/queue/STOP")"; exit 1; }
+grep -qE '^[[:space:]]+no_ts_unconfirmed_policy:[[:space:]]*TBD' config_val.yaml && \
+    { echo "STOP: prereg A1.no_ts_unconfirmed_policy is TBD (user decision D-1)"; exit 1; }
 need_slots 11
 W=$(sbatch --parsable -p "$P" --array=0-9%10 -o "$SCR/logs/w_%A_%a.log" --export=ALL,VAL_DIR="$VAL" worker.sh)
 R=$(sbatch --parsable -p "$P" --dependency=afterany:"$W" -o "$SCR/logs/report_%j.log" --export=ALL,VAL_DIR="$VAL" run_report.sh)
