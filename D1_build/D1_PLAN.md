@@ -2,7 +2,9 @@
 
 작성 2026-09-29 · 기준 문서 [`d1_autode_pilot/SPEC_D1_pilot.md`](d1_autode_pilot/SPEC_D1_pilot.md)
 
-**현재 상태:** 환경 설치와 정적 점검까지 끝났습니다. 파일럿(`submit_pilot.sh`)은 **아직 제출하지 않았고**, 실행 지시를 기다립니다.
+**현재 상태 (2026-09-29 14:24):** 파일럿 실행이 끝났습니다. 제출 09:00, 보고서 11:57로 약 3시간 걸렸습니다.
+- 결과: A1–A4 통과, A5 실패(진단용 기준). D1 8/10이 라벨까지 완료됐습니다.
+- 결과 요약과 남은 결정 사항은 [§11](#11-실행-결과-2026-09-29), 전체 보고서는 [`d1_autode_pilot/results/pilot_report.md`](d1_autode_pilot/results/pilot_report.md)에 있습니다.
 
 ---
 
@@ -215,3 +217,49 @@ sbatch -p <idle> -o $SCR/logs/report_%j.log --export=ALL,PILOT_DIR=$PWD run_repo
    - 메시지: `d1 autodE pilot: <n_ok>/10 D1 labels, controls <PASS/FAIL>`
    - scratch 내용은 커밋하지 않습니다.
 3. D1 전체 실행은 시작하지 않습니다(SPEC §0-5).
+
+---
+
+## 11. 실행 결과 (2026-09-29)
+
+제출한 job은 S0 995656, array 995657(0–13), report 995658이며 모두 cpu2에서 돌았습니다. 결과 파일은 `d1_autode_pilot/results/`에 있습니다.
+- `pilot_report.md`
+- `pilot_summary.csv`
+- `labels_d1_pilot.json`
+- `S0_REPORT.md`: 약 730 KB이고, 대부분 D0 입체 표지 검증 중 나온 RDKit "More than one matching pattern" 경고입니다.
+
+| id | 결과 | 값 |
+|---|---|---|
+| S0 | 통과 | 버전 확인 · 입체 표지 검증 0.945 · 입력 parity 50/50 byte 동일 · xtb scan 형식 · HCNO + C₂H₄ smoke 모두 통과. g16은 PATH에 없음(C5) |
+| A1 | 통과 | D1 8/10 |
+| A2 | 통과 | 생성된 라벨 12개 모두 gate 통과 |
+| A3 | 통과 | D0_replay의 9개 target, max \|Δ\| = 0.003 kcal/mol (J13 d1). J12는 약 1e-9 |
+| A4 | 통과 | 기준 규칙 결정이 Coley와 일치 (rxn 20: alt 사용, rxn 105: 미사용) |
+| A5 | **실패 (진단용)** | D0_control \|Δbarrier\| rxn 20 = 0.37, **rxn 105 = 2.01** |
+
+**실패한 D1 job 2개**
+
+| job | 원인 | 분류 |
+|---|---|---|
+| J03 (C2, 니트로 carbonyl ylide + 에틸렌) | autodE 경로(xtb, DFT 모두)에 에너지 최댓값이 없음. 이 계산 수준에서는 배리어 없는 반응으로 보임 | TS 탐색 실패 (화학적 원인) |
+| J07 (D5, 메틸아자이드 + 다이메틸아미노 사이클로옥타인) | TS는 정상 (주 허수 모드 −360.7 cm⁻¹, 형성 결합 비중 0.96)이나, −14.9 cm⁻¹ 모드가 하나 더 있어 `n_imag == 1` gate에서 탈락 | gate 기준 문제 (파이프라인 버그 아님) |
+
+**A5 진단 (label − `labels_all`, kcal/mol)**
+
+| rxn | Δbarrier | Δd1 | Δd2 | Δelst | Δpauli | Δoi | Δcpcm | Δd_form max | ΔG‡ − Coley G_act |
+|---|---|---|---|---|---|---|---|---|---|
+| 20 (J10) | −0.37 | −1.21 | −1.02 | +8.63 | −9.32 | +4.31 | −1.33 | 0.059 Å | −4.22 |
+| 105 (J11) | −2.01 | −2.69 | +0.50 | +3.42 | +9.70 | −3.87 | −8.67 | 0.117 Å | −2.09 |
+
+ORCA로 찾은 TS의 형성 결합 길이가 D0(G16)와 0.06–0.12 Å 다릅니다. 그 결과 elst, pauli, oi, cpcm 채널이 최대 약 10 kcal/mol 달라집니다. barrier 합계의 차이는 그보다 작습니다.
+
+**비용 (report.py 기준)**
+- D1 TS 한 행당 평균 11.5 core-hour (중간값 10.3, 최대 22.8). 단계별로 ts 8.2, ref 0.5, sp 2.8입니다.
+- 2,846행으로 외삽하면 약 32,600 core-hour이고, 10 job × 8코어로 돌리면 약 17일 걸립니다.
+- 파일럿 전체 벽시계 시간은 약 3시간이었습니다. §6.4의 추정(1–2일)보다 훨씬 짧았습니다.
+
+**남은 결정 사항**
+1. **J07 gate:** 현행 유지, 또는 −40 cm⁻¹보다 작은 모드만 허수로 세도록 완화(config의 `min_imag_cm: -40`과 같은 기준).
+2. **A5:** ORCA TS와 G16 TS의 차이로 채널 라벨이 체계적으로 달라지는지 확인해야 합니다. SPEC §10-1 TS 엔진 결정과 D0·D1 비교 가능성에 직결되는 문제입니다.
+3. **J03 유형:** D1 C 패널에 배리어 없는 carbonyl ylide 계열이 얼마나 있는지 확인이 필요합니다.
+4. **SPEC §10의 2–4항:** 기준 규칙, B block, `eda_nprocs`.
