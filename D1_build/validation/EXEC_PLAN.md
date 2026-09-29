@@ -13,7 +13,7 @@
 | 단계 | 명령 | 내용 | 제출 task | 예상 |
 |---|---|---|---|---|
 | 1. Phase F | `bash submit_phaseF.sh` | 단위 테스트(`tests/test_units.py`) → 통과 시 S0를 `config_val.yaml`로 재실행 (새 scratch) | 2 | 테스트 수 분 · S0 약 6분 (파일럿 실측 5.5분) |
-| 2. 표본·task 목록 | `bash submit_make_tasks.sh [D1_설계_v8.xlsx]` | `val_d0_set.csv`, `val_manifest.csv`, `tasks.csv` 생성, 파일럿 작은 파일을 `scratch/pilot_copy/`로 복사 | 1 | 수 분 |
+| 2. 표본·task 목록 | `bash submit_make_tasks.sh` (V6a는 commit된 `v6a_manifest.csv` 사용) | `val_d0_set.csv`, `val_manifest.csv`, `tasks.csv` 생성, 파일럿 작은 파일을 `scratch/pilot_copy/`로 복사 | 1 | 수 분 |
 | 3. 사전 등록 | `git add config_val.yaml val_d0_set.csv tasks.csv val_manifest.csv` → commit → push | 이 커밋 해시가 판정 기준의 기록 | — | — |
 | 4. Phase V | `bash submit_validation.sh` | worker 10개(array `0-9%10`) + 최종 보고 job 1개(afterany) | 11 | SPEC 추정 약 1,100 core-h, 벽시계 15–25 h |
 | 5. 중간 점검 | 자동 | 우선순위 0–2 task가 모두 끝나면 worker 하나가 `interim_report.md`를 쓰고, STOP 조건이면 `scratch/queue/STOP` | — | — |
@@ -78,9 +78,8 @@
      - 비교에서 이 블록만 제외합니다.
      - L0 입력에는 autodE처럼 그 TS의 형성 결합으로 블록을 다시 만들어 넣습니다(`val.l0_modify_internal: true`).
      - 파일럿 J10 결합으로 만들면 파일럿 헤더와 byte 단위로 같아야 한다는 단위 테스트를 넣었습니다.
-2. **V6a 막힘.** `D1_설계_v8.xlsx`가 클러스터에 없습니다.
-   - 파일을 주시면 `submit_make_tasks.sh <xlsx>`로 10행을 뽑습니다(seed 20260930, 패널당 2, 파일럿 행 제외).
-   - 없으면 A1은 파일럿 10행뿐이라 "판정 불가"로 나옵니다.
+2. **V6a:** 해결됨. 사용자가 같은 명령으로 로컬에서 만든 `v6a_manifest.csv`를 commit했습니다(§4b F-E).
+   - `submit_make_tasks.sh`는 xlsx 인자 없이 실행합니다. xlsx를 주면 이 파일을 다시 생성해 덮어씁니다.
 3. **V8, V9 우선순위.** SPEC 표에 없어서 0으로 두었습니다(QM이 없고, A7은 STOP 기준이기 때문).
    - 그래서 중간 점검에 A7, A8을 넣었고, **A7 FAIL도 STOP**으로 처리합니다. §8 첫 행과는 맞지만, §8의 중간 점검 문구는 A6과 A3만 언급합니다.
 4. **V2b에서 port 진단 생략** (`val.reopt_port_diagnostic: false`). 기준 규칙 재현은 V5가 판정하므로 DFT 비용만 줄였습니다.
@@ -110,7 +109,7 @@
 | F-B | `level_ok`에 양성 대조 추가: L0/L1은 `rijcosx_on`이 True여야 함. V2a에서 L0/L1 `rijcosx_on` False 또는 VWN 문자열 없음이면 `result_error.json` + queue STOP | `orca_direct.py`, `val_grad.py` |
 | F-C | `result.json`은 성공 시에만. 오류는 `result_error.json`(재실행 시 덮어씀). V7의 "OptTS 미수렴", "gate 실패"는 과학적 결과로 `result.json` | `val_determinism.py`, `val_grad.py`, `val_scan_j03.py` |
 | F-D | interim A3: 빠진 V5 job에 `.fail_*`가 없으면 FAIL이 아니라 incomplete(`passed=None`). STOP은 쓰되 사유를 "incomplete"로 기록 | `validation_report.py` |
-| F-E | `v6a_manifest.csv` commit — **파일이 전달되지 않음** (첨부가 문서만 도착, 클러스터에도 없음). 받으면 `validation/`에 넣고 commit | — |
+| F-E | `v6a_manifest.csv` commit (사용자가 로컬에서 생성: `sample_pilot.py --seed 20260930 --n 10 --controls 0 --exclude-ts pilot_manifest.csv --id-prefix V6a_`). 10행, 파일럿 D1과 같은 17열, 패널당 2행, 파일럿 ts_id와 겹침 0건 확인. `make_tasks.py`가 읽으므로 xlsx 불필요 | `v6a_manifest.csv` |
 
 **지시와 다르게 구현한 한 가지 (F-B):** 지시문의 `cosx_seen = rijcosx == "on" or "COSX" in ri_lines`는 NORI 출력에 `RIJ-COSX (...).... off` 줄이 찍히면 COSX를 본 것으로 처리해 L2를 잘못 FAIL시킵니다. 그래서 COSX가 들어간 줄은 값이 `on`으로 끝날 때만 셉니다. 합성 `off` 줄로 확인하는 테스트도 넣었습니다.
 
