@@ -713,6 +713,9 @@ def final(c):
              f"2,846행 외삽 {fmt(r9['total_extrap'], 0)} core-h, 10 job × {c.cfg['cpus_per_task']}코어로 약 {fmt(r9['wall_days'], 1)}일.\n")
     L.append("## 7. 한계\n\n- 표본은 35원자 이하 (D0 중앙값 44원자)\n- SMD 이산화 차이는 ORCA 안에서 격리할 수 없음 (L2도 ORCA SMD)\n"
              "- D0 진동수 파일이 없어 V9에서 허수 개수 gate는 적용 불가\n" + ("- " + r1["note"] + "\n" if r1["note"] else ""))
+    rt = VAL / "RETRIES.md"                    # pilot SPEC §2: every retried failure is reported with its reason
+    if rt.is_file():
+        L.append("## 부록: 재실행 기록\n\n" + rt.read_text())
     (res / "VALIDATION_REPORT.md").write_text("\n".join(L) + "\n")
     print("\n".join(L))
 

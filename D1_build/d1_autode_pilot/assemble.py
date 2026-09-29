@@ -114,7 +114,9 @@ def main():
     rec = s3.parse_one_rxn(spd, meta)
     promoted = False
     if rec.get("status") == "eda_sum_mismatch" and abs(rec["eda_sum_minus_bond_kcal"]) <= g["closure_tol"]:
-        rec["status"] = "ok"; rec["sum_mismatch_promoted"] = True; promoted = True
+        # sum_mismatch_promoted goes into the output once, below (it was also set in rec: duplicate keyword ->
+        # TypeError on every promoted label; found by validation task V6b_J09_r2, 2026-09-30)
+        rec["status"] = "ok"; promoted = True
 
     rid_name = f"rxn_{meta['rxn_id']}"
     try:
