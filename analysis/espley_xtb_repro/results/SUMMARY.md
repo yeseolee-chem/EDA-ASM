@@ -176,6 +176,8 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 
 ## Espley 2024 대비 (ds3 = Coley [3+2] 데이터셋의 3,510 rxn 부분집합)
 
+> 아래 표는 반응 집합·라벨·분할이 서로 다른 수치를 나란히 놓은 것이다. 같은 반응·같은 타깃·같은 test 행으로 맞춘 비교는 다음 절 **§Espley 2024 동일 조건 비교**를 보라.
+
 비교 조건 — Espley 본문·ESI(ChemRxiv v1), 저자 GitHub(`the-grayson-group/distortion-interaction_ML`), 그리고 **Bath 데이터 아카이브 BATH-01480 v2의 실제 계산 파일**로 확인 (2026-09-28/29). 아카이브(`data_archive_files.zip`, 4.3 GB, 61,267 파일)는 HTTP range 요청으로 목록과 ds3 로그만 받아 Gaussian route line을 읽었다.
 
 **Correction (10.1039/D5DD90005K, 2025-02-06):** RSC·미러 모두 403이라 원문을 직접 읽지는 못했다. 검색 색인에 잡힌 본문 요약과 직접 확인한 Bath 아카이브 v2 공지(2025-01-31: "correct an error with ts_100_dft.log in the malonate data set")가 일치한다: 데이터 아카이브의 malonate 데이터셋 파일 하나를 바로잡은 것이고, "data, results and conclusions presented in the paper are unaffected". ds3 수치·반응 수·계산 수준은 바뀌지 않는다.
@@ -199,6 +201,48 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 3. Espley ΔE‡ test range는 51.0(−13.46 ~ 37.56, 3,510 부분집합)이고 우리는 약 59 — %range 비교가 우리에게 다소 유리하게 작용한다.
 4. 같은 SVR끼리 비교해도 우리 쪽이 낮다(ESPLEY73 SVR 1.12 / 0.81 / 0.77 / 1.48). feature 수를 46개로 맞춘 `ESPLEY46` KRR의 장벽은 1.68.
 5. **Espley는 변형/상호작용 2분할(+ ΔE‡, ΔG‡)만 예측하며 EDA는 없다.** 상호작용을 elst / Pauli / OI / disp / CPCM / CDS로 나눠 d1, d2와 함께 예측하는 **8채널 분해는 이 연구의 기여**다 (이전 판에서 이를 Espley의 주장으로 적은 것은 오기).
+
+## Espley 2024 동일 조건 비교 (ds3, 같은 test 행) — 2026-09-30
+
+스크립트 `compare_espley.py`, 그림 `figures/espley_vs_ours_ds3.png`, 표 `espley_vs_ours_ds3.csv` (전 모델 `…_all_models.csv`, seed별 `…_per_seed.csv`, 검증 수치 `…_checks.json`).
+
+![Espley vs ours on ds3](figures/espley_vs_ours_ds3.png)
+
+**같게 맞춘 것**
+- **반응.** Espley ML 세트(`manual_tt_solvent.pkl`, 3,510 rxn). 그들의 `reaction_number` = Coley rxn id = 우리 rxn_id. 우리 feature가 없는 1개(rxn 5930, 빌드 단계 거부 — TS에서 fragment 안 O–C 결합 형성)는 **양쪽 test에서 모두** 뺐다(seed 23에서 351 → 350행). 남은 3,509 rxn.
+- **타깃.** Espley의 DFT 값 그대로(Gaussian B3LYP-D3(BJ)/def2-TZVP SMD(water)). 우리 모델도 그 숫자로 학습·채점했고, 이 비교에는 우리 ORCA 라벨을 쓰지 않는다.
+- **분할.** Espley `_perform_train_test_split` 그대로: `train_test_split(test_size=0.2, random_state=seed)` 후 나머지 20%를 반으로 나눈 **첫 번째**가 test, seed 22/23/14/1/2. 그들이 `ml_results.pkl`에 저장한 `y_test_true`와 5 타깃 × 5 seed 모두 원소 단위로 일치한다.
+- **지표.** seed별 test MAE의 평균. 오차 막대는 Espley 정의의 SE(std(|오차|)/√n, seed 평균). Espley 쪽 수치는 그들의 저장된 test 예측값을 같은 행으로 다시 채점한 것이다(논문 값과 ±0.01 이내).
+- **모델 선택.** 양쪽 모두 자기가 시도한 모델 중 test MAE가 가장 낮은 것. Espley는 Ridge/KRR/SVR/2·4-layer NN, 우리는 Ridge/KRR/SVR/XGB(seed별 nested GridSearch).
+
+**다른 것 (= 비교 대상):** feature. Espley는 AM1 46개(AM1 재최적화 기하), 우리는 xTB `ESPLEY46`(개수 맞춤) / `ESPLEY73`(DFT 기하 위 단일점 → 상한).
+
+| 타깃 (Espley 열) | Espley 최고 (AM1-46) | 우리 최고 (xTB-46) | 우리 최고 (xTB-73) | Espley ÷ 우리(73) | seed별 우리가 낮음 |
+|---|---:|---:|---:|---:|:---:|
+| Distortion 1 (`distortion_energy_1_dft`) | 2.55 ± 0.13 SVR | 2.23 ± 0.11 XGB | **2.21 ± 0.11** XGB | 1.15 | 5/5 |
+| Distortion 2 (`distortion_energy_2_dft`) | 2.36 ± 0.11 SVR | 2.07 ± 0.11 XGB | **2.05 ± 0.11** XGB | 1.15 | 5/5 |
+| Interaction (`interaction_energies_dft`) | 2.46 ± 0.12 SVR | 1.16 ± 0.05 KRR | **0.74 ± 0.04** KRR | 3.33 | 5/5 |
+| ΔE‡ (`e_barrier_dft`) | 3.09 ± 0.14 SVR | 1.68 ± 0.08 KRR | **1.46 ± 0.07** KRR | 2.11 | 5/5 |
+| ΔG‡ (`q_barrier_dft`) | 3.01 ± 0.14 SVR | 1.68 ± 0.08 KRR | **1.51 ± 0.07** KRR | 2.00 | 5/5 |
+
+test MAE kcal/mol, 5 seed 평균 ± SE. "seed별"은 같은 seed의 같은 test 행에서 Espley 최고 모델과 우리 최고 모델(73)을 짝지어 비교한 것.
+
+관찰:
+1. **5 타깃 모두, 5 seed 모두 우리가 낮다.** feature 수를 46개로 맞춰도(ESPLEY46) 결론이 같다. 우리 쪽에서 가장 약한 조합(ESPLEY46 Ridge, ΔE‡ 2.27)도 Espley 최고(SVR 3.09)보다 낮다.
+2. 차이는 상호작용(÷3.3)과 장벽(÷2.0–2.1)에서 크고, d1/d2에서는 ÷1.15로 작다. 이유는 3번이다.
+3. **Espley의 d1/d2 열은 역할이 아니라 반응물 인덱스를 따른다.** 3,509개 중 1,102개(31%)에서 `_1`이 dipole이 아니라 dipolarophile이다.
+   - 근거: 역할대로 짝지으면 우리 d1/d2와 MAE 0.056/0.047. 열 이름대로 짝지으면 1.79/1.79이고, 두 차이의 상관은 −1.000이다.
+   - 뒤바뀐 행에서 우리 xTB dipole 변형 feature는 그들의 `_2`와 r 0.94, `_1`과 r 0.68.
+   - Espley 자신의 AM1 변형 에너지도 같은 인덱스를 따른다(AM1 `_1` 대 DFT `_1` r 0.75, 대 `_2` r 0.35).
+   - 양쪽 feature는 모두 역할 기준이다(Espley `…_di_…` = 3원자 dipole, `…_dp_…` = 2원자 dipolarophile; 우리 dipole/dipolarophile). 그래서 두 쪽이 같은 핸디캡을 지고 비교 자체는 공정하다. 다만 이 두 타깃은 물리적으로 섞인 양이라 양쪽 모두 ~2 kcal/mol에서 막힌다.
+   - 참고(우리만, Espley 대응값 없음): 같은 Espley 숫자를 역할대로 재배열해 학습하면 dipole 변형 1.03 (ESPLEY46 KRR) / 1.10 (ESPLEY73 KRR), dipolarophile 변형 0.87 / 0.80 (XGB). d1/d2 오차의 절반 이상이 인덱스 혼합에서 온다.
+4. **fragment를 나누는 방법이 달라도 같은 결과인가? → 같다.** 같은 3,509 rxn에서 우리 ORCA 라벨과 Espley Gaussian 값을 비교하면:
+   - ΔE‡ MAE 0.18 (bias +0.17, r 0.9999; Gaussian vs ORCA 차이)
+   - 상호작용 0.24 (Espley는 부호를 반대로 저장: 양수 = 안정화)
+   - 변형 합 0.08, 역할을 맞춘 d1/d2 0.06 / 0.05
+
+   우리 graph 규칙과 Espley의 분할은 같은 물리량을 준다. 다른 것은 `_1`/`_2`라는 이름을 붙이는 방식뿐이다.
+5. **남는 비대칭.** 우리 feature는 DFT TS 기하 위 xTB 단일점이고(생성 기하에서의 성능은 §S2 후속), Espley는 AM1로 최적화한 기하다. 이 점에서 우리 수치는 상한이다. ΔG‡에 대해서는 우리 feature에 열역학 보정 정보가 없다(xTB pre-ML 기준선도 전자 장벽뿐이라 표에서 비움).
 
 ## 가정·주의
 
@@ -225,6 +269,8 @@ n = 2,148 고유 rxn (5-seed test fold 합집합), MAE는 폴드 예측 전체 �
 - `figures/` (ESPLEY73 기준, rev 3):
   - `scatter_Ridge/KRR_rbf/SVR_rbf/XGB_ESPLEY73.png` — 9-패널 산점도 (barrier, d1, d2, 6채널)
   - `mae_bar_espley73.png` — 9 target × 4 모델 grouped bar
+  - `espley_vs_ours_ds3.png` — Espley 2024 동일 조건 비교 (ds3 반응·타깃·test 행 동일, 최고 모델끼리; §Espley 2024 동일 조건 비교)
+- `espley_vs_ours_ds3.csv` / `_all_models.csv` / `_per_seed.csv` / `_checks.json` — 위 비교의 표, 전 모델, seed별 원본, 분할 재현·라벨 일치·d1/d2 인덱스 검증 수치
 
 ## 재현
 
@@ -236,6 +282,11 @@ sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s04_aggregate_ml.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s05_plot.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s06_analyze_extra.sh
 sbatch --dependency=afterok:<JID> analysis/espley_xtb_repro/s07_evaluate_pairs.sh    # outputs to CWD -> move into results/
+
+# Espley 동일 조건 비교 (Espley repo 파일 2개 필요, README 참고)
+sbatch --wrap "python compare_espley.py prep"                                   # 매핑·라벨 일치·분할 재현 검증
+sbatch --dependency=afterok:<JID> --array=0-6 --wrap "python compare_espley.py train \$SLURM_ARRAY_TASK_ID"
+sbatch --dependency=afterok:<JID> --wrap "python compare_espley.py plot"
 ```
 
 라벨만 바뀐 경우(rev 3처럼)는 s01/s02 대신 타깃만 교체한다:

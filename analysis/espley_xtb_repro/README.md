@@ -76,7 +76,15 @@ s04_aggregate_ml.sh -> ml_report.json, ml_table_espley.csv, predictions.parquet
 s05_plot.sh         ESPLEY73 figures, 9 reported targets (plot_results.py)
 s06/s07             charge / group-split / MMP analyses on results/
 s08_publish_rev3.sh copy outputs into results/ and run s06/s07 (rev 3)
+compare_espley.py   like-for-like vs Espley on their ds3 rows, targets and splits
+                    (prep -> train 0-6 array -> plot; results/espley_vs_ours_ds3*)
 ```
+
+`compare_espley.py` needs two files from the authors' repo
+(`the-grayson-group/distortion-interaction_ML`) under `$ESPLEY_REPO_DATA`
+(default `/gpfs/tmp_cpu2/yeseo1ee/espley_compare`):
+`feature_selection/_f_selection/tt/manual_tt_solvent.pkl` and
+`machine_learning/tt/solvent/ml_results.pkl`.
 
 ## Compute
 
