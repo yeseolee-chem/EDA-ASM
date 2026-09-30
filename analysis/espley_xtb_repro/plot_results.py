@@ -5,14 +5,21 @@ One feature set (ESPLEY_PLOT_FS, default 73 = ESPLEY73), the 9 reported targets:
 barrier, d1, d2 and the 6 EDA channels (e_bond, eint_spe and c_ghost are trained
 but not plotted: derived quantities / method artefact).
 
-Outputs (in <ROOT>/figures/; existing PNGs there are removed first):
-    scatter_<model>_ESPLEY<fs>.png   × 4 models (Ridge/KRR/SVR/XGB)
-    mae_bar_espley<fs>.png           — grouped bars: 9 targets × 4 models
+  [ESPLEY_ML_OUT=<dir>] [ESPLEY_GEOM=g0|g1] python plot_results.py
+Reads <ML_OUT>/predictions.parquet + ml_report.json (ML_OUT default $ESPLEY_OUT). The geometry (ESPLEY_GEOM, else
+the report's geom) goes into every title: G0 = DFT oracle geometry (upper bound), G1 = GFN2-xTB/ALPB geometry.
+The disp panel carries the "analytic identity" note only on G0 (and rev 3, no geom), where b_disp is the disp label,
+and only for a feature set that contains b_disp (not ESPLEY46).
+
+Outputs (in <ML_OUT>/figures/; existing PNGs there are removed first; _<geom> suffix when the geometry is known):
+    scatter_<model>_ESPLEY<fs>[_<geom>].png   × 4 models (Ridge/KRR/SVR/XGB)
+    mae_bar_espley<fs>[_<geom>].png           — grouped bars: 9 targets × 4 models
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -21,9 +28,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from train_ml_single import FEATURE_SETS  # noqa: E402
+
 ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
-FIG_DIR = ROOT / "figures"
-FIG_DIR.mkdir(parents=True, exist_ok=True)
+ML_OUT = Path(os.environ.get("ESPLEY_ML_OUT") or ROOT)
+GEOM = os.environ.get("ESPLEY_GEOM") or None
+FIG_DIR = ML_OUT / "figures"
 
 # Reported targets: the barrier and its 8 channels. e_bond (= sum of the 6 EDA
 # channels) and eint_spe are derived quantities, and c_ghost is a method
@@ -45,12 +56,23 @@ MODEL_COLORS = {"Ridge": "#4C72B0", "KRR_rbf": "#DD8452",
 N_FEATS = int(os.environ.get("ESPLEY_PLOT_FS", "73"))
 FS = f"ESPLEY{N_FEATS}"
 LABELS_NOTE = "labels: SMD(water) relabel, method ① (d1/d2 from own-basis fragments)"
-# b_disp (feature) is the target by definition: its "prediction" is read off, not learned
+GEOM_NOTE = {"g0": "G0 = DFT oracle geometry (upper bound)", "g1": "G1 = GFN2-xTB/ALPB geometry"}
+# b_disp (feature) is the target by definition on the DFT geometry: its "prediction" is read off, not learned
 DISP = "dft_disp_dft"
 DISP_NOTE = "same quantity as the b_disp feature\n(analytic identity, not a prediction)"
 
 
-def scatter_one(preds, model):
+def caption(geom):
+    """Title lines below the plot name: geometry (rev 4) + labels."""
+    return (f"{GEOM_NOTE.get(geom, f'geometry {geom}')}\n" if geom else "") + LABELS_NOTE
+
+
+def disp_is_identity(geom):
+    # DFT geometry (rev 3 / G0) and a feature set with b_disp; on G1, or in ESPLEY46, disp is a genuine prediction
+    return geom in (None, "g0") and "b_disp" in FEATURE_SETS.get(FS, [])
+
+
+def scatter_one(preds, model, geom):
     sub = preds[(preds["model"] == model) & (preds["feature_set"] == N_FEATS)]
     fig, axes = plt.subplots(3, 3, figsize=(12, 11))
     for k, (col, label) in enumerate(CHANNELS):
@@ -75,18 +97,18 @@ def scatter_one(preds, model):
         ax.set_xlabel("actual (kcal/mol)"); ax.set_ylabel("predicted")
         ax.tick_params(labelsize=8)
         ax.grid(alpha=0.25)
-        if col == DISP:
+        if col == DISP and disp_is_identity(geom):
             ax.text(0.04, 0.96, DISP_NOTE, transform=ax.transAxes, va="top", ha="left", fontsize=8,
                     bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", lw=0.6))
-    fig.suptitle(f"{model} · {FS}  —  5-seed test-fold predictions\n{LABELS_NOTE}", fontsize=12, y=0.995)
-    fig.tight_layout(rect=[0, 0, 1, 0.955])
-    out = FIG_DIR / f"scatter_{model}_{FS}.png"
+    fig.suptitle(f"{model} · {FS}  —  5-seed test-fold predictions\n{caption(geom)}", fontsize=12, y=0.995)
+    fig.tight_layout(rect=[0, 0, 1, 0.955 if geom is None else 0.935])
+    out = FIG_DIR / f"scatter_{model}_{FS}{f'_{geom}' if geom else ''}.png"
     fig.savefig(out, dpi=140)
     plt.close(fig)
     return out
 
 
-def mae_bar(report):
+def mae_bar(report, geom):
     """Grouped bar: 9 targets (x) × 4 models (bars). Uses Protocol A test_mae from ml_report.json."""
     per_t = report["per_target"]
     fig, ax = plt.subplots(figsize=(13, 6.5))
@@ -111,36 +133,41 @@ def mae_bar(report):
                 ax.text(x[j] + offset, v + sd + 0.05, f"{v:.2f}",
                         ha="center", va="bottom", fontsize=6.5, rotation=90)
     ax.set_ylim(0, ax.get_ylim()[1] * 1.12)          # headroom for the rotated value labels
-    j = [c for c, _ in CHANNELS].index(DISP)
-    ax.text(x[j], 0.55, DISP_NOTE, ha="center", va="bottom", fontsize=7.5,
-            bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", lw=0.6))
+    if disp_is_identity(geom):
+        j = [c for c, _ in CHANNELS].index(DISP)
+        ax.text(x[j], 0.55, DISP_NOTE, ha="center", va="bottom", fontsize=7.5,
+                bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", ec="gray", lw=0.6))
     ax.set_xticks(x)
     ax.set_xticklabels([lbl for _, lbl in CHANNELS], rotation=25, ha="right")
     ax.set_ylabel("test MAE (kcal/mol, mean ± sd over 5 seeds)")
-    ax.set_title(f"{FS}  ·  Per-target test MAE (Protocol A)  ·  4 models\n{LABELS_NOTE}", fontsize=11)
+    ax.set_title(f"{FS}  ·  Per-target test MAE (Protocol A)  ·  4 models\n{caption(geom)}", fontsize=11)
     ax.grid(axis="y", alpha=0.3)
     ax.legend(loc="upper right", ncol=4)
     fig.tight_layout()
-    out = FIG_DIR / f"mae_bar_{FS.lower()}.png"
+    out = FIG_DIR / f"mae_bar_{FS.lower()}{f'_{geom}' if geom else ''}.png"
     fig.savefig(out, dpi=140)
     plt.close(fig)
     return out
 
 
 def main():
-    # remove all existing PNGs
+    preds = pd.read_parquet(ML_OUT / "predictions.parquet")
+    report = json.loads((ML_OUT / "ml_report.json").read_text())
+    if GEOM and report.get("geom") not in (None, GEOM):
+        sys.exit(f"ESPLEY_GEOM={GEOM} but {ML_OUT / 'ml_report.json'} has geom={report.get('geom')}")
+    geom = GEOM or report.get("geom")
+    print(f"loaded predictions ({len(preds)} rows) + report ({len(report['per_target'])} targets), geom={geom}")
+
+    # remove all existing PNGs (FIG_DIR is per ML_OUT, i.e. per geometry in rev 4)
+    FIG_DIR.mkdir(parents=True, exist_ok=True)
     for p in FIG_DIR.glob("*.png"):
         p.unlink()
         print(f"  removed {p.name}")
 
-    preds = pd.read_parquet(ROOT / "predictions.parquet")
-    report = json.loads((ROOT / "ml_report.json").read_text())
-    print(f"loaded predictions ({len(preds)} rows) + report ({len(report['per_target'])} targets)")
-
     for m in MODELS:
-        out = scatter_one(preds, m)
+        out = scatter_one(preds, m, geom)
         print(f"  wrote {out.name}")
-    out = mae_bar(report)
+    out = mae_bar(report, geom)
     print(f"  wrote {out.name}")
 
     print(f"\n{len(list(FIG_DIR.glob('*.png')))} figures in {FIG_DIR}")

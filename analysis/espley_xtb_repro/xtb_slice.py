@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
-"""xtb_slice.py (v4) — GFN2-xTB / ALPB(water) features on Coley DFT geometries, 5,260 rxns.
+"""xtb_slice.py (v5, rev 4) — GFN2-xTB / ALPB(water) features for the 5,260 rxns on a chosen geometry.
 
-Usage: python xtb_slice.py <slice_id> <n_slices> <output_parquet>
+Usage: python xtb_slice.py <slice_id> <n_slices> <output_parquet> [--geom dft|g1|g2]
+An existing <output_parquet> is skipped; the parquet is written atomically.
+
+Geometry (--geom, stored in the non-feature column `geom`; REV4_XTB_GEOMETRY.md §2). The targets (dft_*)
+are always the DFT labels on the DFT geometry.
+  dft (default)  G0 = the Coley DFT TS and DFT references the labels were computed on (label ts_file,
+                 rel1_file, rel2_file incl. _alt, under $ESPLEY_PROF). This is the rev 3 code path, unchanged:
+                 a DFT-oracle-geometry upper bound, not a deployable input.
+  g1             G1 = GFN2-xTB/ALPB(water) TS + references re-optimised from the DFT ones (g1_geom.py), read from
+                 $G1_ROOT/<rid>/{ts,rel1,rel2}.xyz (same atom order as ts_file, rel1_file, rel2_file).
+                 .fail_<reason> marker -> xtb_status g1_fail:<reason>. GATE: if any rxn of the slice has neither
+                 .done nor .fail_* (Phase 1 incomplete) the slice exits 1 and writes nothing.
+  g2             same as g1, from $G2_ROOT (autodE xTB-level search, Phase 5).
+  g1/g2: formed_pairs_ts and roles come from the label unchanged; the partition is recomputed on the new TS and
+  must equal the label A_idx ($ESPLEY_META input_meta.csv), else xtb_status partition_mismatch_<geom>.
 
 Layout (68 feature columns, mirrors the 2026-08-27 "55" design with AM1 -> GFN2):
   D_STRUCT41 = 11 dist + 15 mulliken_* + 15 wbo_valence_*      (Espley Table S2 analogue)
@@ -23,9 +37,9 @@ B_CH8 definitions (Δ = TS − dist1 − dist2 unless stated; all with ALPB wate
   b_pauli       Δ(repulsion energy) — GFN2's classical repulsion term.
   b_oi          Δ(EHT band-structure energy) = Δ(SCC − isotropic ES − anisotropic ES
                 − anisotropic XC − dispersion − G_solv) — the one-electron/orbital part.
-  b_disp        inter-fragment D3(BJ)/B3LYP dispersion at the TS geometry. This is the SAME
-                quantity as the DFT disp channel (verified MAE 0.000 kcal/mol) — the gate in
-                §4 of the SPEC checks it.
+  b_disp        inter-fragment D3(BJ)/B3LYP dispersion at the TS geometry. On --geom dft this is
+                analytically the DFT disp channel (MAE 0.000 kcal/mol), i.e. the label itself;
+                on g1/g2 it is evaluated on the xTB geometry and is a genuine feature.
   b_cpcm        Δ(G_elec) — the ALPB Born/dielectric term (analogue of Delta CPCM Dielectric).
   b_cds         Δ(G_sasa + G_hb + G_shift) — the ALPB non-polar/SASA term (analogue of
                 Delta SMD CDS correction). Weakest of the eight; per-element dsasa_* in AUX
@@ -43,6 +57,7 @@ Dependencies: xtb binary >= 6.7 (env XTB_BIN), dftd3, morfeus-ml, numpy, pandas,
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
@@ -76,6 +91,10 @@ LABELS_PATH = Path(os.environ.get("ESPLEY_LABELS", "/home1/yeseo1ee/projects/eda
 PROF = Path(os.environ.get("ESPLEY_PROF", "/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/extracted/full_dataset_profiles"))
 XTB_BIN = os.environ.get("XTB_BIN", "xtb")
 EXCLUDE = {3090, 3766, 4252, 3400, 5783}
+GEOMS = ("dft", "g1", "g2")
+GEOM_ROOT = {"g1": Path(os.environ.get("G1_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g1")),
+             "g2": Path(os.environ.get("G2_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g2"))}
+META = Path(os.environ.get("ESPLEY_META", "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/label_true/work/input_meta.csv"))
 
 _TERMS = [("total", r"::\s+total energy"), ("scc", r"::\s+SCC energy"),
           ("ies", r"->\s+isotropic ES"), ("aes", r"->\s+anisotropic ES"),
@@ -146,8 +165,37 @@ def sasa_by_element(syms, xyz):
     return out
 
 
+# ----------------------------------------------------------------------------- geometry
+def load_meta():
+    """label A_idx (frag1 = dipole TS atom indices) per rxn, from input_meta.csv."""
+    m = pd.read_csv(META)
+    return {int(r.rxn_id): sorted(int(x) for x in str(r.A_idx).split()) for r in m.itertuples()}
+
+
+def geom_marker(geom, rid):
+    """'.done', the (first sorted) '.fail_<reason>' or None for GEOM_ROOT[geom]/<rid>/ (g1_geom.py writes it last)."""
+    d = GEOM_ROOT[geom] / str(int(rid))
+    if (d / ".done").is_file():
+        return ".done"
+    fail = sorted(p.name for p in d.glob(".fail_*"))
+    return fail[0] if fail else None
+
+
+def geom_files(label, geom):
+    """[rel1, rel2, ts] xyz paths for the geometry mode, or a non-ok xtb_status string."""
+    rid = int(label["rxn_id"])
+    if geom == "dft":
+        pdir = PROF / str(rid)
+        return [pdir / label[k] for k in ("rel1_file", "rel2_file", "ts_file")]
+    m = geom_marker(geom, rid)
+    if m == ".done":
+        d = GEOM_ROOT[geom] / str(rid)
+        return [d / f for f in ("rel1.xyz", "rel2.xyz", "ts.xyz")]
+    return f"{geom}_fail:{m[len('.fail_'):]}" if m else f"{geom}_missing"
+
+
 # ----------------------------------------------------------------------------- one reaction
-def process_one(label):
+def process_one(label, geom="dft", meta=None):
     rid = int(label["rxn_id"])
     q1, q2 = int(label.get("charge1", 0) or 0), int(label.get("charge2", 0) or 0)
     row = {"rxn_id": rid, "charge1": q1, "charge2": q2, "role1": label.get("role1"), "role2": label.get("role2"),
@@ -156,7 +204,7 @@ def process_one(label):
            "flag_foreign_bond": bool(label.get("flag_foreign_bond", False)),
            "flag_async": bool(label.get("flag_async", False)),
            "flag_negative_strain": bool(label["d1_kcal"] < -0.5 or label["d2_kcal"] < -0.5),
-           "xtb_solvation": f"alpb-{SOLVENT}"}
+           "xtb_solvation": f"alpb-{SOLVENT}", "geom": geom}
     # ---- DFT targets
     e_ab, f1d, f2d, f1r, f2r = (label[k] for k in ("e_ab_eh", "e_frag1_dist_eh", "e_frag2_dist_eh",
                                                    "e_frag1_rel_eh", "e_frag2_rel_eh"))
@@ -167,9 +215,11 @@ def process_one(label):
         row["dft_" + ch] = label[ch]
 
     # ---- geometries + partition
-    pdir = PROF / str(rid)
     try:
-        rel1, rel2, ts = (fr.read_xyz(pdir / label[k]) for k in ("rel1_file", "rel2_file", "ts_file"))
+        files = geom_files(label, geom)
+        if isinstance(files, str):
+            row["xtb_status"] = files; return row
+        rel1, rel2, ts = (fr.read_xyz(p) for p in files)
     except Exception as e:
         row["xtb_status"] = f"geom_load_fail:{type(e).__name__}"; return row
     ts_syms, ts_xyz = ts
@@ -177,6 +227,8 @@ def process_one(label):
     if P.status != "ok":
         row["xtb_status"] = f"partition:{P.status}"; return row
     A_idx, B_idx = sorted(P.A), sorted(P.B)
+    if geom != "dft" and A_idx != meta.get(rid):
+        row["xtb_status"] = f"partition_mismatch_{geom}"; return row
     inv0 = {v: k for k, v in P.map0.items()}; inv1 = {v: k for k, v in P.map1.items()}
     posA = {a: k for k, a in enumerate(A_idx)}; posB = {b: k for k, b in enumerate(B_idx)}
     fA = ([ts_syms[i] for i in A_idx], ts_xyz[A_idx]); fB = ([ts_syms[i] for i in B_idx], ts_xyz[B_idx])
@@ -280,24 +332,43 @@ def process_one(label):
 
 
 def main():
-    slice_id, n_slices, out_path = int(sys.argv[1]), int(sys.argv[2]), Path(sys.argv[3])
+    ap = argparse.ArgumentParser(description="xtb features for one slice of the 5,260 accepted rxns")
+    ap.add_argument("slice_id", type=int)
+    ap.add_argument("n_slices", type=int)
+    ap.add_argument("output_parquet", type=Path)
+    ap.add_argument("--geom", choices=GEOMS, default="dft")
+    a = ap.parse_args()
+    slice_id, n_slices, out_path, geom = a.slice_id, a.n_slices, a.output_parquet, a.geom
+    if out_path.exists():
+        print(f"[slice {slice_id}] {out_path} exists — skip", flush=True); return
     labels = json.load(open(LABELS_PATH))
     accepted = sorted((d for d in labels if int(d["rxn_id"]) not in EXCLUDE), key=lambda d: d["rxn_id"])
     per = math.ceil(len(accepted) / n_slices)
     mine = accepted[slice_id * per: min((slice_id + 1) * per, len(accepted))]
-    print(f"[slice {slice_id}/{n_slices}] accepted={len(accepted)} (labels {len(labels)} - exclude {len(EXCLUDE)}) "
-          f"processing {len(mine)} rxns; xtb={XTB_BIN}", flush=True)
+    meta = None
+    if geom != "dft":
+        # never freeze a slice with <geom>_missing rows: an existing slice parquet is skipped on every rerun
+        unmarked = [int(d["rxn_id"]) for d in mine if geom_marker(geom, d["rxn_id"]) is None]
+        if unmarked:
+            sys.exit(f"GATE: {len(unmarked)}/{len(mine)} rxns of slice {slice_id} have no .done / .fail_* under "
+                     f"{GEOM_ROOT[geom]} (Phase 1 incomplete) — nothing written: {unmarked[:10]}")
+        meta = load_meta()
+    print(f"[slice {slice_id}/{n_slices}] geom={geom} accepted={len(accepted)} (labels {len(labels)} - exclude "
+          f"{len(EXCLUDE)}) processing {len(mine)} rxns; xtb={XTB_BIN}"
+          + (f"; geometries {GEOM_ROOT[geom]}, A_idx {META}" if meta is not None else f"; geometries {PROF}"), flush=True)
     rows = []
     for i, label in enumerate(mine):
         try:
-            rows.append(process_one(label))
+            rows.append(process_one(label, geom, meta))
         except Exception as e:
-            rows.append(dict(rxn_id=int(label["rxn_id"]), xtb_status=f"error:{type(e).__name__}:{str(e)[:80]}"))
+            rows.append(dict(rxn_id=int(label["rxn_id"]), geom=geom, xtb_status=f"error:{type(e).__name__}:{str(e)[:80]}"))
         if (i + 1) % 25 == 0:
             print(f"[slice {slice_id}] {i+1}/{len(mine)} ok={sum(r.get('xtb_status') == 'ok' for r in rows)}", flush=True)
     df = pd.DataFrame(rows)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, index=False)
+    tmp = out_path.with_name(out_path.name + ".tmp")
+    df.to_parquet(tmp, index=False)
+    os.replace(tmp, out_path)
     print(f"[slice {slice_id}] wrote {len(df)} rows -> {out_path}; status: {dict(df['xtb_status'].value_counts())}", flush=True)
 
 

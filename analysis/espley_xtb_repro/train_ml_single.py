@@ -2,16 +2,28 @@
 """train_ml_single.py — process ONE target for parallel ML array.
 
 Usage:
-    python train_ml_single.py <target_idx>   # 0..11
+    python train_ml_single.py <target_idx>   # 0..11 (ESPLEY_TARGET_SET=rev4: 0..8)
 
 Runs Protocol A (Ridge/KRR/SVR/XGB with per-seed GridSearchCV; y standardized
 via TransformedTargetRegressor) + Protocol B (Linear/Ridge/RF/GBR/XGB, pooled
 OOF) on three feature sets (ESPLEY46 / ESPLEY54 / ESPLEY73) for a single
-target. Writes per-target JSON + preds parquet to <ROOT>/ml_targets/.
+target. Writes per-target JSON + preds parquet to <ML_OUT>/ml_targets/.
 aggregate_ml.py merges them.
+
+rev 4 env (all optional; unset = rev 3 behaviour):
+  ESPLEY_FEAT        feature parquet (default $ESPLEY_OUT/xtb_features.parquet)
+  ESPLEY_ML_OUT      output root, ml_targets/ under it (default $ESPLEY_OUT)
+  ESPLEY_ROWS        csv of rxn_id: exactly these rows in file order. Every one must be xtb_status ok, NaN-free in
+                     the feature sets + targets and pass hygiene, else exit; no further row is dropped.
+  ESPLEY_TARGET_SET  rev4 = the 9 reported targets, TARGET_SETS["rev4"] (default all 12)
+  ESPLEY_PROTOCOLS   A = Protocol A only (default A,B)
+  ESPLEY_GEOM        g0|g1|g2: recorded in the JSON and as preds column `geom`; must match the parquet `geom` tag
+A target whose JSON + preds exist is skipped, or exits if they came from another geom / target set / protocols / feature
+file (path or sha256) / rows file; both are written atomically (preds first).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -31,9 +43,13 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 
 ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
-FEAT_PATH = ROOT / "xtb_features.parquet"
-TARGETS_DIR = ROOT / "ml_targets"
-TARGETS_DIR.mkdir(parents=True, exist_ok=True)
+FEAT_PATH = Path(os.environ.get("ESPLEY_FEAT") or ROOT / "xtb_features.parquet")
+ML_OUT = Path(os.environ.get("ESPLEY_ML_OUT") or ROOT)
+TARGETS_DIR = ML_OUT / "ml_targets"                  # created in main() (no side effect on import)
+ROWS_PATH = os.environ.get("ESPLEY_ROWS") or None    # None = rev 3 row filter (ok ∩ hygiene)
+GEOM = os.environ.get("ESPLEY_GEOM") or None
+GEOM_TAG = {"g0": "dft", "g1": "g1", "g2": "g2"}     # ESPLEY_GEOM -> parquet `geom` value (xtb_slice --geom)
+PROTOCOLS = {p.strip().upper() for p in (os.environ.get("ESPLEY_PROTOCOLS") or "A,B").split(",") if p.strip()}
 N_JOBS = int(os.environ.get("ESPLEY_NJOBS", "8"))
 
 DIST11 = ["dist_R_dip_ab", "dist_R_dip_bc", "dist_R_dip_ac", "dist_R_dph_ab",
@@ -65,6 +81,10 @@ FEATURE_SETS = {"ESPLEY46": ESPLEY46, "ESPLEY54": ESPLEY54, "ESPLEY73": ESPLEY73
 TARGETS = ["dft_barrier_kcal", "dft_d1_kcal", "dft_d2_kcal", "dft_eint_spe_kcal", "dft_e_bond_kcal",
            "dft_elst_dft", "dft_pauli_dft", "dft_oi_dft", "dft_disp_dft", "dft_cpcm_dft", "dft_cds_dft",
            "dft_c_ghost_kcal"]                   # 9th term: barrier = d1 + d2 + e_bond + c_ghost (method ①)
+# rev 4 pre-registered report set (REV4 §3-1): barrier, d1, d2 + 6 EDA channels, index 0..8 in this order
+TARGETS_REV4 = ["dft_barrier_kcal", "dft_d1_kcal", "dft_d2_kcal", "dft_elst_dft", "dft_pauli_dft", "dft_oi_dft",
+                "dft_disp_dft", "dft_cpcm_dft", "dft_cds_dft"]
+TARGET_SETS = {"all": TARGETS, "rev4": TARGETS_REV4}
 PRE_ML = {"dft_barrier_kcal": "xtb_e_barrier_kcal", "dft_d1_kcal": "xtb_dist_dipole_kcal",
           "dft_d2_kcal": "xtb_dist_dipolarophile_kcal", "dft_eint_spe_kcal": "xtb_interaction_kcal",
           "dft_e_bond_kcal": "xtb_interaction_kcal",
@@ -185,19 +205,94 @@ def protocol_B(df, feats, tgt):
     return out
 
 
+def hygiene(df):
+    """N (hygiene): keep d1 >= 0, d2 >= 0, d2 <= 50 — 라벨 위생 필터."""
+    return (df["dft_d1_kcal"] >= 0) & (df["dft_d2_kcal"] >= 0) & (df["dft_d2_kcal"] <= 50)
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def load_ml(feat_path=FEAT_PATH, rows_path=ROWS_PATH, targets=TARGETS, geom=GEOM):
+    """(ML rows, record of how they were chosen).
+    rows_path None: rev 3 filter = xtb_status ok, no NaN in the feature sets + all 12 TARGETS, hygiene.
+    rows_path set: exactly its rxn_ids in file order; a row that is missing, duplicated, not ok, NaN in a feature /
+    `targets` column or failing hygiene is a hard error — nothing is dropped."""
+    df = pd.read_parquet(feat_path)
+    feats = sorted(set(sum(FEATURE_SETS.values(), [])))
+    if geom is not None:
+        if geom not in GEOM_TAG:
+            sys.exit(f"ESPLEY_GEOM must be one of {sorted(GEOM_TAG)}, got {geom!r}")
+        tags = sorted(set(df["geom"].astype(str))) if "geom" in df else ["<no geom column: rev 3 parquet?>"]
+        if tags != [GEOM_TAG[geom]]:
+            sys.exit(f"GATE: ESPLEY_GEOM={geom} expects geom tag {GEOM_TAG[geom]!r}, {feat_path} has {tags}")
+    info = dict(features_file=str(feat_path), features_sha256=sha256(feat_path), rows_file=None, rows_sha256=None)
+    if rows_path is None:
+        all_cols = sorted(set(feats) | set(TARGETS))
+        ok = (df["xtb_status"] == "ok") & df[all_cols].notna().all(axis=1)
+        hyg = hygiene(df)
+        dropped = int((ok & ~hyg).sum())
+        ml = df[ok & hyg].reset_index(drop=True)
+        print(f"ML-ready rows: {len(ml)}  (hygiene dropped {dropped} rows: d1<0 / d2<0 / d2>50)", flush=True)
+        return ml, dict(info, hygiene_dropped=dropped)
+
+    ids = pd.read_csv(rows_path)["rxn_id"].astype(int).tolist()
+    rid = df["rxn_id"].astype(int)
+    need = sorted(set(feats) | set(targets))
+    lacking = [c for c in need + ["xtb_status"] if c not in df]
+    bad = [f"columns missing in {feat_path}: {lacking}"] if lacking else []
+    if not ids:
+        bad.append("rows file is empty")
+    if len(set(ids)) != len(ids):
+        bad.append(f"{len(ids) - len(set(ids))} duplicate rxn_id in the rows file")
+    if rid.duplicated().any():
+        bad.append(f"{int(rid.duplicated().sum())} duplicate rxn_id in {feat_path}")
+    miss = sorted(set(ids) - set(rid))
+    if miss:
+        bad.append(f"{len(miss)} rxn_id absent from {feat_path}: {miss[:10]}")
+    if bad:
+        sys.exit(f"GATE ESPLEY_ROWS={rows_path}: " + "; ".join(bad))
+    ml = df.set_index(rid.to_numpy()).loc[ids].reset_index(drop=True)
+    for what, m in (("xtb_status != ok", ml["xtb_status"] != "ok"),
+                    ("NaN in a feature / target column", ml[need].isna().any(axis=1)),
+                    ("failing hygiene (d1<0 / d2<0 / d2>50)", ~hygiene(ml))):
+        if m.any():
+            bad.append(f"{int(m.sum())} rows {what}: {ml.loc[m, 'rxn_id'].astype(int).tolist()[:10]}")
+    if bad:
+        sys.exit(f"GATE ESPLEY_ROWS={rows_path}: " + "; ".join(bad))
+    sha = sha256(rows_path)
+    print(f"ML rows: {len(ml)} = {rows_path} in file order (sha256 {sha[:12]}); gated, nothing dropped", flush=True)
+    return ml, dict(info, rows_file=str(Path(rows_path).resolve()), rows_sha256=sha)
+
+
 def main():
     tidx = int(sys.argv[1])
-    tgt = TARGETS[tidx]
-    print(f"[target {tidx}/{len(TARGETS)}] {tgt}", flush=True)
+    tset = os.environ.get("ESPLEY_TARGET_SET") or "all"
+    if tset not in TARGET_SETS:
+        sys.exit(f"ESPLEY_TARGET_SET must be one of {sorted(TARGET_SETS)}, got {tset!r}")
+    if "A" not in PROTOCOLS or PROTOCOLS - {"A", "B"}:
+        sys.exit(f"ESPLEY_PROTOCOLS must be A or A,B, got {sorted(PROTOCOLS)}")
+    targets = TARGET_SETS[tset]
+    if not 0 <= tidx < len(targets):
+        sys.exit(f"target_idx {tidx} out of range 0..{len(targets) - 1} (ESPLEY_TARGET_SET={tset})")
+    tgt = targets[tidx]
+    print(f"[target {tidx}/{len(targets)}] {tgt}  set={tset} geom={GEOM} protocols={','.join(sorted(PROTOCOLS))}"
+          f"\n  features {FEAT_PATH}\n  rows {ROWS_PATH}\n  out {TARGETS_DIR}", flush=True)
 
-    df = pd.read_parquet(FEAT_PATH)
-    all_cols = sorted(set(sum(FEATURE_SETS.values(), [])) | set(TARGETS))
-    ok = (df["xtb_status"] == "ok") & df[all_cols].notna().all(axis=1)
-    # N (hygiene): drop d1<0, d2<0, d2>50 — 라벨 위생 필터
-    hygiene = (df["dft_d1_kcal"] >= 0) & (df["dft_d2_kcal"] >= 0) & (df["dft_d2_kcal"] <= 50)
-    dropped = int((ok & ~hygiene).sum())
-    ml = df[ok & hygiene].reset_index(drop=True)
-    print(f"ML-ready rows: {len(ml)}  (hygiene dropped {dropped} rows: d1<0 / d2<0 / d2>50)", flush=True)
+    out_json = TARGETS_DIR / f"target_{tidx:02d}_{tgt}.json"
+    out_preds = TARGETS_DIR / f"preds_{tidx:02d}_{tgt}.parquet"
+    if out_json.exists() and out_preds.exists():
+        old = json.loads(out_json.read_text())
+        want = dict(geom=GEOM, target_set=tset, protocols=sorted(PROTOCOLS), features_file=str(FEAT_PATH),
+                    features_sha256=sha256(FEAT_PATH), rows_sha256=sha256(ROWS_PATH) if ROWS_PATH else None)
+        stale = {k: (old.get(k), v) for k, v in want.items() if old.get(k) != v}
+        if stale:
+            sys.exit(f"{out_json} exists but was made with other inputs (existing, now): {stale} — move it away")
+        print(f"skip: {out_json.name} + {out_preds.name} exist", flush=True)
+        return
+
+    ml, rows_info = load_ml(FEAT_PATH, ROWS_PATH, targets, GEOM)
 
     pre_ml = None
     if tgt in PRE_ML:
@@ -207,15 +302,17 @@ def main():
                       pearson_r=float(np.corrcoef(ml[feat], ml[tgt])[0, 1]))
         print(f"pre-ML {tgt} <- {feat} MAE {pre_ml['mae']:.2f}  bias {pre_ml['bias']:+.2f}", flush=True)
 
-    result = dict(target=tgt, target_idx=tidx, n_rows_ml=len(ml), pre_ml=pre_ml,
+    result = dict(target=tgt, target_idx=tidx, target_set=tset, targets_in_set=targets, geom=GEOM,
+                  protocols=sorted(PROTOCOLS), n_rows_ml=len(ml), **rows_info, pre_ml=pre_ml,
                   protocol_A={}, protocol_B={})
     preds = []
     for fs_name, feats in FEATURE_SETS.items():
         print(f"\n=== [{fs_name}] target={tgt} ({len(feats)} features) ===", flush=True)
         A = protocol_A(ml, feats, tgt, preds)
-        B = protocol_B(ml, feats, tgt)
+        B = protocol_B(ml, feats, tgt) if "B" in PROTOCOLS else {}
         result["protocol_A"][fs_name] = A
-        result["protocol_B"][fs_name] = B
+        if "B" in PROTOCOLS:
+            result["protocol_B"][fs_name] = B
         pre = (pre_ml or {}).get("mae", float("nan"))
         for mname, r in A.items():
             print(f"  A  {mname:8s} pre-ML {pre:6.2f}  test MAE {r['test_mae']:6.2f} ± {r['test_mae_sd']:.2f}"
@@ -223,10 +320,16 @@ def main():
         for mname, r in B.items():
             print(f"  B  {mname:20s}                 test MAE {r['pooled_oof']['mae']:6.2f}                 r2 {r['pooled_oof']['r2']:+.3f}", flush=True)
 
-    out_json = TARGETS_DIR / f"target_{tidx:02d}_{tgt}.json"
-    out_json.write_text(json.dumps(result, indent=2))
-    if preds:
-        pd.concat(preds, ignore_index=True).to_parquet(TARGETS_DIR / f"preds_{tidx:02d}_{tgt}.parquet", index=False)
+    TARGETS_DIR.mkdir(parents=True, exist_ok=True)
+    p = pd.concat(preds, ignore_index=True)
+    if GEOM:
+        p["geom"] = GEOM
+    tmp = out_preds.with_name(out_preds.name + ".tmp")
+    p.to_parquet(tmp, index=False)
+    os.replace(tmp, out_preds)
+    tmp = out_json.with_name(out_json.name + ".tmp")          # JSON last: its presence marks a finished target
+    tmp.write_text(json.dumps(result, indent=2))
+    os.replace(tmp, out_json)
     print(f"\nsaved -> {out_json}")
 
 
