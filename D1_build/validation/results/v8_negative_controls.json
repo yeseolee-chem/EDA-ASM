@@ -1,0 +1,112 @@
+{
+ "baseline_audit_problems": [],
+ "controls": {
+  "N1": {
+   "defect": "eda.inp SMD(water) -> CPCM(water)",
+   "gate": "check_method_lines / audit eda_inp_smd_count",
+   "detected": true,
+   "check_method_lines": [
+    "eda header: ! B3LYP D3BJ def2-TZVP CPCM(water) NoSym EDA TightSCF",
+    "eda.inp must carry SMD(water) 3x (header + FRAG1 + FRAG2) and no %cpcm block",
+    "FRAG strings differ from eda_level"
+   ],
+   "new_audit_problems": [
+    "eda_inp_differs_from_rewrite",
+    "eda_inp_smd_count=0",
+    "eda_inp_still_has_cpcm"
+   ]
+  },
+  "N2": {
+   "defect": "eda.inp FRAG1_C 0 -> 1",
+   "gate": "electron parity / audit charge-mult",
+   "detected": true,
+   "planted": true,
+   "odd_electrons": true,
+   "new_audit_problems": [
+    "audit_error:IndexError: list index out of range"
+   ]
+  },
+  "N3": {
+   "defect": "D0 rxn 3090 (foreign bond) as a replay",
+   "gate": "no_foreign_bond",
+   "detected": true,
+   "outcome": "TS check failed: no_foreign_bond",
+   "foreign": [
+    [
+     2,
+     22,
+     1.4719172309610355
+    ],
+    [
+     3,
+     23,
+     1.5851939270953568
+    ]
+   ]
+  },
+  "N4": {
+   "defect": "product geometry + random mode as the TS",
+   "gate": "not_product_like / imag_mode_on_forming_bonds",
+   "detected": true,
+   "outcome": "TS check failed: not_product_like",
+   "formed_d": [
+    1.4919122956125805,
+    1.5983008560343075
+   ],
+   "share": 0.5575829412989219
+  },
+  "N5": {
+   "defect": "'ORCA TERMINATED NORMALLY' removed from frag2_rel.out",
+   "gate": "run_sp / uniformity",
+   "detected": true,
+   "run_sp_missing": [
+    "frag2_rel"
+   ],
+   "uniformity_failed": [
+    "frag2_rel"
+   ],
+   "stage3_status": "incomplete"
+  },
+  "N6": {
+   "defect": "SMD CDS line removed from frag1_dist.out",
+   "gate": "uniformity cds / audit no_smd_cds",
+   "detected": true,
+   "uniformity_failed": [
+    "frag1_dist"
+   ],
+   "new_audit_problems": [
+    "no_smd_cds:sd1"
+   ]
+  },
+  "N7": {
+   "defect": "plain r1_C3H8N2.xyz instead of r1_C3H8N2_alt.xyz (rxn 20)",
+   "gate": "port diagnostic use_alt (A4)",
+   "detected": true,
+   "port_use_alt": true,
+   "d1_alt": 10.117450161736631,
+   "d1_plain": 5.467689051483337,
+   "d1_shift": -4.649761110253294
+  },
+  "N8": {
+   "defect": "dipolarophile reference C=C flipped (rxn 3520)",
+   "gate": "dipolarophile_check",
+   "detected": true,
+   "rxn_id": 3520,
+   "original": {
+    "checked": true,
+    "ts": "t",
+    "ref": "t",
+    "ok": true
+   },
+   "flipped": {
+    "checked": true,
+    "ts": "t",
+    "ref": "c",
+    "ok": false
+   },
+   "n_candidates_tried": 2
+  }
+ },
+ "n_detected": 8,
+ "n_controls": 8
+}

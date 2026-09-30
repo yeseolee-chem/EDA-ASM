@@ -5,7 +5,7 @@
 **현재 상태 (2026-09-29 14:24):** 파일럿 실행이 끝났습니다. 제출 09:00, 보고서 11:57로 약 3시간 걸렸습니다.
 - 결과: A1–A4 통과, A5 실패(진단용 기준). D1 8/10이 라벨까지 완료됐습니다.
 - 결과 요약과 남은 결정 사항은 [§11](#11-실행-결과-2026-09-29), 전체 보고서는 [`d1_autode_pilot/results/pilot_report.md`](d1_autode_pilot/results/pilot_report.md)에 있습니다.
-- 다음 단계인 본실험 전 검증은 [`validation/VALIDATION_SPEC.md`](validation/VALIDATION_SPEC.md)와 [`validation/EXEC_PLAN.md`](validation/EXEC_PLAN.md)에 있습니다. 코드만 작성했고 아직 실행하지 않았습니다.
+- 본실험 전 검증은 끝났습니다(2026-09-30). 결과는 [§12](#12-본실험-전-검증-결과-2026-09-30)와 [`validation/results/VALIDATION_REPORT.md`](validation/results/VALIDATION_REPORT.md)에 있고, §8 권고는 **조건부**(사용자 결정 2건)입니다. D1 본실험은 시작하지 않았습니다.
 
 ---
 
@@ -264,3 +264,64 @@ ORCA로 찾은 TS의 형성 결합 길이가 D0(G16)와 0.06–0.12 Å 다릅니
 2. **A5:** ORCA TS와 G16 TS의 차이로 채널 라벨이 체계적으로 달라지는지 확인해야 합니다. SPEC §10-1 TS 엔진 결정과 D0·D1 비교 가능성에 직결되는 문제입니다.
 3. **J03 유형:** D1 C 패널에 배리어 없는 carbonyl ylide 계열이 얼마나 있는지 확인이 필요합니다.
 4. **SPEC §10의 2–4항:** 기준 규칙, B block, `eda_nprocs`.
+
+---
+
+## 12. 본실험 전 검증 결과 (2026-09-30)
+
+- 기준 문서: [`validation/VALIDATION_SPEC.md`](validation/VALIDATION_SPEC.md)
+- 전체 보고서: [`validation/results/VALIDATION_REPORT.md`](validation/results/VALIDATION_REPORT.md)
+- 재실행 기록: [`validation/RETRIES.md`](validation/RETRIES.md)
+- 사전 등록 커밋: `43b962b4` (`config_val.yaml`은 `85214ce9`). 실행 후 사전 등록 파일은 수정하지 않음.
+- 실행 job: worker 996236(10개), 재실행 996555(5개), 보고서 996766. 148 task 중 147개 완료, 1개 실패(V7).
+
+### 판정 (사전 등록 기준)
+
+| id | 결과 | 값 |
+|---|---|---|
+| A1 | PASS | D1 19/20 ok. 실패 1건은 J03(TS 없음, 허용 실패)이고, `engine_abnormal`과 파이프라인 결함은 0건 |
+| A2 | PASS | 생성된 라벨 113개가 모든 gate 통과 |
+| A3 | PASS | D0 replay 24/24, 최대 \|Δ\| 0.013 kcal/mol |
+| A4 | PASS | 기준 구조 규칙이 Coley와 24/24 일치 |
+| A5-eng | **FAIL** | L0 재최적화: Pauli RMS 1.62 (기준 1.01), OI RMS 0.78 (기준 0.58). TS 이동 중앙값은 0.009 Å. L2는 전 채널 PASS |
+| A5-run | 보고 전용, **NF > 1** | 반복 실행 SD: Pauli 6.97, elst 4.07, OI 3.99, barrier 2.75 kcal/mol (NF 최대 3.45) |
+| A5-e2e | PASS | n = 23. 편향 기준과 초과 분산 기준 모두 통과 |
+| A6 | PASS | 같은 입력 ΔE 0 Eh · nprocs 1 vs 4 1.4×10⁻⁹ Eh · 같은 OptTS 두 번 3×10⁻¹⁵ Å |
+| A7 | PASS | 음성 대조 8/8 검출 |
+| A8 | PASS | D0 ok 5,260건 탈락 0건, 제외 5건은 모두 탈락 |
+| A9 | 보고 전용 | D1 행당 10.7 core-h (95% CI 6.1–15.4). 2,846행이면 약 30,600 core-h, 10 job × 8코어로 약 16일 |
+| A10 | 판정 불가 | J07은 F1 적용 후 ok. J03 scan은 ORCA가 같은 지점(89/100)에서 두 번 비정상 종료 |
+
+**§8 권고: 조건부.** 해당하는 행은 두 개입니다: "A5-eng FAIL (L0), L2 기준 충족"과 "A5-run NF > 1".
+
+### 데이터가 말하는 것
+
+- **H0 (같은 입력 → 같은 결과):** 성립. 같은 ORCA 입력은 에너지, 라벨, 구조가 완전히 같았음.
+- **엔진 차이 (H1):** Coley TS를 ORCA L0로 재최적화했을 때 TS는 거의 움직이지 않음(중앙값 0.009 Å). barrier 변화는 평균 0.04 kcal/mol.
+- **반복 실행 잡음 (H2):** 결과를 좌우하는 요인.
+  - 같은 반응을 autodE로 다시 돌리면 같은 TS를 찾는 비율이 50%(반복 쌍 기준)입니다.
+  - SMILES부터 돌린 D0 대조가 Coley와 같은 TS를 찾은 비율은 48%입니다.
+  - 그래서 채널 라벨은 autodE가 어느 TS를 찾았느냐에 따라 SD 2–7 kcal/mol로 흩어집니다. **이는 D0 라벨에도 똑같이 해당합니다.**
+- **L2 비용:** L2(NORI, DefGrid3) 재최적화는 L0의 약 11배입니다(12.4 vs 1.1 core-h, 같은 Coley TS에서 출발).
+
+### 사후 관찰 (사전 등록 밖, 판정은 바꾸지 않음)
+
+- **A5-eng FAIL은 반응 하나(rxn 3530) 때문입니다.**
+  - rxn 3530: Pauli −7.63, OI +3.60, elst +3.54 kcal/mol. 그러나 barrier 변화는 −0.04이고, TS 이동은 0.048 Å, 형성 결합 이동은 0.027 Å였습니다.
+  - 이 반응을 빼면 RMS가 Pauli 0.47, OI 0.26으로 기준보다 훨씬 작습니다.
+  - 즉 barrier는 거의 그대로인데, TS가 조금만 움직여도 Pauli와 OI가 서로 반대 방향으로 크게 바뀌는 경우입니다. TS 한 점에서만 분석할 때의 위험(Fernández & Bickelhaupt 2014)과 같은 현상입니다.
+- **파이프라인 결함:** `assemble.py`의 `sum_mismatch_promoted` 버그를 찾아 고쳤습니다(`d573111e`). 이 버그가 있으면 승격이 필요한 라벨이 모두 멈추므로, 본실험 전에 꼭 필요한 수정이었습니다.
+- **ORCA 하위 프로그램 비정상 종료 4건, 원인 미확인:** autodE가 stderr를 남기지 않아 원인을 알 수 없습니다.
+  - V7 scan과 V3_0020_r2는 같은 계산에서 반복됐습니다.
+  - 나머지 2건은 재실행에서 성공했습니다.
+- **V4_0500:** autodE 내부 오류(원자 0개 conformer)로 실패했습니다.
+
+### 사용자 결정이 필요한 것 (본실험 전)
+
+1. **엔진 효과(A5-eng) 대응:**
+   - (a) 본실험 TS 수준을 L2로 변경. 재최적화 비용만 약 11배이고, 전체 autodE 탐색이면 더 늘어납니다.
+   - (b) D0 TS를 L0로 재최적화해 균질화. D0 재최적화 비용은 반응당 약 1 core-h(V2b 실측)이고, 여기에 SP 재계산이 더해집니다.
+   - (c) 위 사후 관찰을 근거로 대안 판정을 병기하고 L0를 유지.
+2. **라벨 정의(A5-run NF > 1):** TS 한 점 라벨을 그대로 쓸지, 아니면 TS conformer 여럿의 최저·평균이나 고정 반응 좌표 지점 라벨로 바꿀지 결정해야 합니다. D0에도 적용되는 문제입니다.
+3. **J03:** 89점까지만 계산된 scan을 진단용으로 분석할지 결정해야 합니다. D-1 규칙상 J03은 이미 허용 실패로 처리돼 A1에는 영향이 없습니다.
+4. **ORCA 오류 원인 추적:** 본실험에서 ORCA stderr를 남길 방법이 필요한지 결정해야 합니다.
