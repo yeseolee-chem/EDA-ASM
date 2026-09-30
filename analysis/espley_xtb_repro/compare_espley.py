@@ -8,24 +8,26 @@ Held equal:
               the same numbers
   splits      their protocol exactly: train_test_split(test_size=0.2, rs=seed), then the first half of the remaining
               20 % is the test set; seeds 22/23/14/1/2. Verified against the test targets stored in their ml_results.pkl.
-  test rows   every side (Espley, G0, G1) is scored on the INTERSECTION of the rows usable by all sides; the dropped
-              rxn ids are reported. G0 and G1 also TRAIN on those rows (Espley stored models / retrains: their rows).
+  test rows   every side (Espley, ours G1) is scored on the INTERSECTION of the rows usable by all sides = labelled
+              (ok label) AND G1-usable (xtb_status ok, NaN-free ESPLEY46/73): 3,327 of 3,510, asserted in plot
+              (N_SCORED); the dropped rxn ids are reported. G1 also TRAINS on those rows (Espley stored models /
+              retrains: their rows).
   metric      test MAE averaged over the 5 seeds; error bar = their definition, std(|error|)/sqrt(n_test) per seed,
               averaged over seeds
-What differs: the geometry (Espley AM1-optimised; ours G1 GFN2-xTB/ALPB re-optimised from the DFT TS and references;
-G0 the label DFT geometry = DFT oracle geometry, an upper bound, not deployable), the features (46 AM1 vs xTB ESPLEY46 /
-ESPLEY73) and the model family / tuning.
+What differs: the geometry (Espley AM1-optimised; ours G1 GFN2-xTB/ALPB re-optimised from the DFT TS and references),
+the features (46 AM1 vs xTB ESPLEY46 / ESPLEY73) and the model family / tuning.
 MAIN (fixed a priori, no best-of): G1 · ESPLEY46 · KRR vs Espley SVR (their published best). d1/d2 are compared by role
 (dipole / dipolarophile): Espley's distortion_energy_1/2 follow a reactant index, so their 46 AM1 features (AM1
 distortions re-assigned by the same swap vector) are retrained on the role targets (a) with their own protocol, whose
 re-run is checked against their hps.pkl on their index d1/d2 (flag espley_protocol_replicated), and (b) with our pipeline.
-APPENDIX: best-of-models per side (G0 = upper bound); index-based d1/d2.
+APPENDIX: best-of-models per side; index-based d1/d2.
 
-  ESPLEY_GEOM=g0|g1 ESPLEY_FEAT=<parquet> python compare_espley.py prep       # checks + row masks
-  ESPLEY_GEOM=g0|g1 ESPLEY_FEAT=<parquet> python compare_espley.py train <k>  # k 0-4 Espley targets, 5-6 role d1/d2
+  ESPLEY_GEOM=g1 ESPLEY_FEAT=<parquet> python compare_espley.py prep       # checks + row masks
+  ESPLEY_GEOM=g1 ESPLEY_FEAT=<parquet> python compare_espley.py train <k>  # k 0-4 Espley targets, 5-6 role d1/d2
   python compare_espley.py espley_role theirs|ours    # Espley 46 AM1 feat. on role d1/d2: their protocol / our pipeline
   python compare_espley.py plot                       # intersection scoring, tables, figures -> results_rev4/
-Scratch: $R4_SCRATCH/compare/{espley,g0,g1}/. prep, train and espley_role skip existing outputs; every write is atomic.
+Scratch: $R4_SCRATCH/compare/{espley,g1}/. prep, train and espley_role skip existing outputs; every write is atomic.
+The Espley outputs in compare/espley/ do not depend on our geometry.
 """
 import ast
 import json
@@ -46,7 +48,7 @@ from sklearn.svm import SVR
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from train_ml_single import FEATURE_SETS, GEOM_TAG, GRIDS, _make_pipe, sha256  # noqa: E402
+from train_ml_single import FEATURE_SETS, GRIDS, _make_pipe, sha256  # noqa: E402
 
 ESP = Path(os.environ.get("ESPLEY_REPO_DATA", "/gpfs/tmp_cpu2/yeseo1ee/espley_compare"))
 ESP_DS = ESP / "feature_selection/_f_selection/tt/manual_tt_solvent.pkl"
@@ -57,7 +59,8 @@ GEOM = os.environ.get("ESPLEY_GEOM") or None
 FEAT = Path(os.environ["ESPLEY_FEAT"]) if os.environ.get("ESPLEY_FEAT") else None
 LABELS = Path(os.environ.get("ESPLEY_LABELS") or HERE.parent.parent / "labels_all.json")
 RES = HERE / "results_rev4"
-GEOMS = ("g0", "g1")
+GEOMS = ("g1",)                                   # our geometry; the parquet `geom` tag is the geometry name
+N_SCORED = 3327                                   # rev 4 scored rows (labelled AND G1-usable), asserted in plot()
 SEEDS = [22, 23, 14, 1, 2]
 N_JOBS = int(os.environ.get("ESPLEY_NJOBS", "8"))
 # Espley target -> (display name, our label key, xTB pre-ML feature)
@@ -90,7 +93,7 @@ MAIN_ARM, MAIN_MODEL, MAIN_ESP_MODEL = "ESPLEY46", "KRR", "SVR"     # pre-regist
 OUR_MODELS = [m.replace("_rbf", "") for m in GRIDS]
 
 ESP_SIDE = "Espley (AM1 geometry, 46 AM1 feat.)"
-OUR_SIDE = {"g1": "Ours G1 (xTB geometry)", "g0": "Ours G0 upper bound (DFT oracle geometry)"}
+OUR_SIDE = {"g1": "Ours G1 (xTB geometry)"}
 PROTO = {"stored": "stored test predictions", "theirs": "their protocol (retrained)", "ours": "our pipeline"}
 KEY = ["side", "protocol", "arm", "model", "target"]
 
@@ -188,8 +191,8 @@ def need_geom():
 def load_feat():
     df = pd.read_parquet(FEAT)
     tags = sorted(set(df["geom"].astype(str))) if "geom" in df else ["<no geom column>"]
-    if tags != [GEOM_TAG[GEOM]]:
-        sys.exit(f"GATE: ESPLEY_GEOM={GEOM} expects geom tag {GEOM_TAG[GEOM]!r}, {FEAT} has {tags}")
+    if tags != [GEOM]:
+        sys.exit(f"GATE: ESPLEY_GEOM={GEOM} expects geom tag {GEOM!r}, {FEAT} has {tags}")
     df = df.assign(rxn_id=df["rxn_id"].astype(int))
     if df["rxn_id"].duplicated().any():
         sys.exit(f"GATE: duplicate rxn_id in {FEAT}")
@@ -462,10 +465,9 @@ def train(k):
     esp, feat = load_esp(), load_feat()
     ids, n = C["ids"], C["n"]
     y_all = target_values(t, esp, C)
-    # PREREG_REV4: G0 and G1 train (and are scored) on the same rows = labelled AND usable on both geometries
-    other = load_prep("g1" if g == "g0" else "g0")
-    assert np.array_equal(other["ids"], ids)
-    ok = C["have_lab"] & P["have_feat"] & other["have_feat"] & ~np.isnan(y_all)
+    # train (and score) on the rows usable by every side = labelled AND G1-usable (the rev 4 rows, plot() asserts)
+    assert np.array_equal(P["ids"], ids)
+    ok = C["have_lab"] & P["have_feat"] & ~np.isnan(y_all)
     rows, preds = [], []
     for arm, cols in ARMS.items():
         X_all = feat.reindex(ids)[cols].to_numpy(float)      # rows in Espley order; NaN where we lack features
@@ -601,7 +603,7 @@ def plot():
     for g in GEOMS:
         assert np.array_equal(P[g]["ids"], ids), g
     # test rows: the intersection of the rows usable by every side (Espley: all rows; role targets need our label)
-    usable = C["have_lab"] & P["g0"]["have_feat"] & P["g1"]["have_feat"]
+    usable = C["have_lab"] & np.logical_and.reduce([P[g]["have_feat"] for g in GEOMS])
     dropped = []
     for i in np.flatnonzero(~usable):
         why = [] if C["have_lab"][i] else ["no_label"]
@@ -609,6 +611,8 @@ def plot():
         dropped.append(dict(rxn_id=int(ids[i]), reasons=why))
     print(f"scored rows = intersection: {usable.sum()}/{n}; dropped {len(dropped)}:",
           [r["rxn_id"] for r in dropped][:50])
+    if int(usable.sum()) != N_SCORED:
+        sys.exit(f"GATE: {int(usable.sum())} scored rows (labelled AND G1-usable), expected the rev 4 {N_SCORED}")
 
     d = OUT / "espley"
     ours = {OUT / g / f"ours_preds_{k}.parquet": g for g in GEOMS for k in range(len(TKEYS))}
@@ -658,7 +662,7 @@ def plot():
     def our_key(gg, t):
         return side_name(gg, MAIN_ARM), PROTO["ours"], MAIN_ARM, MAIN_MODEL, t
 
-    side_order = [ESP_SIDE] + [side_name(gg, a) for gg in ("g1", "g0") for a in ARMS]
+    side_order = [ESP_SIDE] + [side_name(gg, a) for gg in GEOMS for a in ARMS]
 
     def order(df):
         return (df.assign(_t=df.target.map(TKEYS.index), _s=df.side.map(side_order.index),
@@ -673,43 +677,41 @@ def plot():
             y = SIGN.get(t, 1.0) * target_values(t, esp, C)
             pre[gg][t] = float(np.mean(np.abs(x[usable] - y[usable])))
 
-    # MAIN: G1 · ESPLEY46 · KRR vs Espley SVR (both fixed a priori), G0 alongside as the upper bound
+    # MAIN: G1 · ESPLEY46 · KRR vs Espley SVR (both fixed a priori)
     main = []
     for t in MAIN_TARGETS:
         a, b = ps(esp_key(t)), ps(our_key("g1", t))
-        e, o1, o0 = G.loc[esp_key(t)], G.loc[our_key("g1", t)], G.loc[our_key("g0", t)]
+        e, o1 = G.loc[esp_key(t)], G.loc[our_key("g1", t)]
         main.append(dict(target=LABEL[t], target_key=t,
                          espley=f"{ESP_SIDE} · {MAIN_ESP_MODEL} · {esp_key(t)[1]}",
                          espley_mae=e.mae, espley_se=e.se,
                          # retrained rows: their protocol re-run reproduces hps.pkl on index d1/d2 (plot gates on it)
                          espley_protocol_replicated=rep["replicated"] if t in ROLE_TARGETS else None,
                          g1=f"{side_name('g1', MAIN_ARM)} · {MAIN_MODEL}", g1_mae=o1.mae, g1_se=o1.se,
-                         g0_upper_bound_mae=o0.mae, g0_upper_bound_se=o0.se,
                          paired_diff_espley_minus_g1=float((a - b).mean()), paired_diff_sd=float((a - b).std()),
                          mae_ratio_espley_over_g1=float((a / b).mean()),
-                         pre_ml_xtb_g1_mae=pre["g1"].get(t), pre_ml_xtb_g0_mae=pre["g0"].get(t),
+                         pre_ml_xtb_g1_mae=pre["g1"].get(t),
                          n_test_per_seed=o1.n_test, n_test_espley_per_seed=float(np.mean(list(n_te.values())))))
     main = pd.DataFrame(main)
 
     cols = ["mae", "se", "sd", "n_seeds", "n_test"]
     role_rows = ([(ESP_SIDE, PROTO["theirs"], "AM1-46", m) for m in THEIR_TUNE]
                  + [(ESP_SIDE, PROTO["ours"], "AM1-46", m) for m in OUR_MODELS]
-                 + [our_key(gg, None)[:4] for gg in ("g1", "g0")])
+                 + [our_key(gg, None)[:4] for gg in GEOMS])
     role = pd.DataFrame([dict(target=LABEL[t], target_key=t, side=s, protocol=p, arm=a, model=m,
-                              upper_bound=s.startswith(OUR_SIDE["g0"]), **G.loc[(s, p, a, m, t)][cols].to_dict())
+                              **G.loc[(s, p, a, m, t)][cols].to_dict())
                          for t in ROLE_TARGETS for s, p, a, m in role_rows])
 
     best = agg.loc[agg.groupby(["side", "protocol", "target"])["mae"].idxmin()].copy()
     best["n_models_compared"] = [G.loc[(s, p)].xs(t, level="target").shape[0]
                                  for s, p, t in best[["side", "protocol", "target"]].itertuples(index=False)]
-    best = order(best.assign(target_label=best.target.map(LABEL), upper_bound=best.side.str.startswith(OUR_SIDE["g0"])))
+    best = order(best.assign(target_label=best.target.map(LABEL)))
 
     idx_rows = []
     for t in INDEX_D:
         fixed = [(esp_key(t), "fixed: Espley's published best"),
                  ((ESP_SIDE, PROTO["theirs"], "AM1-46", MAIN_ESP_MODEL, t), "their protocol re-run (replication)"),
-                 (our_key("g1", t), "fixed: pre-registered G1 · ESPLEY46 · KRR"),
-                 (our_key("g0", t), "fixed: G0 · ESPLEY46 · KRR (upper bound)")]
+                 (our_key("g1", t), "fixed: pre-registered G1 · ESPLEY46 · KRR")]
         for k, sel in fixed:
             idx_rows.append(dict(target=LABEL[t], target_key=t, selection=sel, **dict(zip(KEY[:4], k[:4])),
                                  **G.loc[k][cols].to_dict()))
@@ -741,34 +743,32 @@ def plot():
     write_atomic(RES / "espley_compare_checks.json",
                  lambda f: f.write_text(json.dumps(checks, indent=1, default=_native)))
 
-    colors = {"esp": "#7f7f7f", "g1": "#08519c", "g0": "#c6dbef"}
+    colors = {"esp": "#7f7f7f", "g1": "#08519c"}
     geo = ("Espley: 46 AM1 features on AM1-optimised geometries; ours G1: GFN2-xTB features on GFN2-xTB/ALPB geometries "
-           "re-optimised from the DFT TS and references; G0: the same xTB features on the label DFT geometry "
-           "(DFT oracle geometry = upper bound, not deployable).")
+           "re-optimised from the DFT TS and references.")
     same_note = (f"Held equal: ds3 reactions, Espley's DFT targets (Gaussian B3LYP-D3(BJ)/def2-TZVP SMD(water)), 80/10/10 "
                  f"splits and seeds, metric; every bar is scored on the same {n_use:,}/{n:,} reactions usable by all "
                  f"sides ({len(dropped)} dropped, listed in espley_compare_checks.json).")
 
     # main figure
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(16, 7.6), gridspec_kw={"width_ratios": [1.6, 1]})
-    x, w = np.arange(len(MAIN_TARGETS)), 0.26
-    bars = [("espley", f"Espley · AM1 geometry · 46 AM1 feat. · {MAIN_ESP_MODEL}", colors["esp"], None),
-            ("g1", f"Ours G1 · xTB geometry · {MAIN_ARM} · {MAIN_MODEL}", colors["g1"], None),
-            ("g0_upper_bound", f"Ours G0 · DFT oracle geometry (upper bound) · {MAIN_ARM} · {MAIN_MODEL}",
-             colors["g0"], "//")]
-    for i, (c, lab, col, hatch) in enumerate(bars):
+    x, w = np.arange(len(MAIN_TARGETS)), 0.36
+    bars = [("espley", f"Espley · AM1 geometry · 46 AM1 feat. · {MAIN_ESP_MODEL}", colors["esp"]),
+            ("g1", f"Ours G1 · xTB geometry · {MAIN_ARM} · {MAIN_MODEL}", colors["g1"])]
+    for i, (c, lab, col) in enumerate(bars):
         v, e = main[f"{c}_mae"].to_numpy(), main[f"{c}_se"].to_numpy()
-        ax.bar(x + (i - 1) * w, v, w, yerr=e, capsize=3, color=col, hatch=hatch, edgecolor="black", lw=0.5, label=lab)
+        off = (i - (len(bars) - 1) / 2) * w
+        ax.bar(x + off, v, w, yerr=e, capsize=3, color=col, edgecolor="black", lw=0.5, label=lab)
         for j, t in enumerate(MAIN_TARGETS):
             star = " *" if c == "espley" and t in ROLE_TARGETS else ""
-            ax.text(x[j] + (i - 1) * w, v[j] + e[j] + 0.05, f"{v[j]:.2f}{star}", ha="center", va="bottom", fontsize=7.5)
+            ax.text(x[j] + off, v[j] + e[j] + 0.05, f"{v[j]:.2f}{star}", ha="center", va="bottom", fontsize=7.5)
     ax.set_xticks(x); ax.set_xticklabels([SHORT[t] for t in MAIN_TARGETS])
     ax.set_ylabel("test MAE (kcal/mol) — models fixed a priori\nmean of 5 seeds, error bar = SE (Espley's definition)")
     ax.set_ylim(0, ax.get_ylim()[1] * 1.18)
     ax.legend(loc="upper left", fontsize=8.5)
     ax.grid(axis="y", alpha=0.3)
     ax.set_title("Same ds3 reactions · same DFT targets · identical 80/10/10 test rows (seeds 22/23/14/1/2)\n"
-                 "· different geometry (ours G1 / G0 upper bound vs Espley AM1)", fontsize=10.5)
+                 "· different geometry (ours G1 xTB vs Espley AM1)", fontsize=10.5)
     for j, t in enumerate(MAIN_TARGETS):      # paired per seed: identical test rows, so each line is a paired comparison
         a, b = ps(esp_key(t)), ps(our_key("g1", t))
         for s in SEEDS:
@@ -795,19 +795,17 @@ def plot():
     plt.close(fig)
 
     # role figure: Espley 46 AM1 retrained two ways vs ours, on the role targets
-    ents = [((ESP_SIDE, PROTO["theirs"], "AM1-46", "SVR"), "Espley 46 AM1 · SVR · their protocol", "#7f7f7f", None),
-            ((ESP_SIDE, PROTO["theirs"], "AM1-46", "KRR"), "Espley 46 AM1 · KRR · their protocol", "#a8a8a8", None),
-            ((ESP_SIDE, PROTO["ours"], "AM1-46", "KRR"), "Espley 46 AM1 · KRR · our pipeline", "#d9d9d9", None),
-            (our_key("g1", None)[:4], f"Ours G1 · xTB geometry · {MAIN_ARM} · {MAIN_MODEL}", colors["g1"], None),
-            (our_key("g0", None)[:4], f"Ours G0 · DFT oracle geometry (upper bound) · {MAIN_ARM} · {MAIN_MODEL}",
-             colors["g0"], "//")]
+    ents = [((ESP_SIDE, PROTO["theirs"], "AM1-46", "SVR"), "Espley 46 AM1 · SVR · their protocol", "#7f7f7f"),
+            ((ESP_SIDE, PROTO["theirs"], "AM1-46", "KRR"), "Espley 46 AM1 · KRR · their protocol", "#a8a8a8"),
+            ((ESP_SIDE, PROTO["ours"], "AM1-46", "KRR"), "Espley 46 AM1 · KRR · our pipeline", "#d9d9d9"),
+            (our_key("g1", None)[:4], f"Ours G1 · xTB geometry · {MAIN_ARM} · {MAIN_MODEL}", colors["g1"])]
     fig, ax = plt.subplots(figsize=(12, 6.8))
-    x, w = np.arange(len(ROLE_TARGETS)), 0.16
-    for i, (k, lab, col, hatch) in enumerate(ents):
+    x, w = np.arange(len(ROLE_TARGETS)), 0.19
+    for i, (k, lab, col) in enumerate(ents):
         r = [G.loc[k + (t,)] for t in ROLE_TARGETS]
         v, e = np.array([q.mae for q in r]), np.array([q.se for q in r])
         off = (i - (len(ents) - 1) / 2) * w
-        ax.bar(x + off, v, w, yerr=e, capsize=3, color=col, hatch=hatch, edgecolor="black", lw=0.5, label=lab)
+        ax.bar(x + off, v, w, yerr=e, capsize=3, color=col, edgecolor="black", lw=0.5, label=lab)
         for j in range(len(x)):
             ax.text(x[j] + off, v[j] + e[j] + 0.04, f"{v[j]:.2f}", ha="center", va="bottom", fontsize=8)
     ax.set_xticks(x); ax.set_xticklabels([LABEL[t] for t in ROLE_TARGETS])

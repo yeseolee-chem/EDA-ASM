@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """aggregate.py — merge xtb_slice.py slice parquets into one feature parquet with completeness gates.
 
-  python aggregate.py [--geom dft|g1|g2] [--slices DIR] [--out PARQUET]
-Defaults ($ESPLEY_OUT = /gpfs/tmp_cpu2/yeseo1ee/espley_xtb):
-  dft -> slices_g0/ -> xtb_features_g0.parquet      g1 -> slices_g1/ -> xtb_features_g1.parquet   (g2 likewise)
-Gates: N_SLICES slice files, all 5,260 rxns once, every row tagged with --geom, no NaN derived column on ok rows;
-dft: >= 99% xtb_status ok. g1/g2: >= 1 ok row, no <geom>_missing row (Phase 1 incomplete); other non-ok rows
-(g1_fail:*, partition_mismatch_g1, ...) are allowed.
+  python aggregate.py [--geom g1|g2] [--slices DIR] [--out PARQUET]        (default g1)
+Defaults ($ESPLEY_OUT = /gpfs/tmp_cpu2/yeseo1ee/espley_xtb): g1 -> slices_g1/ -> xtb_features_g1.parquet (g2 likewise)
+Gates: N_SLICES slice files, all 5,260 rxns once, every row tagged with --geom, no NaN derived column on ok rows,
+>= 1 ok row, no <geom>_missing row (Phase 1 incomplete); other non-ok rows (g1_fail:*, partition_mismatch_g1, ...)
+are allowed.
 An existing output is skipped only while all N_SLICES slices exist and none is newer than it; otherwise (a slice
 redone) it is moved to <out>.stale — so a failed rebuild leaves no stale merge for dependent jobs — and rebuilt.
 The parquet is written atomically (after the gates).
@@ -19,13 +18,13 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
-TAG = {"dft": "g0", "g1": "g1", "g2": "g2"}
+GEOMS = ("g1", "g2")       # = xtb_slice.GEOMS; the parquet `geom` tag is the geometry name
 N_SLICES = int(os.environ.get("ESPLEY_NSLICES", "18"))
 N_EXPECTED = 5260          # 5,265 labels − 5 excluded (3090, 3766, 4252, 3400, 5783)
 
 
 def derive(df):
-    """Add dft_c_ghost_kcal and is_charged (in place; also used by verify_geom_dft.py on raw slices)."""
+    """Add dft_c_ghost_kcal and is_charged (in place)."""
     # c_ghost = ghost-reference correction (BSSE + cavity) = ghost − own-basis = −(e_bond − eint_spe).
     # Closed budget (method ①): barrier = d1 + d2 + e_bond + c_ghost  (exact).
     # d1 + d2 + e_bond alone mixes two reference frames (method ②) — NOT a barrier target.
@@ -36,12 +35,12 @@ def derive(df):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--geom", choices=tuple(TAG), default="dft")
-    ap.add_argument("--slices", type=Path, default=None, help="default $ESPLEY_OUT/slices_<g0|g1|g2>")
-    ap.add_argument("--out", type=Path, default=None, help="default $ESPLEY_OUT/xtb_features_<g0|g1|g2>.parquet")
+    ap.add_argument("--geom", choices=GEOMS, default="g1")
+    ap.add_argument("--slices", type=Path, default=None, help="default $ESPLEY_OUT/slices_<geom>")
+    ap.add_argument("--out", type=Path, default=None, help="default $ESPLEY_OUT/xtb_features_<geom>.parquet")
     a = ap.parse_args()
-    slices = a.slices or ROOT / f"slices_{TAG[a.geom]}"
-    out = a.out or ROOT / f"xtb_features_{TAG[a.geom]}.parquet"
+    slices = a.slices or ROOT / f"slices_{a.geom}"
+    out = a.out or ROOT / f"xtb_features_{a.geom}.parquet"
     paths = sorted(slices.glob("slice_*.parquet"))
     if out.exists():
         t_out = out.stat().st_mtime
@@ -76,17 +75,14 @@ def main():
     ok = df[ok_mask]
     print(f"ok={len(ok)}  solvation tags: {dict(ok.xtb_solvation.value_counts())}")
     print(f"ok rows with NaN in any xtb_*/q_* column: {int(ok.filter(regex='^(xtb_|q_)').isna().any(axis=1).sum())}")
-    if a.geom == "dft" and len(ok) < 0.99 * N_EXPECTED:
-        sys.exit(f"GATE: xTB success rate {len(ok)/N_EXPECTED:.3%} < 99% — inspect failures before ML")
-    if a.geom != "dft":
-        has_geom = ~df["xtb_status"].str.startswith(f"{a.geom}_")
-        print(f"{a.geom} geometry available: {int(has_geom.sum())}; ok among them {int((ok_mask & has_geom).sum())}")
-        if not len(ok):
-            sys.exit(f"GATE: no ok row for geom={a.geom} — geometry root missing or empty?")
-        n_miss = int((df["xtb_status"] == f"{a.geom}_missing").sum())
-        if n_miss:
-            sys.exit(f"GATE: {n_miss} rxns {a.geom}_missing — Phase 1 incomplete; delete the slices holding them, "
-                     f"rerun them after Phase 1 finishes")
+    has_geom = ~df["xtb_status"].astype(str).str.startswith(f"{a.geom}_")
+    print(f"{a.geom} geometry available: {int(has_geom.sum())}; ok among them {int((ok_mask & has_geom).sum())}")
+    if not len(ok):
+        sys.exit(f"GATE: no ok row for geom={a.geom} — geometry root missing or empty?")
+    n_miss = int((df["xtb_status"] == f"{a.geom}_missing").sum())
+    if n_miss:
+        sys.exit(f"GATE: {n_miss} rxns {a.geom}_missing — Phase 1 incomplete; delete the slices holding them, "
+                 f"rerun them after Phase 1 finishes")
 
     tmp = out.with_name(out.name + ".tmp")
     df.to_parquet(tmp, index=False)

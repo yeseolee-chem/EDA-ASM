@@ -7,8 +7,8 @@
 # log in $R4_SCRATCH/logs/<PACK_NAME>_<index>.<jobid>.out. The array scripts are idempotent, so a clipped pack is
 # simply resubmitted. Exit 1 if any element failed.
 #   sbatch --cpus-per-task=40 --mem=80G --partition=cpu1,cpu2 \
-#          --export=ALL,PACK_SCRIPT=r4_ml_array.sh,PACK_INDICES="0 1 2 3 4 5 6 7 8",PACK_PAR=5,PACK_PER=8,PACK_NAME=ml_g0 \
-#          --output=$R4_SCRATCH/logs/pack_ml_g0.%j.out r4_pack.sh
+#          --export=ALL,PACK_SCRIPT=r4_ml_array.sh,PACK_INDICES="0 1 2 3 4 5 6 7 8",PACK_PAR=5,PACK_PER=8,PACK_NAME=ml_g1 \
+#          --output=$R4_SCRATCH/logs/pack_ml_g1.%j.out r4_pack.sh
 set -uo pipefail
 : "${PACK_SCRIPT:?}" "${PACK_INDICES:?}" "${PACK_PAR:?}" "${PACK_PER:?}" "${PACK_NAME:?}"
 LOGS=${R4_SCRATCH:-/gpfs/tmp_cpu2/yeseo1ee/espley_rev4}/logs

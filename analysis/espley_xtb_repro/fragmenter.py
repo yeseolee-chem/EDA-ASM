@@ -123,24 +123,24 @@ def partition(ts, r0, r1, factor: float = FACTOR, max_maps: int = MAX_MAPS) -> P
     """ts, r0, r1 are (syms, xyz) tuples. See module docstring for the rule."""
     ts_syms, ts_xyz = ts
     G_TS, owner, adj, D, n_unatt = heavy_graph(ts_syms, ts_xyz, factor)
-    G0, _, _, _, _ = heavy_graph(*r0, factor)
-    G1, _, _, _, _ = heavy_graph(*r1, factor)
+    G_r0, _, _, _, _ = heavy_graph(*r0, factor)
+    G_r1, _, _, _, _ = heavy_graph(*r1, factor)
     heavy_ts = set(G_TS.nodes)
     diag = dict(h_unattached=n_unatt, n_maps=0, cap_hit=False)
 
-    if len(G0) + len(G1) != len(heavy_ts):
+    if len(G_r0) + len(G_r1) != len(heavy_ts):
         return Partition("heavy_count_mismatch", diag=diag)
 
     # enumerate embeddings of reactant-0 graph into the TS graph
     images: dict[frozenset, tuple[dict, dict]] = {}
-    for m in GraphMatcher(G_TS, G0, node_match=_nm).subgraph_monomorphisms_iter():
+    for m in GraphMatcher(G_TS, G_r0, node_match=_nm).subgraph_monomorphisms_iter():
         diag["n_maps"] += 1
-        img = frozenset(m.keys())                       # m: TS node -> G0 node
+        img = frozenset(m.keys())                       # m: TS node -> G_r0 node
         if img not in images:
             rest = heavy_ts - img
-            gm1 = GraphMatcher(G_TS.subgraph(rest), G1, node_match=_nm)
+            gm1 = GraphMatcher(G_TS.subgraph(rest), G_r1, node_match=_nm)
             if gm1.is_isomorphic():                     # remainder must BE reactant 1
-                inv0 = {v: k for k, v in m.items()}       # G0 node -> TS node
+                inv0 = {v: k for k, v in m.items()}       # G_r0 node -> TS node
                 inv1 = {v: k for k, v in gm1.mapping.items()}
                 images[img] = (inv0, inv1)
         if diag["n_maps"] >= max_maps:
@@ -203,11 +203,11 @@ def mol_heavy_graph(mol):
 
 def match_smiles_to_reactants(rmols, r0, r1, factor: float = FACTOR):
     """Which SMILES reactant is r0 / r1?  Returns (idx_for_r0, idx_for_r1) or None."""
-    G0, _, _, _, _ = heavy_graph(*r0, factor)
-    G1, _, _, _, _ = heavy_graph(*r1, factor)
+    G_r0, _, _, _, _ = heavy_graph(*r0, factor)
+    G_r1, _, _, _, _ = heavy_graph(*r1, factor)
     Gm = [mol_heavy_graph(m) for m in rmols]
     for i0, i1 in ((0, 1), (1, 0)):
-        if nx.is_isomorphic(G0, Gm[i0], node_match=_nm) and nx.is_isomorphic(G1, Gm[i1], node_match=_nm):
+        if nx.is_isomorphic(G_r0, Gm[i0], node_match=_nm) and nx.is_isomorphic(G_r1, Gm[i1], node_match=_nm):
             return i0, i1
     return None
 
@@ -233,11 +233,11 @@ def audit_forming_bonds(P: Partition, ts, r0, r1, rxn_smiles: str, factor: float
         return None
     ts_syms, ts_xyz = ts
     adj, D = bond_matrix(ts_syms, ts_xyz, factor)
-    G0, _, _, _, _ = heavy_graph(*r0, factor)
-    G1, _, _, _, _ = heavy_graph(*r1, factor)
+    G_r0, _, _, _, _ = heavy_graph(*r0, factor)
+    G_r1, _, _, _, _ = heavy_graph(*r1, factor)
     Gm0, Gm1 = mol_heavy_graph(rmols[assign[0]]), mol_heavy_graph(rmols[assign[1]])
-    iso0 = list(itertools.islice(GraphMatcher(G0, Gm0, node_match=_nm).isomorphisms_iter(), max_iso))
-    iso1 = list(itertools.islice(GraphMatcher(G1, Gm1, node_match=_nm).isomorphisms_iter(), max_iso))
+    iso0 = list(itertools.islice(GraphMatcher(G_r0, Gm0, node_match=_nm).isomorphisms_iter(), max_iso))
+    iso1 = list(itertools.islice(GraphMatcher(G_r1, Gm1, node_match=_nm).isomorphisms_iter(), max_iso))
     best = None
     for m0 in iso0:                                   # m0: r0 heavy idx -> map number
         inv0 = {v: P.map0[k] for k, v in m0.items()}  # map number -> TS idx

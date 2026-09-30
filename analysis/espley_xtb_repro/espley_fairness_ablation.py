@@ -6,36 +6,38 @@ the 20 % hold-out, seeds 22/23/14/1/2; replication against their ml_results.pkl 
 (train_ml_single._make_pipe: StandardScaler(X) -> est, y standardised), Espley-style tuning: GridSearchCV
 (KFold 5, rs 23, MAE) ONCE on the seed-23 training rows, then the best estimator is refit on every seed's training
 rows and scored on its test rows. One self-contained port of the user's original three files (common.py, the
-ablation, the extra B_role arm); our features now come from the rev 4 parquets (G0 = the rev 3 DFT geometry).
+ablation, the extra role arm); our features come from the rev 4 G1 parquet (xTB geometry).
 
 arm                         features                                          targets              models
 A_esp46_ourpipe             Espley46                                          5 Espley             KRR, SVR
-B_esp46_plus_DFTgeom11      Espley46 + 11 distances, G0 (DFT geometry)        5 Espley             KRR, SVR
-B_role_esp46_DFTgeom11      Espley46 (AM1 distortions role-swapped) + G0 11   role d1/d2           KRR
 C_esp46_roleAM1_role        Espley46 (AM1 distortions role-swapped)           role d1/d2           KRR, SVR
 C0_esp46_role_noswapfeat    Espley46                                          role d1/d2           KRR, SVR
-O_ours46_tune23             our ESPLEY46, G0                                  5 Espley + role      KRR, SVR
-B_g1_esp46_plus_G1geom11    Espley46 + 11 distances, G1 (xTB geometry)        5 Espley             KRR, SVR  (new)
+B_g1_esp46_plus_G1geom11    Espley46 + 11 distances, G1 (xTB geometry)        5 Espley             KRR, SVR
 O_g1_ours46_tune23          our ESPLEY46, G1                                  5 Espley + role      KRR, SVR  (extra)
 role d1/d2 = Espley's distortion_energy_1/2_dft re-assigned to dipole / dipolarophile with the swap vector from our
 labels (|d1-t2| + |d2-t1| < |d1-t1| + |d2-t2|); the same vector swaps distortion_energy_1/2_am1 in the role features.
 
-DEVIATION from the original (rows): the original scored each arm on its own usable rows (rev 3 xtb ok ∩ arm features
-∩ target non-NaN). Here every (arm, target, model) uses the rows usable by ALL arms — Espley features, an ok label
-(role targets), G0 and G1 xtb_status ok with NaN-free ESPLEY46, every target non-NaN — so the arms stay comparable.
-n and the dropped rxn ids are in every JSON and in results_rev4/espley_geometry_ablation_rows.json.
+Rows (ABL_ROWS):
+  common (default; DEVIATION from the original) every (arm, target, model) uses the rows usable by ALL arms — Espley
+         features, an ok label (role targets), G1 xtb_status ok with NaN-free ESPLEY46, every target non-NaN — so the
+         arms stay comparable. n and the dropped rxn ids are in every JSON and in
+         results_rev4/espley_geometry_ablation_rows.json.
+  own    the original rule: each arm on its own usable rows = ok label ∩ arm features ∩ target non-NaN (G1 arms also
+         need G1). The original's first factor was "rev 3 xtb ok"; rev 3 was ok for every labelled rxn, so "ok label"
+         selects the same rows. -> separate files (_ownrows).
 (Also: refit on a clone of the best estimator — identical for KRR / SVR; n_jobs from $ESPLEY_NJOBS; GridSearchCV
 error_score="raise" as compare_espley.our_pipeline — a failed grid fit stops the job instead of scoring NaN silently.)
 
   python espley_fairness_ablation.py list                   # job index, slice, done
   python espley_fairness_ablation.py run [--slice I] [--arm A ..] [--target T ..] [--model M ..]
   python espley_fairness_ablation.py aggregate
-run: the filtered job list, then jobs[I::N_SLICES] -> $R4_SCRATCH/ablation/<arm>__<target>__<model>.json (atomic).
-An existing JSON is skipped; one made from other inputs or rows is refused (move it away).
-aggregate -> results_rev4/espley_geometry_ablation.csv (mae = mean of the 5 seeds, se = mean per-seed
+run: the filtered job list, then jobs[I::N_SLICES] -> $R5_SCRATCH/phaseA/ablation[_ownrows]/<arm>__<target>__<model>.json
+(atomic; $ABL_SCRATCH overrides the directory). An existing JSON is skipped; one made from other inputs or rows is
+refused (move it away).
+aggregate -> results_rev4/espley_geometry_ablation[_ownrows].csv (mae = mean of the 5 seeds, se = mean per-seed
 std(|err|)/sqrt(n_test) as Espley, sd_seeds, best params, n), _per_seed.csv, _rows.json; exit 1 if a JSON is
 missing or stale.
-Inputs: $ESPLEY_REPO_DATA, $ESPLEY_LABELS, $ESPLEY_FEAT_G0 / $ESPLEY_FEAT_G1 (default $ESPLEY_OUT/xtb_features_g{0,1}.parquet).
+Inputs: $ESPLEY_REPO_DATA, $ESPLEY_LABELS, $ESPLEY_FEAT_G1 (default $ESPLEY_OUT/xtb_features_g1.parquet).
 """
 import argparse
 import hashlib
@@ -55,6 +57,7 @@ from sklearn.model_selection import GridSearchCV, KFold, train_test_split
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from train_ml_single import FEATURE_SETS, GRIDS, _make_pipe  # noqa: E402
+from rev5_common import SCRATCH as R5_SCRATCH  # noqa: E402
 
 warnings.filterwarnings("ignore")
 
@@ -63,20 +66,18 @@ ESP_FEAT = ESP / "feature_selection/_f_selection/tt/manual_tt_solvent.pkl"
 ESP_RES = ESP / "machine_learning/tt/solvent/ml_results.pkl"
 LABELS = Path(os.environ.get("ESPLEY_LABELS") or HERE.parent.parent / "labels_all.json")
 ROOT = Path(os.environ.get("ESPLEY_OUT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb"))
-FEAT = {"g0": Path(os.environ.get("ESPLEY_FEAT_G0") or ROOT / "xtb_features_g0.parquet"),
-        "g1": Path(os.environ.get("ESPLEY_FEAT_G1") or ROOT / "xtb_features_g1.parquet")}
-GEOM_TAG = {"g0": "dft", "g1": "g1"}                  # parquet `geom` column (xtb_slice.py --geom)
-GEOM_NOTE = {"none": "Espley AM1 features only", "g0": "upper bound: DFT oracle geometry (G0)",
-             "g1": "xTB geometry (G1)"}
-# ABL_ROWS=common (default, DEVIATION below) | own (the original rule: rev 3 = G0 xtb ok, arm features and target non-NaN,
-# per arm; G1 arms also need G1) — own reproduces the REV4 §0-3 numbers and goes to separate files (_ownrows)
+FEAT = {"g1": Path(os.environ.get("ESPLEY_FEAT_G1") or ROOT / "xtb_features_g1.parquet")}   # parquet `geom` tag = key
+GEOM_NOTE = {"none": "Espley AM1 features only", "g1": "xTB geometry (G1)"}
+# ABL_ROWS=common (default, DEVIATION: one row set for every arm) | own (the original rule per arm: ok label, arm
+# features and target non-NaN; G1 arms also need G1) — own reproduces the REV4 §0-3 numbers, separate files (_ownrows)
 ROWS_MODE = os.environ.get("ABL_ROWS", "common")
 assert ROWS_MODE in ("common", "own"), ROWS_MODE
 SUFFIX = "" if ROWS_MODE == "common" else "_ownrows"
-OUT = Path(os.environ.get("R4_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/espley_rev4")) / f"ablation{SUFFIX}"
+_ABL = Path(os.environ.get("ABL_SCRATCH") or R5_SCRATCH / "phaseA" / "ablation")
+OUT = _ABL.with_name(_ABL.name + SUFFIX)             # <dir> (common) / <dir>_ownrows (own)
 RES = HERE / "results_rev4"
 N_JOBS = int(os.environ.get("ESPLEY_NJOBS", "8"))
-N_SLICES = 10                                         # = r4_ablation.sh --array=0-9
+N_SLICES = 9                                          # = r4_ablation.sh --array=0-8
 SEEDS = [22, 23, 14, 1, 2]
 TUNE_SEED = 23
 TGT = ["distortion_energy_1_dft", "distortion_energy_2_dft", "interaction_energies_dft", "e_barrier_dft",
@@ -89,16 +90,13 @@ assert set(GEO11) <= set(OURS46)
 MODELS = ["KRR_rbf", "SVR_rbf"]
 ARMS = {  # arm: (feature blocks, targets, models, geometry of our features, extra)
     "A_esp46_ourpipe": (["esp46"], TGT, MODELS, "none", False),
-    "B_esp46_plus_DFTgeom11": (["esp46", "g0_geo11"], TGT, MODELS, "g0", False),
-    "B_role_esp46_DFTgeom11": (["esp46_role", "g0_geo11"], ROLE, ["KRR_rbf"], "g0", False),
     "C_esp46_roleAM1_role": (["esp46_role"], ROLE, MODELS, "none", False),
     "C0_esp46_role_noswapfeat": (["esp46"], ROLE, MODELS, "none", False),
-    "O_ours46_tune23": (["g0_ours46"], TGT + ROLE, MODELS, "g0", False),
     "B_g1_esp46_plus_G1geom11": (["esp46", "g1_geo11"], TGT, MODELS, "g1", False),     # REV4 §4-3 B_g1
     "O_g1_ours46_tune23": (["g1_ours46"], TGT + ROLE, MODELS, "g1", True),             # extra, not in §4-3
 }
 JOBS = [(a, t, m) for m in MODELS for a, (_, tg, ms, _, _) in ARMS.items() if m in ms for t in tg]  # KRR first
-DEVIATION = ("rows = intersection of the usable rows of every (arm, target): Espley features, ok label, G0 and G1 "
+DEVIATION = ("rows = intersection of the usable rows of every (arm, target): Espley features, ok label, G1 "
              "xtb_status ok with NaN-free ESPLEY46, all targets non-NaN; the original used each arm's own rows")
 
 
@@ -143,11 +141,11 @@ def ours(g, ids):
     """Our ESPLEY46 (⊇ GEO11) on geometry g in Espley row order; NaN where the rxn is absent or xtb_status != ok."""
     p = FEAT[g]
     if not p.is_file():
-        sys.exit(f"GATE {g}: {p} missing (r4_feat_aggregate.sh GEOM={'dft' if g == 'g0' else g})")
+        sys.exit(f"GATE {g}: {p} missing (r4_feat_aggregate.sh GEOM={g})")
     df = pd.read_parquet(p)
     tags = sorted(set(df["geom"].astype(str))) if "geom" in df else ["<no geom column>"]
     lacking = [c for c in ["rxn_id", "xtb_status"] + OURS46 if c not in df]
-    bad = [f"geom tags {tags} != ['{GEOM_TAG[g]}']"] if tags != [GEOM_TAG[g]] else []
+    bad = [f"geom tags {tags} != ['{g}']"] if tags != [g] else []
     if lacking:
         bad.append(f"columns missing: {lacking}")
     elif df.rxn_id.duplicated().any():
@@ -196,8 +194,7 @@ def load():
     if not common.any():
         sys.exit("GATE: no Espley ds3 row is usable by every arm")
     why = {"espley_feature_nan": ~esp_ok, "no_ok_label": ~have_lab,
-           "g0_not_ok_or_nan": np.isnan(blocks["g0_ours46"]).any(axis=1),
-           "g1_not_ok_or_nan": np.isnan(blocks["g1_ours46"]).any(axis=1),
+           **{f"{g}_not_ok_or_nan": np.isnan(blocks[f"{g}_ours46"]).any(axis=1) for g in FEAT},
            **{f"nan_{t}": np.isnan(Y[t]) for t in TGT}}
     rows = dict(n_espley=len(ids), n_common=int(common.sum()),
                 rows_sha256=hashlib.sha256(" ".join(map(str, ids[common])).encode()).hexdigest(),
@@ -206,9 +203,9 @@ def load():
                 own={f"{a}__{t}": dict(n=int(m.sum()), dropped_by_intersection=ids[m & ~common].tolist())
                      for (a, t), m in own.items()})
     inputs = {k: dict(path=str(p), sha256=sha256(p)) for k, p in
-              (("espley_features", ESP_FEAT), ("labels", LABELS), ("feat_g0", FEAT["g0"]), ("feat_g1", FEAT["g1"]))}
-    have = ~np.isnan(blocks["g0_ours46"]).any(axis=1)        # the original `have`: rev 3 (= G0) xtb ok
-    orig = {k: have & m for k, m in own.items()}
+              [("espley_features", ESP_FEAT), ("labels", LABELS)] + [(f"feat_{g}", FEAT[g]) for g in FEAT]}
+    # the original `have` (rev 3 xtb ok) -> ok label: the same rows, rev 3 was ok for every labelled rxn
+    orig = {k: have_lab & m for k, m in own.items()}
     return dict(n=len(ids), blocks=blocks, Y=Y, common=common, orig=orig, rows=rows, rows_sha256=rows["rows_sha256"],
                 inputs=inputs)
 

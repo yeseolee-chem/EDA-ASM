@@ -1,5 +1,6 @@
-# r4_env.sh — sourced by every rev 4 sbatch script (conda env, ORCA/MPI, xtb 6.7.1, paths).
-# CODE = the directory the job was submitted from (the rev 4 checkout), never a hard-coded clone.
+# r4_env.sh — sourced by every rev 4 and rev 5 sbatch script (conda env, ORCA/MPI, xtb 6.7.1, paths). The r5_*.sh
+# scripts export R5_SCRATCH themselves (default /gpfs/tmp_cpu2/yeseo1ee/espley_rev5).
+# CODE = the directory the job was submitted from (the checkout), never a hard-coded clone.
 source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
 conda activate ${ESPLEY_ENV:-reactot}
 export CODE=${ESPLEY_CODE:-$SLURM_SUBMIT_DIR}
