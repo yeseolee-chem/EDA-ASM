@@ -1,92 +1,110 @@
-# espley_xtb_repro (v6, results rev 3) — GFN2-xTB / ALPB(water) features for the Espley 2024 protocol
+# espley_xtb_repro (v7, results rev 4) — GFN2-xTB / ALPB(water) features for the Espley 2024 protocol
 
-This reproduces the Espley 2024 protocol (DOI: 10.1039/D4DD00224E) on the Coley 5,269 dipolar cycloaddition dataset, with **AM1 replaced by GFN2-xTB** and **ALPB(water) solvation**. The DFT labels are the SMD(water) relabel assembled by method ① (repo-root `labels_all.json`, see `label_true/SMD_RELABEL.md`). Current results and their history are in [`results/SUMMARY.md`](results/SUMMARY.md).
+This reproduces the Espley 2024 protocol (DOI: 10.1039/D4DD00224E) on the Coley 5,269 dipolar cycloaddition dataset, with **AM1 replaced by GFN2-xTB** and **ALPB(water) solvation**. The targets are the DFT labels on the DFT geometries: the SMD(water) relabel assembled by method ① (repo-root `labels_all.json`, see `label_true/SMD_RELABEL.md`).
 
-## Method
+**rev 4 (2026-09-30)** computes the features on **xTB-level geometries (G1)**. It does not use the DFT geometries the labels were computed on. The task is therefore "cheap geometry → expensive DFT label", the same task as Espley (AM1 geometry → DFT targets).
 
-- **Engine.** Every semi-empirical quantity comes from one program, **xtb 6.7.1** (GFN2-xTB with the ALPB water model). Each structure gets one single-point calculation, which yields:
-  - the term-wise energy decomposition
-  - Mulliken partial charges
-  - per-atom Wiberg valences
-  - the HOMO-LUMO gap and the dipole moment
+The rev 3 features were computed on the label DFT geometry. They are kept only as **G0 = DFT oracle geometry (upper bound, not deployable)**, re-run on the same rows.
 
-  **tblite is NOT used.** The exceptions: `b_disp` uses simple-dftd3 D3(BJ)/B3LYP, and `dsasa_*` uses morfeus SASA.
-- **Headline arm.** **`ESPLEY73` = 41 structural + 5 energies + 8 per-channel calculated values (B_CH8) + 19 auxiliary (AUX19)**.
-- **Reactions.** 5,260 reactions: the `labels_all.json` accepted set minus 5 excluded.
-  - 3090, 3766 and 4252: foreign bond.
-  - 3400 and 5783: `no_forming_bond_ts`. Both forming bonds are >= 3.3 Å at the TS (3.63 / 3.65 and 3.34 / 3.56 Å), so these are not bond-forming TSs; every accepted reaction has its shorter forming bond <= 3.18 Å.
+- Spec: [`REV4_XTB_GEOMETRY.md`](REV4_XTB_GEOMETRY.md)
+- Pre-registration: [`results_rev4/PREREG_REV4.md`](results_rev4/PREREG_REV4.md)
+- Results: [`results_rev4/SUMMARY.md`](results_rev4/SUMMARY.md)
+- The rev 1–3 result files were deleted; they remain in git history (≤ 1ada37aa).
 
-  The hygiene filter (d1 < 0, d2 < 0, d2 > 50) removes 26 more, which leaves **n = 5,234** for ML.
+## Geometries (`xtb_slice.py --geom`)
 
-## B_CH8 — one real calculated value per EDA channel
+| mode | TS | reactant references | DFT information left | use |
+|---|---|---|---|---|
+| `dft` = **G0** | Coley DFT TS (label `ts_file`) | Coley DFT references (`rel1_file`, `rel2_file`, incl. `_alt`) | all | upper bound only |
+| `g1` = **G1** | ORCA 6.1.1 `! XTB2 ALPB(water) OptTS Freq`, started from the DFT TS | xtb 6.7.1 `--opt tight --alpb water`, started from the DFT references | conformer and stereo choice | **headline** |
+| `g2` | autodE from SMILES at the xTB level (Phase 5, not run) | autodE xTB conformers | none | deployment (pending user decision) |
 
-All Δ = TS − dist1 − dist2 unless stated; all with ALPB(water).
+**G1 generation** is done by `g1_geom.py` (`r4_g1_smoke.sh`, `r4_g1_array.sh`, `r4_g1_summary.sh`).
+- The ORCA input is `%geom Calc_Hess true Recalc_Hess 5 MaxIter 200 end`, `%pal nprocs 2`.
+- ORCA calls `otool_xtb`, which is the same xtb 6.7.1 build (edcfbbe) as the feature engine. The xtb 6.7.1 gradient at ORCA's TS is < 5e-5 Eh/bohr.
+- The atom order is kept, so the label's `formed_pairs_ts`, roles and `A_idx` apply unchanged.
+- **Gates.** These are the D1 pipeline functions, imported from a read-only snapshot of `d1-build@d573111e` (`$D1_SNAPSHOT`). D1 itself is a separate project and is not touched.
+  - First imaginary frequency ≤ −40 cm⁻¹, and every other one > −50 cm⁻¹.
+  - Imaginary-mode share on the forming bonds ≥ 0.5.
+  - Longer forming bond ≥ 1.6 Å, and shorter forming bond < 3.3 Å.
+  - No foreign inter-fragment bond.
+  - G1 partition = label `A_idx`.
+  - The optimised references are graph-isomorphic to the DFT references.
+- A reaction that fails a gate gets `xtb_status = g1_fail:<reason>`.
 
-- `b_strain_1/2`
-  - Gas-part strain of each fragment = Δ(E_total − G_solv) between the TS-geometry fragment and its relaxed reference.
-  - Distinct from `xtb_dist_*`, which is the full ALPB strain; the difference is the solvation contribution to strain.
-- `b_elst`
-  - Frozen-fragment monopole Coulomb: Σ_{i∈A,j∈B} q_i q_j / r_ij × 332.0637.
-  - The charges q come from SEPARATE GFN2/ALPB single points on the isolated fragments at the TS geometry.
-- `b_pauli` — Δ(repulsion energy), GFN2's classical repulsion term.
-- `b_oi` — Δ(EHT band-structure energy) = Δ(SCC − IES − AES − AXC − dispersion − G_solv).
-- `b_disp`
-  - Inter-fragment D3(BJ)/B3LYP dispersion at the TS geometry.
-  - This is the SAME quantity as the DFT disp channel (analytic identity, MAE(b_disp − dft_disp_dft) ≈ 2e-6 kcal/mol).
-- `b_cpcm` — Δ(G_elec), the ALPB Born/dielectric term.
-- `b_cds`
-  - Δ(G_sasa + G_hb + G_shift), the ALPB non-polar/SASA term.
-  - The per-element `dsasa_*` in AUX19 carry the functional form Σ σ_k A_k.
+## Features (identical code for every geometry)
 
-## Feature sets
+- **Engine.** Every semi-empirical quantity comes from **xtb 6.7.1** (GFN2-xTB, ALPB water). Each structure gets one single-point calculation, which yields the term-wise energies, Mulliken charges, per-atom Wiberg valences, the HOMO-LUMO gap and the dipole moment. **tblite is not used.** The exceptions are `b_disp` (simple-dftd3 D3(BJ)/B3LYP) and `dsasa_*` (morfeus SASA).
+- **Five single points per reaction:** two references, two TS-geometry fragments, and the TS.
 
-| arm | composition | count | use |
-|---|---|---:|---|
-| `ESPLEY46` | 41 structural + 5 energies | 46 | ablation of the channel block |
-| `ESPLEY54` | 41 + 5 + B_CH8 | 54 | the paper's 55 minus q_barrier |
-| **`ESPLEY73`** | 54 + AUX19 | **73** | **headline** |
+B_CH8 terms, one calculated value per EDA channel. Δ = TS − frag1 − frag2 at the TS geometry unless stated; everything is computed with ALPB(water).
+- `b_strain_1/2` — gas-part strain of each fragment (Δ(E_total − G_solv) vs its relaxed reference).
+- `b_elst` — frozen-fragment monopole Coulomb with charges from the isolated TS-geometry fragments.
+- `b_pauli` — Δ(repulsion energy).
+- `b_oi` — Δ(EHT band-structure energy).
+- `b_cpcm` — Δ(G_elec).
+- `b_cds` — Δ(G_sasa + G_hb + G_shift).
+- `b_disp` — inter-fragment D3(BJ)/B3LYP dispersion.
+  - **On G0 this is analytically the DFT disp label** (MAE 2.4e-6 kcal/mol): the label itself is a feature, so the G0 disp channel is not an ML result and is blanked in every rev 4 table.
+  - On G1 it is a genuine feature (MAE vs the label 0.94 kcal/mol).
 
-- `D_STRUCT41`: 11 distances + 15 Mulliken + 15 Wiberg valences (analogue of Table S2).
-- `AUX19`: b_elst_scc, b_disp_d4, b_axc, b_ct, gap_ts/dip/dph, mu_ts/dip/dph, dmu_complexation, is_charged, dsasa_{H,C,N,O,F,Cl,Br}.
+| arm | composition | count |
+|---|---|---:|
+| `ESPLEY46` | 11 distances + 15 Mulliken + 15 Wiberg valences + 5 xTB energies | 46 |
+| `ESPLEY54` | 46 + B_CH8 | 54 |
+| **`ESPLEY73`** | 54 + AUX19 (b_elst_scc, b_disp_d4, b_axc, b_ct, gaps, dipoles, dmu_complexation, is_charged, dsasa_{H,C,N,O,F,Cl,Br}) | **73** |
 
-## Models · Protocol
+## Models, rows, targets (pre-registered, `results_rev4/PREREG_REV4.md`)
 
-- **Models:** Ridge, KRR(RBF), SVR(RBF), XGB. StandardScaler on X; y is standardized with `TransformedTargetRegressor`.
-- **Protocol A:** 80/10/10 splits over seeds 22/23/14/1/2. **Nested CV:** GridSearchCV(5-fold) runs on each seed's own training split. KRR(RBF) is fixed a priori as the headline model.
-- **Protocol B:** 5-fold OOF (Linear/Ridge/RF/GBR/XGB).
-- **Metrics:** MAE, NMAE (= MAE / MAD_target), RMSE, r², Pearson r.
+- **Protocol A only** (as rev 3):
+  - 80/10/10 splits over seeds 22/23/14/1/2 (`split_80_10_10`).
+  - Nested per-seed GridSearchCV (5-fold).
+  - StandardScaler on X, y standardised (`TransformedTargetRegressor`).
+  - Models: Ridge, KRR(RBF), SVR(RBF), XGB.
+- **Rows:** `results_rev4/rows_rev4.csv`, **n = 4,839** = G1 ok (4,860) ∩ G0 ok ∩ hygiene (d1 ≥ 0, d2 ≥ 0, d2 ≤ 50). G0 and G1 use exactly these rows, so their splits are identical.
+- **Targets (9):** barrier, d1, d2, elst, pauli, oi, disp, cpcm, cds.
+- **Headline: G1 · ESPLEY73 · KRR(RBF)**, fixed a priori. G0 is reported only as the upper bound.
 
-## Targets
-
-- **Reported (9):** `dft_barrier_kcal`, `dft_d1_kcal`, `dft_d2_kcal`, `dft_{elst,pauli,oi,disp,cpcm,cds}_dft`.
-- **Also trained (12 array elements) but not reported:**
-  - `dft_e_bond_kcal`: the sum of the 6 channels.
-  - `dft_eint_spe_kcal`: derived from d1, d2 and barrier. It is used only as the baseline in the Espley comparison.
-  - `dft_c_ghost_kcal`: = eint_spe − e_bond, a method artefact (BSSE + cavity). It is reported once in the SI.
-
-## Pipeline
+## Pipeline (submit from this directory of the checkout; every script sources `r4_env.sh`)
 
 ```
-s01_xtb_array.sh    xtb features, 18 slices  (xtb_slice.py)
-s02_aggregate.sh    -> xtb_features.parquet  (aggregate.py; derives dft_c_ghost_kcal, is_charged)
-refresh_targets.py  (labels changed only) swap the dft_* targets in xtb_features.parquet, no xTB rerun
-s03_smoketest.sh    schema / grid check
-s03_ml_array.sh     12-target array x 3 arms x (Protocol A 4 + Protocol B 5)   (train_ml_single.py)
-s04_aggregate_ml.sh -> ml_report.json, ml_table_espley.csv, predictions.parquet
-s05_plot.sh         ESPLEY73 figures, 9 reported targets (plot_results.py)
-s06/s07             charge / group-split / MMP analyses on results/
-s08_publish_rev3.sh copy outputs into results/ and run s06/s07 (rev 3)
-compare_espley.py   like-for-like vs Espley on their ds3 rows, targets and splits
-                    (prep -> train 0-6 array -> plot; results/espley_vs_ours_ds3*)
+r4_g1_smoke.sh        Phase 1-1  G1 engine smoke test (5 rxns)                       -> $G1_ROOT/_smoke
+r4_g1_array.sh        Phase 1-2  G1 geometries, 18 slices as 9 x 2      (g1_geom.py) -> $G1_ROOT/<rid>/
+r4_g1_summary.sh      Phase 1-2  success rate, failure types, RMSD                   -> results_rev4/g1_geometry_summary.*
+r4_feat_all.sh        Phase 2    GEOM=dft|g1: 18 slices + aggregate (+ dft: 1e-8 check vs a reference parquet)
+                                 (or r4_feat_array.sh / r4_feat_aggregate.sh / r4_feat_verify.sh)
+r4_phase2_report.sh   Phase 2    G0 vs G1 feature shift, MAE(b_disp - disp)          -> results_rev4/phase2_*
+r4_make_rows.sh       Phase 3-1  pre-registered rows                                 -> results_rev4/rows_rev4.*
+r4_ml_smoketest.sh    Phase 3    compile / import / rows gate (no training)
+r4_ml_array.sh        Phase 3-2  element i: geom g0 (i<9) / g1, target i%9; refuses unless PREREG is committed
+r4_ml_aggregate.sh    Phase 3-4  ml_report / predictions / figures per geometry + rev4_tables.py -> results_rev4/rev4_*
+r4_downstream.sh      Phase 3-3  GEOM=g0|g1: analyze_extra.py + evaluate_pairs.py     -> results_rev4/downstream_<geom>/
+r4_compare_prep.sh    Phase 4    compare_espley.py prep (both geometries)
+r4_compare_train.sh   Phase 4    0-13 ours (G0/G1 x 7 targets), 14-15 Espley role d1/d2 (their protocol / our pipeline)
+r4_compare_plot.sh    Phase 4    intersection scoring, tables, figures                -> results_rev4/espley_compare_*
+r4_ablation.sh        Phase 4-3  geometry-information ablation (ABL_ROWS=common|own) (espley_fairness_ablation.py)
+r4_ablation_aggregate.sh                                                             -> results_rev4/espley_geometry_ablation*
+r4_bath_am1.sh        Phase 4-4  start structure of Espley's AM1 TS optimisations (HTTP range reads of BATH-01480)
+r4_pack.sh            run several elements of an r4 array script in one allocation (one queue slot)
 ```
 
-`compare_espley.py` needs two files from the authors' repo
-(`the-grayson-group/distortion-interaction_ML`) under `$ESPLEY_REPO_DATA`
-(default `/gpfs/tmp_cpu2/yeseo1ee/espley_compare`):
-`feature_selection/_f_selection/tt/manual_tt_solvent.pkl` and
-`machine_learning/tt/solvent/ml_results.pkl`.
+Inputs outside the repo:
+- Coley profiles `$ESPLEY_PROF`.
+- The Coley CSV (mapped SMILES).
+- `label_true/work/input_meta.csv` (label `A_idx`, `$ESPLEY_META`).
+- The authors' repo files under `$ESPLEY_REPO_DATA` (default `/gpfs/tmp_cpu2/yeseo1ee/espley_compare`):
+  - `feature_selection/_f_selection/tt/manual_tt_solvent.pkl`
+  - `machine_learning/tt/solvent/ml_results.pkl`
+  - `hyperparameter_tuning/tt/solvent/hps.pkl`
+  - `hyperparameter_tuning/hyp_tuning.py` (fetched)
+
+Scratch outputs go under `/gpfs/tmp_cpu2/yeseo1ee/{espley_xtb_g1, espley_xtb, espley_rev4}`.
 
 ## Compute
 
-- **xTB single point:** about 0.25 s per reaction on a single core. One full pipeline is 5,260 rxns × 5 SPEs = 26,300 xtb calls (about 15–20 min with 10 concurrent slice tasks).
-- **ML:** a 12-element array; each element runs about 25–70 min on 8 CPUs, with 10 running at once.
+- **G1 geometries.** 216 core-h for 5,260 reactions.
+  - ORCA OptTS+Freq takes 0.2–3 min per reaction with 2 cores (analytic xTB Hessian).
+  - The references take about 1 s.
+  - Concurrent ORCA runs on one node need `OMPI_MCA_rmaps_base_oversubscribe=1` and no core binding (`r4_env.sh`). 16 runs hit an MPI finalize bus error on shared nodes and were rerun unchanged.
+- **Features.** About 0.25 s per reaction per core. One geometry takes about 15 min with 4–8 cores.
+- **ML.** One (geometry, target) element takes 3 arms × 4 models × 5 seeds on 8 cores. Pin BLAS to one thread (`OMP_NUM_THREADS=1`), otherwise every GridSearchCV worker spawns one thread per allocated core.

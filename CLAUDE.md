@@ -91,7 +91,9 @@ Repo-root `labels_all.json`: 5,265 records = 5,260 ok + 5 excluded
 bonds >= 3.3 A at the TS, while every accepted rxn has its shorter forming bond
 <= 3.18 A). Pipeline, audit and gates:
 `label_true/SMD_RELABEL.md`, rebuild with `label_true/scripts/smd_final_pipeline.sh`.
-Downstream ML: `analysis/espley_xtb_repro/results/SUMMARY.md` (rev 3).
+Downstream ML: `analysis/espley_xtb_repro/results_rev4/SUMMARY.md` (rev 4, 2026-09-30: features on
+GFN2-xTB/ALPB-optimised geometries (G1) = headline; the rev 3 DFT-geometry features are kept only as the
+G0 = DFT oracle geometry upper bound; rev 1-3 result files deleted, in git history ≤ 1ada37aa).
 All prior experiments (789-rxn ADF, 3,504-rxn Bath-1480 tt cohort,
 spec14/15 validations, m1/m2/m3 delta learners) have been deleted — they
 turned out to be incorrect or scope-limited and would cause confusion with
@@ -108,7 +110,7 @@ label_true/              label build + 2026-09 SMD(water) relabel → labels_all
 analysis/
   b3lyp_full/            spec16rev — original label pipeline design
                          (5265/5269 built, 6-channel EDA-NOCV + strain)
-  espley_xtb_repro/      Espley 2024 protocol, GFN2-xTB features (results rev 3)
+  espley_xtb_repro/      Espley 2024 protocol, GFN2-xTB features on xTB geometries (results_rev4; G0 = upper bound)
   otfm_train/            OTFM training pipeline (labels consumer)
   otfm_guess/            spec18 — GUESS-mode OTFM (xTB path)
 src/eda_asm/             shared Python package

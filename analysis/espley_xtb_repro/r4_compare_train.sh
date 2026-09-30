@@ -18,6 +18,8 @@ source "$SLURM_SUBMIT_DIR/r4_env.sh"
 ROOT=${ESPLEY_OUT:-/gpfs/tmp_cpu2/yeseo1ee/espley_xtb}
 export ESPLEY_REPO_DATA=${ESPLEY_REPO_DATA:-/gpfs/tmp_cpu2/yeseo1ee/espley_compare}
 export ESPLEY_NJOBS=${SLURM_CPUS_PER_TASK:-8}
+# one BLAS thread per GridSearchCV worker (unset, every worker spawns one thread per allocated core)
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 i=${SLURM_ARRAY_TASK_ID:?array job only}
 case $i in
     [0-9]|1[0-3])

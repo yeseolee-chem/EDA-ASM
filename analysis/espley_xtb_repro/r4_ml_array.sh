@@ -19,6 +19,8 @@ export ESPLEY_GEOM=$GEOM ESPLEY_TARGET_SET=rev4 ESPLEY_PROTOCOLS=A
 export ESPLEY_FEAT=$ROOT/xtb_features_$GEOM.parquet ESPLEY_ML_OUT=$ROOT/rev4/$GEOM
 export ESPLEY_ROWS=$CODE/results_rev4/rows_rev4.csv
 export ESPLEY_NJOBS=${SLURM_CPUS_PER_TASK:-8}
+# one BLAS thread per GridSearchCV worker (unset, every worker spawns one thread per allocated core)
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 for f in results_rev4/PREREG_REV4.md results_rev4/rows_rev4.csv; do
     if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1 || ! git diff --quiet HEAD -- "$f"; then
         echo "PREREG gate: $f is not committed or differs from HEAD — commit the pre-registration first"; exit 2
