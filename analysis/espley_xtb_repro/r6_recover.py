@@ -475,6 +475,8 @@ def process(label, rev4, smiles, meta):
     for f in ("gbw", "densities", "engrad", "opt", "cis", "tmp", "xtbrestart", "charges", "wbo"):
         for p in wd.rglob(f"*.{f}"):
             p.unlink(missing_ok=True)
+    for p in wd.rglob("ts.[0-9][0-9][0-9].hess"):          # per-step Hessians of Recalc_Hess 1 (the final ts.hess stays)
+        p.unlink(missing_ok=True)
     marker = d / (".done" if not final_reasons else f".fail_{re.sub(r'[^A-Za-z0-9_]+', '_', final_reasons[0])}")
     marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n" + "\n".join(final_reasons) + "\n")
     return rid, res["status"]
