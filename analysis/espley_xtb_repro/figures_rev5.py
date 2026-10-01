@@ -301,9 +301,9 @@ def bar(ax, xc, h, slot, color, **kw):
     return cont
 
 
-def vlabel(ax, x, y, text, rot=0):
-    """Value label anchored at data (x, y), 1.5 pt above it."""
-    return ax.annotate(text, xy=(x, y), xytext=(0, 1.5), textcoords="offset points", ha="center", va="bottom",
+def vlabel(ax, x, y, text, rot=0, pad=1.5):
+    """Value label anchored at data (x, y), `pad` pt above it."""
+    return ax.annotate(text, xy=(x, y), xytext=(0, pad), textcoords="offset points", ha="center", va="bottom",
                        rotation=rot, color=INK, annotation_clip=False)
 
 
@@ -1032,7 +1032,7 @@ def draw_fig7(C):
             bar(ax, k, m, 0.8, color.get(a, GREY_BLOCK), zorder=2)
             ax.scatter(k + np.linspace(-0.22, 0.22, len(v)) * 0.8, v, s=2.5, color=INK, linewidths=0, zorder=4)
             yt = max(m, float(v.max()))
-            arts.append(vlabel(ax, k, yt, num(m, 3), rot=90))
+            arts.append(vlabel(ax, k, yt, num(m, 3), rot=90, pad=4))     # clear of the fold dots
             ymax = max(ymax, yt)
             row = dict(target=t, target_label=TARGET_LABEL[t], arm=a, arm_label=ticks[k],
                        ext_sel_is=C["alias"] if a == "EXT_SEL" else "", n_features=int(g["n_features"].iloc[0]),

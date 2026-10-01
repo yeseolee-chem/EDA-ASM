@@ -1,4 +1,4 @@
-# espley_xtb_repro (v8, results rev 4, rev 5 in progress) — GFN2-xTB / ALPB(water) features for the Espley 2024 protocol
+# espley_xtb_repro (v9, results rev 5) — GFN2-xTB / ALPB(water) features for the Espley 2024 protocol
 
 > G0(DFT oracle geometry) 결과는 2026-09-30 사용자 결정으로 폐기. git ≤ `740ba89`에만 남음.
 
@@ -6,9 +6,11 @@ This reproduces the Espley 2024 protocol (DOI: 10.1039/D4DD00224E) on the Coley 
 
 **rev 4 (2026-09-30)** computes the features on **xTB-level geometries (G1)**. It does not use the DFT geometries the labels were computed on. The task is therefore "cheap geometry → expensive DFT label", the same task as Espley (AM1 geometry → DFT targets).
 
+**rev 5 (2026-10-01)** adds feature blocks computed on the G1 structures only (`ext_features.py`, B1–B6, 109 columns; B1 orbital overlaps with tblite 0.7.0, the rest with xtb 6.7.1 or geometry). A 15 % lockbox (726 rxns) was held out. Block selection used the dev rows only (forward selection, KRR, nested CV) and gave **EXT_SEL = ESPLEY73 + B1 + B4 (133 features)**. The headline is the lockbox evaluation (D-1). See `results_rev5/SUMMARY.md`.
+
 - Specs: [`REV4_XTB_GEOMETRY.md`](../../docs/specs/REV4_XTB_GEOMETRY.md), [`REV5_FEATURES_FIGURES.md`](../../docs/specs/REV5_FEATURES_FIGURES.md)
-- Pre-registration: [`results_rev4/PREREG_REV4.md`](results_rev4/PREREG_REV4.md) (historical record, not edited)
-- Results: [`results_rev4/SUMMARY.md`](results_rev4/SUMMARY.md); rev 5 outputs go to `results_rev5/`
+- Pre-registrations: [`results_rev4/PREREG_REV4.md`](results_rev4/PREREG_REV4.md) (historical record, not edited); rev 5: [`results_rev5/PREREG_REV5a.md`](results_rev5/PREREG_REV5a.md) (lockbox + selection rules, before any rev 5 training) and [`results_rev5/PREREG_REV5b.md`](results_rev5/PREREG_REV5b.md) (EXT_SEL, before Phase D)
+- Results: **[`results_rev5/SUMMARY.md`](results_rev5/SUMMARY.md) (rev 5, current)**; rev 4: [`results_rev4/SUMMARY.md`](results_rev4/SUMMARY.md)
 - The rev 1–3 result files were deleted; they remain in git history (≤ 1ada37aa).
 
 ## Geometries (`xtb_slice.py --geom`)
@@ -53,7 +55,7 @@ B_CH8 terms, one calculated value per EDA channel. Δ = TS − frag1 − frag2 a
 
 ## rev 5 feature blocks B1..B6 (`ext_features.py`)
 
-The 112 columns and every constant are in `rev5_common.py` (`BLOCKS`); the definitions are in the `ext_features.py` docstring. Everything is computed on the G1 structures only: the TS, rel1, rel2, the TS cut by the label `A_idx` into fA (dipole) and fB (dipolarophile), and, for B6, the xtb-optimised product. The geometry step is `xtb_slice.ts_fragments()`, the same code path as the rev 4 features. Each reaction is gated on its 11 distances matching the G1 parquet.
+The 109 columns and every constant are in `rev5_common.py` (`BLOCKS`); the definitions are in the `ext_features.py` docstring. Everything is computed on the G1 structures only: the TS, rel1, rel2 and the TS cut by the label `A_idx` into fA (dipole) and fB (dipolarophile). The spec's B6 product features (xtb_dErxn, prog_ad, prog_be) were dropped by user decision on 2026-10-01 after the first B-7 run stopped (121 of 4,839 rows failed the product step). The geometry step is `xtb_slice.ts_fragments()`, the same code path as the rev 4 features. Each reaction is gated on its 11 distances matching the G1 parquet.
 
 | block | engine | what |
 |---|---|---|
