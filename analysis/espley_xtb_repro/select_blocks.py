@@ -42,7 +42,7 @@ select   Checks the lockbox files against lockbox.json (sha256) and the recomput
            C2_selection_path.csv   step, current, candidate, added_block, n_features, criterion, criterion_current,
                                    rel_decrease, folds_lower, best, accepted, decision, crit_fold<k>, nmae_<target>
            C2_selection_path.json  the same rows + rule, inputs, folds, final EXT_SEL, unit timing, versions
-           C2_feature_target_r.csv Pearson r of each of the 112 block features with the SEL_TARGETS, dev rows only
+           C2_feature_target_r.csv Pearson r of each of the 109 block features with the SEL_TARGETS, dev rows only
            prereg_rev5b.json       C-3: ext_sel_blocks, n_features, criterion values, rule, inputs. Written last and
                                    only once the path is complete; if it exists and differs -> exit 3 before any
                                    output is written (it is never rewritten).
@@ -660,7 +660,7 @@ def load_dev(lb):
         die(f"load_ml rows sha256 {info.get('rows_sha256')} != lockbox.json dev_sha256")
     cols = arm_cols("EXT_ALL")
     if set(cols) != set(TM.FEATURE_SETS[R5.BASE]) | set(R5.EXT_COLS) or len(cols) != len(set(cols)):
-        die("internal: EXT_ALL columns != BASE + the 112 block columns")
+        die("internal: EXT_ALL columns != BASE + the 109 block columns")
     need = cols + list(R5.TARGETS9)
     if len(set(need)) != len(need):
         die("internal: a target is also a feature column")

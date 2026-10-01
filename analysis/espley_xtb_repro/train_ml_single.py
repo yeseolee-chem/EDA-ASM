@@ -24,7 +24,7 @@ rev 5 env (Phase D-2, docs/specs/REV5_FEATURES_FIGURES.md):
                      results_rev5/prereg_rev5b.json (C-3), EXT_ALL = ESPLEY73 + B1..B6.
   ESPLEY_EXT         1 = inner-merge rev5_common.FEAT_EXT (blocks B1..B6, one row per rxn_id) into ESPLEY_FEAT on
                      rxn_id. Needs ESPLEY_ROWS and ESPLEY_GEOM=g1; every row must also be ext_status ok and NaN-free
-                     in the 112 block columns. Required by EXT_SEL / EXT_ALL.
+                     in the 109 block columns. Required by EXT_SEL / EXT_ALL.
   JSON protocol_A / protocol_B are keyed by arm name; preds carry `arm` (name) besides `feature_set` (column count).
   An arm whose column list equals an earlier arm's (e.g. EXT_SEL = ESPLEY73 when C selected no block) is not
   refitted: its results are copied from that arm (deterministic fits) and recorded in `arm_same_columns_as`.
@@ -321,7 +321,7 @@ def check_prereg_inputs(arms, feat_path, ext_path, rows_path=None):
 
 def load_ext(ext_path=None):
     """rev 5 blocks B1..B6 (default rev5_common.FEAT_EXT, from ext_features.py) -> (frame of rxn_id, ext_status and
-    the 112 rev5_common.EXT_COLS, record). Exits on a missing file / column, a duplicate rxn_id or a `geom` tag that
+    the 109 rev5_common.EXT_COLS, record). Exits on a missing file / column, a duplicate rxn_id or a `geom` tag that
     is not the G1 one (the blocks are computed on the G1 structures only)."""
     path = Path(ext_path or R5.FEAT_EXT)
     if not path.exists():
@@ -358,7 +358,7 @@ def load_ml(feat_path=FEAT_PATH, rows_path=ROWS_PATH, targets=TARGETS, geom=GEOM
     rows_path set: exactly its rxn_ids in file order; a row that is missing, duplicated, not ok, NaN in a feature /
     `targets` column or failing hygiene is a hard error — nothing is dropped.
     ext (rev 5): inner-merge the blocks B1..B6 (load_ext(ext_path)) on rxn_id first; needs rows_path and geom g1, and
-    every row must also be ext_status ok and NaN-free in the 112 block columns."""
+    every row must also be ext_status ok and NaN-free in the 109 block columns."""
     df = pd.read_parquet(feat_path)
     feats = sorted(set(sum(FEATURE_SETS.values(), [])))
     if geom is not None:

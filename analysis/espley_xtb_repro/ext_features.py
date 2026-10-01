@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ext_features.py — rev 5 Phase B: the extended feature blocks B1..B6 on the G1 structures.
 
-Spec: docs/specs/REV5_FEATURES_FIGURES.md §B. Column names (112), block membership and every constant come from
+Spec: docs/specs/REV5_FEATURES_FIGURES.md §B. Column names (109), block membership and every constant come from
 rev5_common (BLOCKS, EXT_COLS, DE_FLOOR_EV, FRONT, BM_RHO, VDW_S, RDF_EDGES, BONDI, PEN_ALPHA, GFN2_VALENCE,
 SCAN_DELTAS, SCAN_GATE_EH, GATE_*, SMOKE_RXNS); nothing here redefines them.
 
@@ -82,22 +82,14 @@ B6 ts.hess (ORCA, parsed like D1 orca_direct.parse_hess): nu_imag = the most neg
    ORCA prints it], asserted == result.json imag_freqs_cm[0]; mode_share = result.json imag_mode_forming_share,
    asserted == the D1 run_ts.forming_share formula on the hess mode; mode_async = |Δr_ad| / (|Δr_ad| + |Δr_be|),
    Δr_ij = the imaginary-mode displacement projected on the bond (the forming_share projection).
-   Product: the Coley file $ESPLEY_PROF/<rid>/p*.xyz (sorted, first; as D1 run_ts.load_replay), xtb --opt tight
-   (ALPB, q1+q2). Gates: heavy graph (fragmenter.heavy_graph) of the optimised product isomorphic to the Coley
-   product's; atom map product -> TS = isomorphism of the product heavy graph with (G1 TS heavy graph +
-   formed_pairs_ts edges): the identity when it is one (the Coley product keeps the TS atom order), else the lowest
-   heavy-atom Kabsch RMSD over at most MAX_ISO enumerated isomorphisms (a non-identity map whose enumeration hit
-   MAX_ISO fails B6: iso_enumeration_truncated). Assert: the mapped forming pairs are bonds of the Coley START
-   product graph (same atom order as xtbopt.xyz; not implied by the map, which is onto the optimised product graph).
-   xtb_dErxn = E_P - e_rel1_eh - e_rel2_eh (G1 result.json, same xtb --opt tight / ALPB level) [kcal/mol];
-   prog_ad / prog_be = r_TS / r_P of the two forming bonds.
-   Information level: the product start structure is the DFT (Coley) product, the same level as the G1 references
-   (started from the DFT references). G2 (autodE from SMILES) must use the autodE product instead.
+   The spec's product features (xtb_dErxn, prog_ad, prog_be from the xtb-optimised Coley product) are not computed:
+   user decision 2026-10-01 after the B-7 STOP (r5-ext-2: 121 of 4,839 rows failed the product step - product graph
+   not isomorphic to G1 TS + forming bonds 66, product graph changed on xtb opt 54, opt not converged 1).
 
 A block value that is not finite fails its block ("nonfinite:<cols>"), so an ok row never carries NaN; r5_ext_merge.py
 turns any such failure among the rows_rev4 rxns into a STOP (spec B-7 NaN gate), not a dropped row.
 Row: rxn_id, geom ('g1'), ext_status ('ok', '<block>:<reason>' of the first failing block in B1..B6 order, or
-'geom:<reason>'), status_B1..status_B6, the 112 EXT_COLS, n_de_floored(_win), qc_* self-check columns, t_B1..t_B6
+'geom:<reason>'), status_B1..status_B6, the 109 EXT_COLS, n_de_floored(_win), qc_* self-check columns, t_B1..t_B6
 and t_total_s (wall s of one single-threaded worker = core-s).
 
 Cache / idempotency: $R5_SCRATCH/ext/<rid>/{geom,B1..B6}.json (written atomically, keyed by CODE_VERSION and a
@@ -133,10 +125,8 @@ import traceback  # noqa: E402
 from multiprocessing.connection import wait as mp_wait  # noqa: E402
 from pathlib import Path  # noqa: E402
 
-import networkx as nx  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from networkx.algorithms.isomorphism import GraphMatcher  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -146,8 +136,8 @@ import xtb_slice as xs  # noqa: E402
 fr = xs.fr
 
 # ---------------------------------------------------------------- run configuration (not features)
-CODE_VERSION = "r5-ext-2"                    # stored in every cache record; a record of another version is recomputed
-#                                              (r5-ext-2: B1 per-rxn gate 1, B6 Coley-product bond assert + MAX_ISO guard)
+CODE_VERSION = "r5-ext-3"                    # stored in every cache record; a record of another version is recomputed
+#                                              (r5-ext-3: B6 without the product step, user decision 2026-10-01)
 CACHE_ROOT = R5.SCRATCH / "ext"
 SMOKE_ROOT = R5.SCRATCH / "ext_smoke"
 SLICE_DIR = CACHE_ROOT / "slices"
@@ -160,7 +150,6 @@ FRAG_STRUCT = {"dA": "fA", "dB": "fB", "rA": "rel1", "rB": "rel2"}      # rev5_c
 assert tuple(FRAG_STRUCT) == tuple(R5.FRAGS)
 COMPUTE_ORDER = ("B2", "B3", "B4", "B5", "B6", "B1")   # tblite (B1) last: an in-process crash loses only B1
 XTB_TIMEOUT_S = 1800
-XTB_OPT_TIMEOUT_S = 6 * 3600
 SLICE_MAX_FAIL = 0.20                        # operational guard of one slice (the pre-registered gate is MAX_EXT_FAIL)
 CRASH_ABORT = 0.5                            # stop a pool when > half of >= 20 finished rxns killed their worker
 # tolerances of parser / engine self-checks (consistency checks, not features)
@@ -173,7 +162,6 @@ TOL_EPS_EV = 5e-3                            # xtb json vs tblite HOMO / LUMO (B
 TOL_FUKUI = 2e-3                             # f(0) vs (f(+) + f(-))/2, values printed with 3 decimals
 TOL_HESS = 1e-6                              # nu_imag [cm-1] and mode_share recomputed vs result.json
 TOL_HESS_GEOM_A = 1e-4                       # .hess $atoms == ts.xyz up to a translation (g1_geom.py gate)
-MAX_ISO = 10000                              # product <-> TS isomorphisms enumerated at most
 
 DIST_COLS = ["dist_R_dip_ab", "dist_R_dip_bc", "dist_R_dip_ac", "dist_R_dph_ab", "dist_TS_dip_ab", "dist_TS_dip_bc",
              "dist_TS_dip_ac", "dist_TS_dph_ab", "dist_TS_form_ad", "dist_TS_form_be", "dist_TS_diag_ae"]
@@ -187,10 +175,9 @@ EXTRA = {                                    # non-feature columns written by ea
     "B3": ["qc_b3_dip_check_au", "qc_b3_q_json_maxdiff", "qc_b3_quad_order"],
     "B4": ["qc_b4_gedt_diff"],
     "B5": ["qc_b5_dE_ts_eh", "qc_b5_dE_fA_eh", "qc_b5_dE_fB_eh", "qc_b5_dch_max_kcal"],
-    "B6": ["qc_b6_nu_diff_cm", "qc_b6_mode_share_diff", "qc_b6_map_identity", "qc_b6_n_iso", "qc_b6_map_rmsd_A",
-           "qc_b6_e_product_eh", "qc_b6_product_file"],
+    "B6": ["qc_b6_nu_diff_cm", "qc_b6_mode_share_diff"],
 }
-STR_EXTRA = {"qc_b3_quad_order", "qc_b6_product_file"}
+STR_EXTRA = {"qc_b3_quad_order"}
 EXTRA_COLS = [c for b in R5.BLOCK_ORDER for c in EXTRA[b]]
 ROW_COLS = (["rxn_id", "geom", "ext_status"] + [f"status_{b}" for b in R5.BLOCK_ORDER] + list(R5.EXT_COLS)
             + EXTRA_COLS + [f"t_{b}" for b in R5.BLOCK_ORDER] + ["t_total_s"])
@@ -837,37 +824,6 @@ def forming_share(X, mode, pairs, heavy):
     return sum(abs(ddot(i, j)) for i, j in pairs) / (sum(vals[:2]) or 1e-12)
 
 
-def kabsch_rmsd(P, Q):
-    P = np.asarray(P, dtype=float) - np.mean(P, axis=0)
-    Q = np.asarray(Q, dtype=float) - np.mean(Q, axis=0)
-    U, _, Vt = np.linalg.svd(P.T @ Q)
-    d = np.sign(np.linalg.det(Vt.T @ U.T)) or 1.0
-    Rm = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
-    return float(np.sqrt(((P @ Rm.T - Q) ** 2).sum(axis=1).mean()))
-
-
-def product_map(G_ts, G_p, X_ts, X_p):
-    """TS heavy index -> product heavy index: an isomorphism of (TS heavy graph + forming edges) with the product
-    heavy graph; the identity when it is one, else the lowest heavy-atom Kabsch RMSD (ties: smallest image tuple)."""
-    heavy = sorted(G_ts.nodes)
-    ident = (sorted(G_p.nodes) == heavy and all(G_ts.nodes[i]["lab"] == G_p.nodes[i]["lab"] for i in heavy)
-             and {frozenset(e) for e in G_ts.edges} == {frozenset(e) for e in G_p.edges})
-    maps = []
-    for m in GraphMatcher(G_ts, G_p, node_match=fr._nm).isomorphisms_iter():     # m: TS node -> product node
-        maps.append(dict(m))
-        if len(maps) >= MAX_ISO:
-            break
-    if not maps:
-        raise BlockFail("product_vs_ts_plus_forming_graph_not_isomorphic")
-    if ident:
-        best = {i: i for i in heavy}
-    else:
-        best = min(maps, key=lambda m: (kabsch_rmsd(X_ts[heavy], X_p[[m[i] for i in heavy]]),
-                                        tuple(m[i] for i in heavy)))
-    rmsd = kabsch_rmsd(X_ts[heavy], X_p[[best[i] for i in heavy]])
-    return best, dict(identity=ident, n_iso=len(maps), rmsd=rmsd)
-
-
 def block_b6(c):
     g, rid = c.g, c.rid
     gd = R5.G1_ROOT / str(rid)
@@ -904,57 +860,6 @@ def block_b6(c):
         raise BlockFail("mode_async_undefined", qc)
     v = {"nu_imag": nu, "mode_share": float(share_json), "mode_async": p_ad / (p_ad + p_be)}
 
-    # ---- product: Coley p*.xyz (sorted, first) -> xtb --opt tight (ALPB, q1+q2)
-    ps = sorted((R5.PROF / str(rid)).glob("p*.xyz"))
-    if not ps:
-        raise BlockFail("no_coley_product_file", qc)
-    qc["qc_b6_product_file"] = ps[0].name
-    p_syms, p_xyz = fr.read_xyz(ps[0])
-    if collections.Counter(p_syms) != collections.Counter(g.ts_syms):
-        raise BlockFail("product_formula_differs_from_ts", qc)
-    out, files = xtb_run(p_syms, p_xyz, c.q1 + c.q2, ["--opt", "tight"], keep=("xtbopt.xyz",),
-                         timeout=XTB_OPT_TIMEOUT_S)
-    if "GEOMETRY OPTIMIZATION CONVERGED" not in out or "xtbopt.xyz" not in files:
-        raise BlockFail("product_opt_not_converged", qc)
-    es = TOTAL_E_RE.findall(out)
-    if not es:
-        raise ParseError("product opt: no 'TOTAL ENERGY <v> Eh' line", qc)
-    e_p = _f(es[-1])
-    qc["qc_b6_e_product_eh"] = e_p
-    o_syms, o_xyz = read_xyz_text(files["xtbopt.xyz"])
-    if [s.lower() for s in o_syms] != [s.lower() for s in p_syms]:
-        raise ParseError("xtbopt.xyz atoms differ from the input product", qc)
-    if c.cache_dir is not None:
-        R5.write_atomic(Path(c.cache_dir) / "product_xtbopt.xyz", files["xtbopt.xyz"])
-    G_p = fr.heavy_graph(p_syms, o_xyz)[0]                               # optimised product
-    G_p0 = fr.heavy_graph(p_syms, p_xyz)[0]                              # Coley start product (same atom order)
-    if not nx.is_isomorphic(G_p, G_p0, node_match=fr._nm):
-        raise BlockFail("product_heavy_graph_changed_on_opt", qc)
-    G_ts = fr.heavy_graph(list(g.ts_syms), X)[0].copy()
-    for i, j in g.pairs:
-        if i not in G_ts or j not in G_ts:
-            raise BlockFail("forming_pair_atom_not_heavy", qc)
-        G_ts.add_edge(i, j)
-    try:
-        pm, info = product_map(G_ts, G_p, X, o_xyz)
-    except BlockFail as e:                                                # keep the qc values in the cache record
-        raise BlockFail(e.detail, qc)
-    qc.update(qc_b6_map_identity=float(info["identity"]), qc_b6_n_iso=float(info["n_iso"]),
-              qc_b6_map_rmsd_A=info["rmsd"])
-    if not info["identity"] and info["n_iso"] >= MAX_ISO:                 # the lowest-RMSD map may be missing
-        raise BlockFail(f"iso_enumeration_truncated_{MAX_ISO}", qc)
-    # assert: the mapped forming pairs are bonds of the Coley start product. pm maps onto G_p (optimised), so a check
-    # on G_p would hold by construction; G_p0 shares the node indices (atom order kept by xtb --opt, checked above).
-    for i, j in g.pairs:
-        if not G_p0.has_edge(pm[i], pm[j]):
-            raise BlockFail("mapped_forming_pair_not_bonded_in_coley_product", qc)
-    e1, e2 = res.get("e_rel1_eh"), res.get("e_rel2_eh")
-    if e1 is None or e2 is None:
-        raise BlockFail("result_json_lacks_e_rel", qc)
-    rP_ad = float(np.linalg.norm(o_xyz[pm[g.dip_a]] - o_xyz[pm[g.dph_a]]))
-    rP_be = float(np.linalg.norm(o_xyz[pm[g.dip_b]] - o_xyz[pm[g.dph_b]]))
-    v.update(xtb_dErxn=(e_p - float(e1) - float(e2)) * R5.EH2KCAL,
-             prog_ad=float(g.D_ts[g.dip_a, g.dph_a]) / rP_ad, prog_be=float(g.D_ts[g.dip_b, g.dph_b]) / rP_be)
     return v, qc
 
 

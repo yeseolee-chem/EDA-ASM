@@ -14,7 +14,7 @@ apply the B-7 gates and fix the rev 5 rows.
      fail share   rows_rev4 rows whose ext_status != ok (or that are absent) / |rows_rev4| > MAX_EXT_FAIL -> STOP
      NaN          (a) any rows_rev4 rxn with a block that failed as nonfinite:<cols> (ext_features turns a NaN /
                   inf feature into that block failure, so without this gate a NaN would only be a dropped row);
-                  (b) any NaN / inf in the 112 EXT_COLS of an ext_status-ok row (consistency)             -> STOP
+                  (b) any NaN / inf in the 109 EXT_COLS of an ext_status-ok row (consistency)             -> STOP
      B5 gate      any status_B5 == scan_gate_fail (δ = 0 recomputation != the G1 features)                -> STOP
 4. Always writes results_rev5/B7_report.json (failures per block and their reasons, core-h, n_de_floored stats,
    self-check summaries, per-feature median / 1 % / 99 % quantiles, gates, how the parquet was written) and
@@ -175,8 +175,6 @@ def main():
     dE = df.loc[ok, ["qc_b1_dE_fA_eh", "qc_b1_dE_fB_eh", "qc_b1_dE_ts_eh"]].astype(float).abs()
     qc["n_ok_rows_tblite_minus_xtb_ge_GATE_E_EH"] = int((dE >= R5.GATE_E_EH).any(axis=1).sum())
     qc["quad_orders"] = df.loc[ok, "qc_b3_quad_order"].astype(str).value_counts().to_dict()
-    qc["b6_map_identity_share"] = _num(df.loc[ok, "qc_b6_map_identity"].astype(float).mean())
-    qc["b6_product_file_p0_share"] = _num(df.loc[ok, "qc_b6_product_file"].astype(str).str.startswith("p0_").mean())
 
     qrows = []
     for b in R5.BLOCK_ORDER:

@@ -62,12 +62,14 @@ BLOCKS = {
           + [f"alpha_{a}" for a in REACT] + [f"alpha_mol_{f}" for f in FRAGS] + ["gedt"],
     # B5 distance-sensitivity scan of fragment B along u (xtb single points)
     "B5": [f"scan_{k}_{x}" for x in ("Eint", "pauli", "oi", "elst") for k in ("slope", "curv", "m10", "p10")],
-    # B6 TS character (Hammond): G1 hess/result.json + xtb-optimised product
-    "B6": ["nu_imag", "mode_share", "mode_async", "xtb_dErxn", "prog_ad", "prog_be"],
+    # B6 TS character (Hammond): G1 hess/result.json
+    # B6 product features (xtb_dErxn, prog_ad, prog_be) dropped by user decision 2026-10-01 (B-7 STOP: product
+    # graph / mapping failures in 121 of 4,839 rows); TS-character features only
+    "B6": ["nu_imag", "mode_share", "mode_async"],
 }
 BLOCK_ORDER = ("B1", "B2", "B3", "B4", "B5", "B6")
 EXT_COLS = [c for b in BLOCK_ORDER for c in BLOCKS[b]]
-assert len(EXT_COLS) == len(set(EXT_COLS)) == 112, len(EXT_COLS)
+assert len(EXT_COLS) == len(set(EXT_COLS)) == 109, len(EXT_COLS)
 
 # B1
 DE_FLOOR_EV = 1.0                     # Delta-epsilon floor for S^2 / Delta-epsilon terms
