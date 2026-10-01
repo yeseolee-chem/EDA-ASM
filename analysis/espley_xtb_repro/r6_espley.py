@@ -164,7 +164,11 @@ def cmd_p1_compare():
     R6.write_atomic(R6.RES6 / "P1_pred_diffs.csv", lambda t: df.to_csv(t, index=False))
     hp_rows, hyp_f = [], P1 / "hyp" / "hps.pkl"
     hs = load_hps(R6.ESP_HPS)
-    hm = load_hps(hyp_f) if hyp_f.is_file() else {}
+    # their script writes hps.pkl only at the very end; when the NN stage crashed, the sklearn results it already
+    # checkpointed (checkpoint.pkl, same dict format) are compared
+    ck = P1 / "hyp" / "checkpoint.pkl"
+    hm = load_hps(hyp_f) if hyp_f.is_file() else (load_hps(ck) if ck.is_file() else {})
+    hyp_source = "hps.pkl" if hyp_f.is_file() else ("checkpoint.pkl (NN stage did not finish)" if ck.is_file() else None)
     for k, v in hs.items():
         got = hm.get(k)
         sv = v.get("b_hps", v) if isinstance(v, dict) else v
@@ -188,15 +192,18 @@ def cmd_p1_compare():
                 mae_stored_minus_rerun=dict(zip(nn.model_target + "@" + nn.seed.astype(str),
                                                 (nn.test_mae_stored - nn.test_mae_rerun).round(4))) if len(nn) else {}),
         y_test_true_all_same=bool(df.y_test_true_same.fillna(False).all()),
-        hps_tuned=bool(hyp_f.is_file()), hps_sklearn_same=bool(hp[~hp.nn].same.all()) if len(hm) else None,
-        hps_nn_same=bool(hp[hp.nn].same.all()) if len(hm) else None,
-        hps_differ=hp.loc[~hp.same, "key"].tolist() if len(hm) else None)
+        hps_source=hyp_source, hps_sklearn_same=bool(hp[~hp.nn].same.all()) if len(hm) else None,
+        hps_nn_same=(bool(hp[hp.nn].same.all()) if any("nn" in k for k in hm) else None),
+        hps_nn_tuning_ran=any("nn" in k for k in hm),
+        hps_differ=hp.loc[~hp.same & (~hp.nn | any("nn" in k for k in hm)), "key"].tolist() if len(hm) else None,
+        rerun_extra_keys=sorted(set(hm) - set(hs)))
     rep["stop_sklearn"] = bool(rep["sklearn"]["n_ok"] < rep["sklearn"]["n"] or rep["missing"] or
                                (len(hm) and not rep["hps_sklearn_same"]))
-    rep["stop_nn_not_bitwise"] = bool(rep["nn"]["n_ok"] < rep["nn"]["n"] or (len(hm) and not rep["hps_nn_same"]))
+    rep["stop_nn_not_bitwise"] = bool(rep["nn"]["n_ok"] < rep["nn"]["n"] or rep["hps_nn_same"] is False)
+    rep["stop_nn_tuning_cannot_run"] = bool(len(hm) and not rep["hps_nn_tuning_ran"])
     R6.write_json(R6.RES6 / "P1_reproduction.json", rep)
     print(json.dumps(rep, indent=1, default=str))
-    return 3 if rep["stop_sklearn"] or rep["stop_nn_not_bitwise"] else 0
+    return 3 if rep["stop_sklearn"] or rep["stop_nn_not_bitwise"] or rep["stop_nn_tuning_cannot_run"] else 0
 
 
 def cmd_p3():
