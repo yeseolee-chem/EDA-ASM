@@ -528,6 +528,8 @@ def cmd_run(slice_id, n_slices):
         if bad:
             raise SystemExit(f"R6_ONLY: not rev 4 G1 failures: {bad}")
         order = [r for r in order if r in only]
+    skip = {int(x) for x in os.environ.get("R6_SKIP", "").split(",") if x.strip()}   # rxns another job is running
+    order = [r for r in order if r not in skip]
     mine = order[slice_id::n_slices]
     labels = {int(d["rxn_id"]): d for d in G.load_labels()}
     smiles, meta = G.load_smiles(), G.load_meta()
