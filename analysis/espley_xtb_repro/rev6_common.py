@@ -36,6 +36,12 @@ FEAT_G1_R6 = XTB_R6 / "xtb_features_g1.parquet"                  # rev 4 G1 feat
 FEAT_EXT_R6 = XTB_R6 / "xtb_features_ext_g1.parquet"             # rev 5 blocks B1..B6 of the recovered rows
 FEAT_EXT_4994 = XTB_R6 / "xtb_features_ext_4994.parquet"         # R-4: rxn 4994 (rev 4 geometry, B1 tol 1e-5)
 ROWS_R = RES6 / "R_rows_final.csv"                               # R-5 row table (all 5,260 labels + Espley flags)
+X182_ALL = XTB_R6 / "X182_all.parquet"                           # rxn_id + the 182 features of every R_feat row
+# Phase S inputs of every training (sha256 in prereg_rev6.json)
+S_DIR = SCRATCH / "S"
+S_TARGETS = S_DIR / "S_targets.parquet"                          # rxn_id + target columns (labels_all.json)
+S_X_ESP = S_DIR / "S_X_esp.parquet"                              # rxn_id + Espley 47 AM1 columns, role order (P-3)
+S_SPLITS_A = RES6 / "S_splits_appendixA.csv"                     # Phase A appendix (Protocol A, all labels)
 R_PLAN = RES6 / "R_plan.md"
 PREREG6_MD = RES6 / "PREREG_REV6.md"
 PREREG6_JSON = RES6 / "prereg_rev6.json"
@@ -144,6 +150,37 @@ def holm(pvals):
         run = max(run, (m - k) * p[i])
         adj[i] = min(1.0, run)
     return adj
+
+
+def gate_prereg():
+    """Training gate (§7-3, as rev 5 final_eval.gate_prereg): PREREG_REV6.md and prereg_rev6.json exist, are committed
+    and unchanged in the working tree, and every input file listed in prereg_rev6.json["inputs_sha256"] still has that
+    sha256. Exits 3 otherwise; returns the prereg record."""
+    import json
+    import subprocess
+    import sys
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(HERE), *a], capture_output=True, text=True)
+    bad = []
+    for p in (PREREG6_MD, PREREG6_JSON):
+        if not p.is_file():
+            bad.append(f"{p.name} missing")
+        elif git("ls-files", "--error-unmatch", str(p)).returncode != 0:
+            bad.append(f"{p.name} not committed")
+        elif git("diff", "--quiet", "HEAD", "--", str(p)).returncode != 0:
+            bad.append(f"{p.name} modified since its commit")
+    if not bad:
+        rec = json.loads(PREREG6_JSON.read_text())
+        for path, sha in rec["inputs_sha256"].items():
+            if not Path(path).is_file():
+                bad.append(f"input {path} missing")
+            elif sha256(path) != sha:
+                bad.append(f"input {path} changed (sha256 {sha256(path)[:12]} != prereg {sha[:12]})")
+    if bad:
+        print("PREREG gate (§7-3: commit PREREG_REV6 before any training):\n  " + "\n  ".join(bad), file=sys.stderr)
+        sys.exit(3)
+    return dict(rec, git_head=git("rev-parse", "HEAD").stdout.strip())
 
 
 def our_columns(base_cols):

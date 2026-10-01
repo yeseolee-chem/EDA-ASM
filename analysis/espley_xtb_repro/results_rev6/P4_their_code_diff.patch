@@ -1,0 +1,79 @@
+--- orig/hyp_tuning.py	2026-10-01 17:28:01.006188000 +0900
++++ r6/hyp_tuning.py	2026-10-01 17:28:33.253001000 +0900
+@@ -40,6 +40,7 @@
+ from sklearn.preprocessing import StandardScaler
+ from sklearn.ensemble import RandomForestRegressor
+ from sklearn.model_selection import train_test_split, GridSearchCV
++from xgboost import XGBRegressor  # rev 6 (P-4): XGB added (spec D4)
+ # TensorFlow imports
+  # Remove build information associated with tensorflow
+ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+@@ -125,6 +126,14 @@
+         # Perform the train test splits and store in split_dict.
+         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=23)
+         X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, random_state=23)
++        # rev 6 (P-4): rows = this split ∩ C. R6_KEEP = file of DataFrame index labels kept in train / val,
++        # R6_KEEP_TEST = the same for test (default R6_KEEP); unset = all rows (original behaviour).
++        if os.environ.get('R6_KEEP'):
++            keep = set(int(l) for l in open(os.environ['R6_KEEP']) if l.strip())
++            keep_t = set(int(l) for l in open(os.environ.get('R6_KEEP_TEST') or os.environ['R6_KEEP']) if l.strip())
++            X_train, y_train = X_train[X_train.index.isin(keep)], y_train[y_train.index.isin(keep)]
++            X_val, y_val = X_val[X_val.index.isin(keep)], y_val[y_val.index.isin(keep)]
++            X_test, y_test = X_test[X_test.index.isin(keep_t)], y_test[y_test.index.isin(keep_t)]
+         split_dict = {'X_train': X_train, 'X_val':X_val, 'X_test':X_test,
+                       'y_train': y_train, 'y_val':y_val, 'y_test':y_test}
+         # Log shape information about the different splits.
+@@ -304,7 +313,8 @@
+                   'ridge':{'model':Ridge(), 'hp':['alpha', 'tol']},
+                   'krr':{'model':KernelRidge(kernel='poly'), 'hp':['alpha', 'gamma']},
+                   'svr':{'model':SVR(kernel='rbf'), 'hp':['gamma', 'epsilon', 'C', 'coef0', 'degree']},
+-                  'rf':{'model':RandomForestRegressor(), 'hp':['max_depth', 'n_estimators', 'max_features', 'min_samples_leaf']}
++                  'rf':{'model':RandomForestRegressor(), 'hp':['max_depth', 'n_estimators', 'max_features', 'min_samples_leaf']},
++                  'xgb':{'model':XGBRegressor(random_state=42, n_jobs=1, verbosity=0, tree_method='hist'), 'hp':['n_estimators', 'max_depth', 'learning_rate']}  # rev 6 (P-4)
+                   }
+         hp_values = {'alpha':[0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+                      'l1_ratio':[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+@@ -342,6 +352,8 @@
+                 # Deal with differences in gamma hyperparameter.
+                 if hp == 'gamma':
+                     hp_dict[hp] = hp_values[hp][model]
++                elif model == 'xgb':  # rev 6 (P-4): XGB grid = train_ml_single.GRIDS['XGB']
++                    hp_dict[hp] = {'n_estimators':[200, 500], 'max_depth':[3, 5, 7], 'learning_rate':[0.03, 0.1]}[hp]
+                 else:
+                     hp_dict[hp] = hp_values[hp]
+             # Loop through possible targets and perform the grid search for best hyperparameters.
+--- orig/ml_analysis.py	2026-10-01 17:28:01.005269000 +0900
++++ r6/ml_analysis.py	2026-10-01 17:28:46.585532000 +0900
+@@ -61,6 +61,7 @@
+ from sklearn.preprocessing import StandardScaler
+ from sklearn.ensemble import RandomForestRegressor
+ from sklearn.model_selection import train_test_split, cross_val_score
++from xgboost import XGBRegressor  # rev 6 (P-4): XGB added (spec D4)
+ 
+ # Set random seed.
+ try:
+@@ -167,6 +168,14 @@
+         # Perform the train test splits and store in split_dict.
+         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=int(sys.argv[-3]))
+         X_test, X_val, y_test, y_val = train_test_split(X_test, y_test, test_size=0.5, random_state=int(sys.argv[-3]))
++        # rev 6 (P-4): rows = this split ∩ C. R6_KEEP = file of DataFrame index labels kept in train / val,
++        # R6_KEEP_TEST = the same for test (default R6_KEEP); unset = all rows (original behaviour).
++        if os.environ.get('R6_KEEP'):
++            keep = set(int(l) for l in open(os.environ['R6_KEEP']) if l.strip())
++            keep_t = set(int(l) for l in open(os.environ.get('R6_KEEP_TEST') or os.environ['R6_KEEP']) if l.strip())
++            X_train, y_train = X_train[X_train.index.isin(keep)], y_train[y_train.index.isin(keep)]
++            X_val, y_val = X_val[X_val.index.isin(keep)], y_val[y_val.index.isin(keep)]
++            X_test, y_test = X_test[X_test.index.isin(keep_t)], y_test[y_test.index.isin(keep_t)]
+         split_dict = {'X_train': X_train, 'X_val':X_val, 'X_test':X_test,
+                       'y_train': y_train, 'y_val':y_val, 'y_test':y_test}
+         # Log shape information about the different splits.
+@@ -356,7 +365,8 @@
+                 'ridge':Ridge(), 
+                 'krr':KernelRidge(kernel='rbf'),
+                 'svr':SVR(kernel='rbf'),
+-                'rf':RandomForestRegressor()
++                'rf':RandomForestRegressor(),
++                'xgb':XGBRegressor(random_state=42, n_jobs=1, verbosity=0, tree_method='hist')  # rev 6 (P-4)
+             }
+ 
+     def _runner(self, run_models, data_dict, hps):

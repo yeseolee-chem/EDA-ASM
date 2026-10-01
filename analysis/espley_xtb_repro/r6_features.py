@@ -70,6 +70,8 @@ def cmd_g1feat():
     with mp.get_context("spawn").Pool(workers) as pool:
         rows = pool.map(_proc_one, ids, chunksize=1)
     df = pd.DataFrame(rows)
+    import aggregate
+    aggregate.derive(df)                       # dft_c_ghost_kcal + is_charged, exactly as the rev 4 merge step
     ref_cols = list(pd.read_parquet(FEAT_G1_REV4).columns)
     miss, extra = sorted(set(ref_cols) - set(df.columns)), sorted(set(df.columns) - set(ref_cols))
     # a failed row only has the columns up to its failure: add them as NaN; any unknown column is an error
@@ -200,6 +202,8 @@ def cmd_report():
             "xtb_status", "ext_status", "not_feat_reason", "d1", "d2"]
     out = m[keep].sort_values("rxn_id")
     R6.write_atomic(R6.ROWS_R, lambda t: out.to_csv(t, index=False))
+    x = m.loc[m.R_feat, ["rxn_id"] + cols].sort_values("rxn_id").reset_index(drop=True)
+    R6.write_atomic(R6.X182_ALL, lambda t: x.to_parquet(t, index=False))
     es = m[m.in_esp]
     flow = dict(R_esp=int(R6.N_ESP), R_esp_in_labels=int(len(es)), R_lab=int(es.R_lab.sum()),
                 R_feat=int((es.R_lab & es.R_feat).sum()), C_all=int(es.C_all.sum()), C=int(es.C.sum()),
@@ -212,6 +216,7 @@ def cmd_report():
     g4sum = json.loads((R5.RES4 / "g1_geometry_summary.json").read_text())
     r2 = json.loads((R6.RES6 / "R2_report.json").read_text())
     rep = dict(flow_espley=flow, all_labels=allrows, rows_sha256=R6.sha256(R6.ROWS_R),
+               x182_all=dict(path=str(R6.X182_ALL), n=len(x), sha256=R6.sha256(R6.X182_ALL)),
                geometry_original_success={k: g4sum.get(k) for k in ("rmsd_ts_heavy_A", "dd_form_short_A",
                                                                      "dd_form_long_A")},
                geometry_recovered={k: r2.get(k + "_recovered") for k in ("rmsd_ts_heavy_A", "dd_form_short_A",
