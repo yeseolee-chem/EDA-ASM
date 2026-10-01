@@ -1,0 +1,132 @@
+{
+ "spec": "docs/specs/REV5_FEATURES_FIGURES.md C-3 (PREREG_REV5b): EXT_SEL, fixed before Phase D",
+ "ext_sel_blocks": [
+  "B1",
+  "B4"
+ ],
+ "ext_sel_acceptance_order": [
+  "B4",
+  "B1"
+ ],
+ "ext_sel_arm": "BASE+B1+B4",
+ "base_arm": "ESPLEY73",
+ "n_features_base": 73,
+ "n_features": 133,
+ "n_features_added": 60,
+ "selection": {
+  "criterion": "mean over SEL_TARGETS ['dft_elst_dft', 'dft_pauli_dft', 'dft_oi_dft'] of the outer-fold test NMAE (rev5_common.nmae: MAE / mean absolute deviation of the fold's test targets), averaged over the 5 outer folds",
+  "base_criterion": 0.29508529865390154,
+  "base_fold_criteria": [
+   0.29009912964308643,
+   0.30860214397589497,
+   0.2823306269312103,
+   0.28909859281161815,
+   0.3052959999076978
+  ],
+  "final_criterion": 0.26769747853164966,
+  "final_fold_criteria": [
+   0.2678977939800387,
+   0.28286744054474566,
+   0.2609364480363359,
+   0.2578325828201084,
+   0.26895312727701964
+  ],
+  "final_nmae_per_target": {
+   "dft_elst_dft": 0.27507212266200076,
+   "dft_pauli_dft": 0.26151712562428664,
+   "dft_oi_dft": 0.2665031873086615
+  },
+  "steps": [
+   {
+    "step": 1,
+    "candidate": "BASE+B4",
+    "added_block": "B4",
+    "criterion": 0.2745623066575963,
+    "criterion_current": 0.29508529865390154,
+    "rel_decrease": 0.06954935433898446,
+    "folds_lower": 5,
+    "accepted": true
+   },
+   {
+    "step": 2,
+    "candidate": "BASE+B1+B4",
+    "added_block": "B1",
+    "criterion": 0.26769747853164966,
+    "criterion_current": 0.2745623066575963,
+    "rel_decrease": 0.02500280613721564,
+    "folds_lower": 5,
+    "accepted": true
+   },
+   {
+    "step": 3,
+    "candidate": "BASE+B1+B4+B6",
+    "added_block": "B6",
+    "criterion": 0.26462049264938325,
+    "criterion_current": 0.26769747853164966,
+    "rel_decrease": 0.011494265463925965,
+    "folds_lower": 5,
+    "accepted": false
+   }
+  ],
+  "stop_reason": "step 3: best candidate BASE+B1+B4+B6 has relative decrease 0.0115 (needs >= 0.02) and is lower in 5/5 folds (needs >= 4)"
+ },
+ "rule": {
+  "text": "Dev rows only, KRR(RBF) only (train_ml_single._make_pipe + GRIDS['KRR_rbf']). Outer CV: KFold(5, shuffle=True, random_state=20261001) over the dev rows in ascending rxn_id order; in each outer train fold GridSearchCV with cv=KFold(5, shuffle=True, random_state=20261001), scoring neg_mean_absolute_error. Criterion: mean over SEL_TARGETS ['dft_elst_dft', 'dft_pauli_dft', 'dft_oi_dft'] of the outer-fold test NMAE (rev5_common.nmae: MAE / mean absolute deviation of the fold's test targets), averaged over the 5 outer folds. Forward selection from BASE = ESPLEY73: at each step every remaining block is added to the current arm; the candidate with the lowest criterion (ties: block order B1..B6) is accepted iff (criterion_current - criterion_candidate) / criterion_current >= 0.02 AND its fold criterion is lower than the current arm's in >= 4 of the 5 outer folds; otherwise the selection stops. EXT_SEL = BASE + the accepted blocks (= BASE if none; not a STOP). EXT_ALL = BASE + all blocks enters Phase D regardless of the selection.",
+  "criterion": "mean over SEL_TARGETS ['dft_elst_dft', 'dft_pauli_dft', 'dft_oi_dft'] of the outer-fold test NMAE (rev5_common.nmae: MAE / mean absolute deviation of the fold's test targets), averaged over the 5 outer folds",
+  "sel_targets": [
+   "dft_elst_dft",
+   "dft_pauli_dft",
+   "dft_oi_dft"
+  ],
+  "sel_min_rel": 0.02,
+  "sel_min_folds": 4,
+  "n_outer": 5,
+  "n_inner": 5,
+  "seed": 20261001,
+  "model": "KRR_rbf",
+  "grid": {
+   "regressor__kernelridge__alpha": [
+    1e-05,
+    0.0001,
+    0.001,
+    0.01,
+    0.1,
+    1
+   ],
+   "regressor__kernelridge__gamma": [
+    0.0003,
+    0.001,
+    0.003,
+    0.01,
+    0.03,
+    0.1,
+    0.3,
+    1
+   ]
+  },
+  "scoring": "neg_mean_absolute_error",
+  "tie_break": "BLOCK_ORDER",
+  "block_order": [
+   "B1",
+   "B2",
+   "B3",
+   "B4",
+   "B5",
+   "B6"
+  ]
+ },
+ "ext_all": "EXT_ALL = BASE + B1..B6 is evaluated in Phase D regardless of the selection (spec C-1)",
+ "inputs": {
+  "n_dev": 4112,
+  "n_lockbox": 726,
+  "dev_ids": "results_rev5/dev_ids.csv",
+  "dev_sha256": "19a8e2123c6d173d3b1975688deb3fb0c4d15cd8de33fdc7ce822385ae5a1117",
+  "lockbox_sha256": "97c055149e4c680d0522bf48ad16af4430ebffa81863611902e05da88a797f86",
+  "rows_rev5_sha256": "a89a3d923d6f3daa81e6d17b1d2640cadabd087736bfb10dbaef06edaf70c8f8",
+  "features_file": "xtb_features_g1.parquet",
+  "features_sha256": "64ee5da7dcc7e3b0b2c055fe5030135f255e8d30e487cc6d1ea456d64af4b1d8",
+  "ext_features_file": "xtb_features_ext_g1.parquet",
+  "ext_features_sha256": "35d1a84ff5667965450d8f1d24c1aa42209cbc63bd4838c27de98f18919b0370"
+ },
+ "selection_path": "results_rev5/C2_selection_path.json"
+}
