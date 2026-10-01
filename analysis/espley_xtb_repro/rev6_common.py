@@ -31,8 +31,11 @@ ESP_HPS = R5.ESP_DATA / "hyperparameter_tuning" / "tt" / "solvent" / "hps.pkl"
 # Phase R: recovered geometries / features are NEW files; the rev 4/5 ones (R5.G1_ROOT, R5.FEAT_G1, R5.FEAT_EXT)
 # are read-only inputs
 G1_ROOT_R6 = Path(os.environ.get("G1_ROOT_R6", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g1_rev6"))
-FEAT_G1_R6 = R5.XTB_ROOT / "xtb_features_g1_rev6.parquet"        # rev 4 G1 features of the recovered rows
-FEAT_EXT_R6 = R5.XTB_ROOT / "xtb_features_ext_g1_rev6.parquet"   # rev 5 blocks B1..B6 of the recovered rows
+XTB_R6 = SCRATCH / "xtb_r6"
+FEAT_G1_R6 = XTB_R6 / "xtb_features_g1.parquet"                  # rev 4 G1 features of the recovered rows
+FEAT_EXT_R6 = XTB_R6 / "xtb_features_ext_g1.parquet"             # rev 5 blocks B1..B6 of the recovered rows
+FEAT_EXT_4994 = XTB_R6 / "xtb_features_ext_4994.parquet"         # R-4: rxn 4994 (rev 4 geometry, B1 tol 1e-5)
+ROWS_R = RES6 / "R_rows_final.csv"                               # R-5 row table (all 5,260 labels + Espley flags)
 R_PLAN = RES6 / "R_plan.md"
 PREREG6_MD = RES6 / "PREREG_REV6.md"
 PREREG6_JSON = RES6 / "prereg_rev6.json"
