@@ -9,6 +9,7 @@ Groups (all on the §2-3 split; rows = S_splits.csv, features / targets = the Ph
   B     OUR-O, ESP-O x 6 models x d1, d2, Int, ΔE‡ x 5 seeds on C            (Phase B)
   A     OUR-O x 6 models x elst..cds + c_ghost, ESP-O x 6 models x elst..cds, 5 seeds, on C   (Phase A main; d1/d2 = B)
   Call  OUR-O x 6 models x d1, d2, Int, ΔE‡ x 5 seeds on C_all              (C_all sensitivity)
+  Nocref OUR-O x 6 models x d1, d2, Int, ΔE‡ x 5 seeds on C_nocref = C minus constrained_ref rows (retrained)
   AppA  OUR-O x 6 models x 8 channels x 5 seeds, Protocol A rows (appendix)
 Pipeline = rev 4/5 Protocol A: Ridge / KRR / SVR / XGB = train_ml_single._make_pipe + GRIDS, GridSearchCV(cv =
 KFold(5, shuffle=True, random_state=seed), neg MAE) on train_s; validation MAE = -best_score_. NN-2 / NN-4 = Espley's
@@ -97,6 +98,7 @@ def unit_list(group):
     spec = {"B": [(a, B, "C") for a in ("OUR-O", "ESP-O")],
             "A": [("OUR-O", six + ["c_ghost"], "C"), ("ESP-O", six, "C")],
             "Call": [("OUR-O", B, "C_all")],
+            "Nocref": [("OUR-O", B, "C_nocref")],
             "AppA": [("OUR-O", CH, "appA")]}[group]
     out = []
     for arm, tks, rowset in spec:
@@ -233,7 +235,7 @@ def run_nn(u, tr, te, va):
     hps = nn_call("tune", base, wd)["hps"]
     cv = nn_call("cv", dict(base, hps=hps), wd)
     fit = nn_call("fit", dict(base, hps=hps), wd)
-    return np.asarray(fit["pred"]), dict(best_params=hps, edge_hits={}, val_mae=cv["val_mae"],
+    return np.asarray(fit["pred"]), dict(best_params=hps, edge_hits=None, val_mae=cv["val_mae"],
                                          cv_fold_mae=cv["cv_fold_mae"], val_source="nn_5fold_cv_on_train",
                                          final_loss=fit["final_loss"], final_val_loss=fit["final_val_loss"])
 

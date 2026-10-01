@@ -63,11 +63,12 @@ def build():
     S["recovered_by"] = [r.at[i, "recovered_by"] if i in r.index else None for i in ids]
     S["not_feat_reason"] = [r.at[i, "not_feat_reason"] if i in r.index else "not_in_labels" for i in ids]
     S["D"] = S.R_lab & S.R_hyg & ~S.R_feat
+    S["C_nocref"] = S.C & ~S.recovered_by.fillna("").astype(str).str.contains("constrained_ref")
     assert (S.C == (S.R_lab & S.R_feat & S.R_hyg)).all() and (S.C_all == (S.R_lab & S.R_feat)).all()
     R6.write_atomic(R6.RES6 / "S_rows.csv", lambda t: S.to_csv(t, index=False))
 
     spl, shas = [], {}
-    inC, inCa, inD = S.C.to_numpy(), S.C_all.to_numpy(), S.D.to_numpy()
+    inC, inCa, inD, inN = S.C.to_numpy(), S.C_all.to_numpy(), S.D.to_numpy(), S.C_nocref.to_numpy()
     for s in R6.SEEDS:
         tr, te, va = R6.espley_split3(R6.N_ESP, s)
         tr2, te2 = CE.espley_split(R6.N_ESP, s)
@@ -75,8 +76,8 @@ def build():
         for part, arr in (("train", tr), ("test", te), ("val", va)):
             for k, p in enumerate(arr):
                 spl.append(dict(seed=s, part=part, order=k, pos=int(p), rxn_id=int(ids[p]), C=bool(inC[p]),
-                                C_all=bool(inCa[p]), D=bool(inD[p])))
-            for nm, m in (("C", inC), ("C_all", inCa), ("D", inD)):
+                                C_all=bool(inCa[p]), D=bool(inD[p]), C_nocref=bool(inN[p])))
+            for nm, m in (("C", inC), ("C_all", inCa), ("D", inD), ("C_nocref", inN)):
                 sel = [int(ids[p]) for p in arr if m[p]]
                 shas[f"{s}/{part}/{nm}"] = dict(n=len(sel), sha256=ids_sha(sel))
     spl = pd.DataFrame(spl)
@@ -140,8 +141,20 @@ def build():
     sa = pd.DataFrame(sa)
     R6.write_atomic(R6.S_SPLITS_A, lambda t: sa.to_csv(t, index=False))
 
+    # §12 test-row protection: tuning rows (train_s; NN Hyperband also val_s) never contain test_s rows of that seed.
+    # Espley protocol tunes once on the seed-23 train rows: their overlap with the other seeds' test rows is the known
+    # quirk (reported, not removed).
+    audit = {}
+    t23 = set(spl[(spl.seed == R6.TUNE_SEED) & (spl.part == "train") & spl.C].rxn_id)
+    for s in R6.SEEDS:
+        d = spl[(spl.seed == s) & spl.C]
+        te, trva = set(d[d.part == "test"].rxn_id), set(d[d.part.isin(["train", "val"])].rxn_id)
+        assert not (te & trva), f"seed {s}: test rows in train/val"
+        audit[str(s)] = dict(n_test=len(te), our_tuning_overlap=0, espley_seed23_tuning_overlap=len(te & t23))
     rep = dict(counts=dict(R_esp=int(len(S)), R_lab=int(S.R_lab.sum()), R_feat=int((S.R_lab & S.R_feat).sum()),
-                           C=int(S.C.sum()), C_all=int(S.C_all.sum()), D=int(S.D.sum()), appendixA=int(len(allr))),
+                           C=int(S.C.sum()), C_all=int(S.C_all.sum()), D=int(S.D.sum()),
+                           C_nocref=int(S.C_nocref.sum()), appendixA=int(len(allr))),
+               test_row_audit=audit,
                split_sha256=shas, label_checks=chk,
                files={str(p.relative_to(R6.RES6)) if str(p).startswith(str(R6.RES6)) else str(p): R6.sha256(p)
                       for p in (R6.RES6 / "S_rows.csv", R6.RES6 / "S_splits.csv", R6.S_SPLITS_A, R6.S_TARGETS,
