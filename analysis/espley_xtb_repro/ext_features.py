@@ -162,6 +162,10 @@ TOL_EPS_EV = 5e-3                            # xtb json vs tblite HOMO / LUMO (B
 TOL_FUKUI = 2e-3                             # f(0) vs (f(+) + f(-))/2, values printed with 3 decimals
 TOL_HESS = 1e-6                              # nu_imag [cm-1] and mode_share recomputed vs result.json
 TOL_HESS_GEOM_A = 1e-4                       # .hess $atoms == ts.xyz up to a translation (g1_geom.py gate)
+# rev 6 R-4 (user decision 2026-10-01): R6_B1_TOL="4994:1e-5" relaxes B1 gate 1 for the listed rxns only; unset (the
+# default, rev 5) = R5.GATE_E_EH for every rxn
+B1_TOL_OVERRIDE = {int(k): float(v) for k, v in (p.split(":") for p in os.environ.get("R6_B1_TOL", "").split(",")
+                                                 if p.strip())}
 
 DIST_COLS = ["dist_R_dip_ab", "dist_R_dip_bc", "dist_R_dip_ac", "dist_R_dph_ab", "dist_TS_dip_ab", "dist_TS_dip_bc",
              "dist_TS_dip_ac", "dist_TS_dph_ab", "dist_TS_form_ad", "dist_TS_form_be", "dist_TS_diag_ae"]
@@ -630,7 +634,8 @@ def block_b1(c):
           "qc_b1_dLUMO_dA_ev": tA["eps"][noA] * R5.EH2EV - jA["eps_lumo"],
           "qc_b1_dLUMO_dB_ev": tB["eps"][noB] * R5.EH2EV - jB["eps_lumo"]}
     dEmax = float(np.max(np.abs([qc[k] for k in ("qc_b1_dE_fA_eh", "qc_b1_dE_fB_eh", "qc_b1_dE_ts_eh")])))
-    if not dEmax < R5.GATE_E_EH:                                     # gate 1 per rxn (np.max keeps NaN: fails too)
+    tol = B1_TOL_OVERRIDE.get(int(c.rid), R5.GATE_E_EH)               # rev 6 R-4: user decision for rxn 4994 only
+    if not dEmax < tol:                                              # gate 1 per rxn (np.max keeps NaN: fails too)
         raise BlockFail(f"engine_gate1:{dEmax:.1e}", qc)
     if not ortho < R5.GATE_ORTHO:
         raise BlockFail(f"ortho_gate:{ortho:.1e}", qc)

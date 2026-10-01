@@ -13,6 +13,7 @@ are always the DFT labels on the DFT geometry; the features never read a DFT str
   g2             same as g1, from $G2_ROOT (autodE xTB-level search, not run).
   formed_pairs_ts and roles come from the label unchanged; the partition is recomputed on the xTB TS and must
   equal the label A_idx ($ESPLEY_META input_meta.csv), else xtb_status partition_mismatch_<geom>.
+  rev 6: ESPLEY_PARTITION=label uses the label A_idx directly (r6_partition.py); default unchanged.
   The geometry step (partition, fragments fA / fB, reacting atoms) is ts_fragments() and the 11 distances are
   ts_distances(); ext_features.py (rev 5 blocks B1..B6) uses the same two functions.
 
@@ -93,6 +94,11 @@ GEOMS = ("g1", "g2")
 GEOM_ROOT = {"g1": Path(os.environ.get("G1_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g1")),
              "g2": Path(os.environ.get("G2_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g2"))}
 META = Path(os.environ.get("ESPLEY_META", "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/label_true/work/input_meta.csv"))
+# partition of ts_fragments: "redetect" (rev 4/5, default) = fragmenter.partition on the xTB TS, must equal the label
+# A_idx; "label" (rev 6, r6_partition.py) = the label A_idx itself, the re-detection only supplies / checks the atom maps
+PARTITION_MODE = os.environ.get("ESPLEY_PARTITION", "redetect")
+if PARTITION_MODE not in ("redetect", "label"):
+    raise SystemExit(f"ESPLEY_PARTITION must be redetect|label, got {PARTITION_MODE!r}")
 
 _TERMS = [("total", r"::\s+total energy"), ("scc", r"::\s+SCC energy"),
           ("ies", r"->\s+isotropic ES"), ("aes", r"->\s+anisotropic ES"),
@@ -217,9 +223,19 @@ def ts_fragments(label, geom="g1", meta=None):
     except Exception as e:
         return f"geom_load_fail:{type(e).__name__}"
     ts_syms, ts_xyz = ts
-    P = fr.partition(ts, rel1, rel2)
-    if P.status != "ok":
-        return f"partition:{P.status}"
+    if PARTITION_MODE == "label":
+        # rev 6 (r6_partition.py, R-1): A = label A_idx; maps from the re-detection on this TS when it reproduces
+        # A_idx (= the rev 4/5 path below), else from the DFT TS (same atom order)
+        import r6_partition
+        if meta.get(rid) is None:
+            return "partition:no_label_A_idx"
+        P, _diag = r6_partition.label_partition(label, ts, rel1, rel2, meta[rid])
+        if P is None:
+            return "partition:label_map_failed"
+    else:
+        P = fr.partition(ts, rel1, rel2)
+        if P.status != "ok":
+            return f"partition:{P.status}"
     A_idx, B_idx = sorted(P.A), sorted(P.B)
     if A_idx != meta.get(rid):
         return f"partition_mismatch_{geom}"
