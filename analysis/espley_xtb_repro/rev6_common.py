@@ -50,7 +50,9 @@ S_SPLITS = RES6 / "S_splits.csv"
 # Espley-pinned environment (their requirements.txt; r6_espley_env.sh) for running THEIR code unchanged
 ESP_ENV = SCRATCH / "env_espley"
 ESP_PY = ESP_ENV / "bin" / "python"
-ESP_PINS = {"tensorflow": "2.16.1", "keras": "3.3.3", "keras_tuner": "1.4.5", "scikit-learn": "1.3.1",
+# their requirements.txt pins keras_tuner 1.4.5, which cannot save Hyperband checkpoints under keras 3.3.3
+# ("The filename must end in .weights.h5", P-1 2026-10-01); user decision 2026-10-01: keras_tuner 1.4.7, all else as pinned
+ESP_PINS = {"tensorflow": "2.16.1", "keras": "3.3.3", "keras_tuner": "1.4.7", "scikit-learn": "1.3.1",
             "numpy": "1.26.0", "pandas": "2.1.1", "matplotlib": "3.8.4"}
 
 # ---------------------------------------------------------------- seeds and split (§2-3)
