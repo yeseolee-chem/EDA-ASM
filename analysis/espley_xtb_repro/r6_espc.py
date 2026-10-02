@@ -262,10 +262,23 @@ def _ml_diff(a_path, b_path):
 
 
 def _hps_diff(a_path, b_path):
+    """Keys whose tuned hyperparameters differ (b_hps / NN values exactly) or whose train_mae (|best_score_|) differs
+    by more than TOL_P2; the train_mae differences are recorded (BLAS-level float noise is ~1e-15)."""
     h1, h2 = load_hps(a_path), load_hps(b_path)
-    differ = [k for k in h1 if json.dumps(h1[k], sort_keys=True, default=str)
-              != json.dumps(h2.get(k), sort_keys=True, default=str)]
-    return differ, sorted(set(h2) - set(h1))
+    differ, dmae = [], {}
+    for k, v in h1.items():
+        w = h2.get(k)
+        if w is None:
+            differ.append(k); continue
+        if isinstance(v, dict) and "b_hps" in v:
+            same_hp = json.dumps(v["b_hps"], sort_keys=True, default=str) == json.dumps(w.get("b_hps"), sort_keys=True,
+                                                                                      default=str)
+            dmae[k] = abs(float(v["train_mae"]) - float(w["train_mae"]))
+            if not same_hp or dmae[k] > TOL_P2:
+                differ.append(k)
+        elif json.dumps(v, sort_keys=True, default=str) != json.dumps(w, sort_keys=True, default=str):
+            differ.append(k)
+    return differ, sorted(set(h2) - set(h1)), (max(dmae.values()) if dmae else None)
 
 
 def cmd_p2_compare():
@@ -282,7 +295,8 @@ def cmd_p2_compare():
                  ml_sklearn_max=float(df[~nn].max_absdiff.max()), ml_nn_max=float(df[nn].max_absdiff.max()),
                  ml_ok=bool((df.max_absdiff <= TOL_P2).all()))
         if hyp_b.is_file() and (P1 / "hyp" / "hps.pkl").is_file():
-            r["hps_common_keys_differ"], r["hps_extra_keys"] = _hps_diff(P1 / "hyp" / "hps.pkl", hyp_b)
+            r["hps_common_keys_differ"], r["hps_extra_keys"], r["hps_train_mae_max_absdiff"] = _hps_diff(
+                P1 / "hyp" / "hps.pkl", hyp_b)
         rep[tag] = r
     for suf in ("", "_tf2"):
         f = R6.RES6 / f"P2_nn_reimpl{suf}.csv"
