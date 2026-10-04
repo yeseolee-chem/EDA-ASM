@@ -65,10 +65,8 @@ def fig1(ps, rep, prim):
             ax.scatter(np.full(len(v), k) + np.linspace(-0.2, 0.2, len(v)), v.mae, s=6, color="k", zorder=3)
             rows += [dict(target=t, arm=a, model=m, seed=int(s), mae=float(x)) for s, x in zip(v.seed, v.mae)]
         ax.set_xticks(range(4), [f"{a}\n{rep[a][t]['model']}" for a in ARMS])
-        ax.set_title(TLAB[t])
         pr = prim[prim.target == t].iloc[0]
-        ax.text(0.5, 0.98, f"ESP-C − OUR-O = {pr.d_mean:+.2f}\nHolm p = {pfmt(pr.p_holm)}", transform=ax.transAxes,
-                ha="center", va="top")
+        ax.set_title(f"{TLAB[t]}\nESP-C − OUR-O = {pr.d_mean:+.2f}\nHolm p = {pfmt(pr.p_holm)}")
     axs[0].set_ylabel("test MAE (kcal/mol)")
     fig.tight_layout()
     save(fig, "fig1_primary", rows)
@@ -81,11 +79,13 @@ def fig2(sm):
         x = sm[(sm.target == t) & (sm.rowset == "C") & sm.model.isin(R6.MODELS)]
         M = x.pivot(index="arm", columns="model", values="mae").reindex(index=ARMS, columns=R6.MODELS)
         im = ax.imshow(M.to_numpy(), cmap="viridis_r", aspect="auto")
+        lo, hi = np.nanmin(M.to_numpy()), np.nanmax(M.to_numpy())
         for i in range(M.shape[0]):
             for j in range(M.shape[1]):
                 v = M.iat[i, j]
-                ax.text(j, i, "" if np.isnan(v) else f"{v:.2f}", ha="center", va="center", color="w",
-                        fontsize=R6.FONT_PT - 2)
+                light = not np.isnan(v) and (v - lo) / max(hi - lo, 1e-12) < 0.5    # viridis_r: low = yellow
+                ax.text(j, i, "" if np.isnan(v) else f"{v:.2f}", ha="center", va="center",
+                        color="k" if light else "w", fontsize=R6.FONT_PT - 2)
                 rows.append(dict(target=t, arm=M.index[i], model=M.columns[j], mae=v))
         ax.set_xticks(range(len(R6.MODELS)), R6.MODELS, rotation=45)
         ax.set_yticks(range(len(ARMS)), ARMS if ax is axs[0] else [""] * len(ARMS))
@@ -129,7 +129,7 @@ def fig4(ps, rep, prim):
         pr = prim[prim.target == t].iloc[0]
         ax.set_xticks([0, 1], [f"ESP-C\n{rep['ESP-C'][t]['model']}", f"OUR-O\n{rep['OUR-O'][t]['model']}"])
         ax.set_xlim(-0.3, 1.3)
-        ax.set_title(f"{TLAB[t]}: OUR-O lower in {pr.seeds_b_lower}/5")
+        ax.set_title(f"{TLAB[t]}\nOUR-O lower in {pr.seeds_b_lower}/5 seeds")
     axs[0].set_ylabel("test MAE (kcal/mol)")
     fig.tight_layout()
     save(fig, "fig4_seed_pairs", rows)
@@ -198,7 +198,7 @@ def fig7():
                     fmt="o", color=R6.ARM_COLORS["ESP-C"], ms=3, lw=0.8)
     ax.axvline(0, color="k", lw=0.5)
     ax.set_yticks(range(len(b)), [f"{TLAB[t]} ({m}, n_D={n})" for t, m, n in zip(b.target, b.model, b.n_D)])
-    ax.set_xlabel("ESP-C mean |error|: dropped rows − C rows (kcal/mol)")
+    ax.set_xlabel("ESP-C |error|, D − C rows\n(kcal/mol, 95 % CI)")
     rows += b.assign(panel="bias").to_dict("records")
     fig.tight_layout()
     save(fig, "fig7_recovery", rows)
