@@ -12,11 +12,16 @@ ok 행 (sp/):
   mull_tag1_sum, loew_tag1_sum 같은 출력의 원자 전하를 (1) 원자에 대해 더한 값 — Fragment 0 대응의 자체 검사
   GEDT 는 b5_gedt.py 가 만든다: gedt = frag0 − charge1 (양수 = dipole → dipolarophile 전자 흐름 = FEDF, 음수 = REDF)
 no_ts 행 (ts/ 또는 ts.tar 안):
-  *_hl_ad_*_path.xyz · *_ll_ad_*_path.xyz 의 각 frame 에너지(주석 줄 "E = …" Eh). 경로마다
-  고개 = 내부 frame 이 엄격한 극대 (E[i-1] < E[i] > E[i+1]; autodE path.is_saddle 과 같은 검사, 크기와 무관).
-  peak_kcal = (내부 frame 최대 − 양 끝 중 큰 값) × 627.509 (참고: 고개가 끝점보다 낮을 수 있다).
-  path_verdict: hl 경로가 있으면 hl 로, 없으면 ll 로 — 모든 경로에 극대가 없으면 barrierless (에너지가 한쪽으로 계속 내려감),
-  하나라도 극대가 있으면 peak, 경로 파일이 없으면 no_path, 읽지 못한 경로가 있으면 unparsed
+  *_hl_ad_<i-j>_<k-l>_path.xyz · *_ll_ad_…_path.xyz 의 각 frame 에너지(주석 줄 "E = …" Eh)와 좌표. 파일 이름의 ad_ 뒤 원자 쌍 =
+  형성 결합 (autodE, 0-based: 파일럿 T02894 의 8-13 · 9-10 은 frame 0 에서 1.51 · 1.52 Å, 마지막 frame 에서 3.02 · 3.04 Å). 경로마다
+    고개      내부 frame 이 엄격한 극대 (E[i-1] < E[i] > E[i+1]; autodE path.is_saddle 과 같은 검사, 크기와 무관)
+    d_react   반응물 쪽 끝 frame (양 끝 중 형성 결합 거리의 최댓값이 큰 쪽) 의 형성 결합 두 개 중 큰 거리 [Å]
+    판정      고개 있음 → peak; 고개 없음 + d_react ≥ DFORM_MIN_A (3.0 Å) → barrierless (반응물까지 에너지가 한쪽으로 계속 내려감);
+              고개 없음 + d_react < 3.0 Å → no_peak_truncated (경로가 반응물까지 가지 않아 고개 없음을 말할 수 없다)
+  path_verdict (작업 하나): hl 경로가 있으면 hl 로, 없으면 ll 로. 하나라도 peak → peak; 아니고 읽지 못한 경로가 있으면 unparsed;
+    아니고 하나라도 no_peak_truncated → no_peak_truncated; 모두 barrierless → barrierless; 경로 파일이 없으면 no_path
+  dform_react_min_A: 판정에 쓴 경로들의 d_react 최솟값; path_detail: 경로마다 "hl|8-13_9-10|peak=0|d_react=3.037|end=last|n=17"
+  peak_kcal = (내부 frame 최대 − 양 끝 중 큰 값) × 627.509 (참고: 고개가 끝점보다 낮을 수 있다)
   log_no_peak, log_barrierless: ts autode.log 의 "Adaptive path had no peak" · "barrierless bimolecular" 줄 수 (참고; autodE 는 TS 가 없으면 늘 후자를 쓴다)
 """
 from __future__ import annotations
@@ -34,12 +39,14 @@ import numpy as np
 import pandas as pd
 
 EH2KCAL = 627.5094740631
-SCAN_VERSION = "v2"           # v2: peak = strict interior local maximum (part caches of another version are rescanned)
+SCAN_VERSION = "v3"           # v3: + reactant-end forming-bond distance (no_peak_truncated); part caches of another version are rescanned
+DFORM_MIN_A = 3.0             # user rule 2026-10-14: barrierless only if the reactant-end longer forming bond >= 3.0 A
 COLS = ["job_id", "class", "source", "parse_error", "n_atoms", "a_idx_meta", "a_idx_tag",
         "mull_frag0", "mull_frag1", "loew_frag0", "loew_frag1", "mull_tag1_sum", "loew_tag1_sum",
         "n_hl_paths", "n_ll_paths", "hl_peak_max_kcal", "ll_peak_max_kcal", "hl_frames", "log_no_peak",
-        "log_barrierless", "path_verdict"]
+        "log_barrierless", "dform_react_min_A", "path_detail", "path_verdict"]
 PATH_RE = re.compile(r"_(hl|ll)_ad_[^/]*_path\.xyz$")
+BOND_RE = re.compile(r"_ad_(.*?)(?:_br_.*)?_path\.xyz$")
 E_RE = re.compile(r"E\s*=\s*(-?\d+\.\d+)")
 ATOM_RE = re.compile(r"^\s*([A-Z][a-z]?)\((\d+)\)\s+-?\d")
 
@@ -90,24 +97,41 @@ def parse_eda_charges(text: str, n_atoms: int):
     return out
 
 
-def path_peak(text: str):
-    """(n_frames, has_peak, peak_kcal) of an autodE path xyz.
+def path_bonds(name: str):
+    """Forming bonds (0-based atom pairs) from an autodE path file name '..._ad_8-13_9-10_path.xyz'; [] if not parsed."""
+    m = BOND_RE.search(name.split("/")[-1])
+    return [(int(a), int(b)) for a, b in re.findall(r"(\d+)-(\d+)", m.group(1))] if m else []
+
+
+def path_info(name: str, text: str) -> dict:
+    """One autodE path xyz: frame energies + the forming-bond distances of the two end frames.
     has_peak = an interior frame is a strict local maximum (E[i-1] < E[i] > E[i+1]; autodE path.is_saddle uses the same
-    test); peak_kcal = interior max − the larger endpoint (information: a peak can sit below an endpoint)."""
+    test); peak_kcal = interior max − the larger endpoint (information: a peak can sit below an endpoint);
+    d_react = the longer forming bond at the reactant-side end (the end whose longest forming bond is longer);
+    verdict = peak | barrierless (no peak, d_react >= DFORM_MIN_A) | no_peak_truncated (no peak, d_react < DFORM_MIN_A) | unparsed."""
+    bonds = path_bonds(name)
     lines = text.splitlines()
-    E, i = [], 0
+    E, X, i = [], [], 0
     while i < len(lines):
         if not lines[i].strip():
             i += 1; continue
         n = int(lines[i].split()[0])
         m = E_RE.search(lines[i + 1])
         E.append(float(m.group(1)) if m else np.nan)
+        X.append(np.array([[float(v) for v in l.split()[1:4]] for l in lines[i + 2:i + 2 + n]]))
         i += n + 2
     E = np.array(E)
-    if len(E) < 3 or not np.isfinite(E).all():
-        return len(E), None, np.nan
+    out = dict(n=len(E), has_peak=None, peak_kcal=np.nan, d_react=np.nan, end="", bonds="_".join(f"{a}-{b}" for a, b in bonds),
+               verdict="unparsed")
+    if len(E) < 3 or not np.isfinite(E).all() or len(bonds) < 2 or any(max(p) >= len(X[0]) for p in bonds):
+        return out
+    dmax = [max(float(np.linalg.norm(x[a] - x[b])) for a, b in bonds) for x in (X[0], X[-1])]
+    k = int(np.argmax(dmax))
     has = bool(np.any((E[1:-1] > E[:-2]) & (E[1:-1] > E[2:])))
-    return len(E), has, float((E[1:-1].max() - max(E[0], E[-1])) * EH2KCAL)
+    out.update(has_peak=has, peak_kcal=float((E[1:-1].max() - max(E[0], E[-1])) * EH2KCAL), d_react=dmax[k],
+               end=("first", "last")[k],
+               verdict="peak" if has else ("barrierless" if dmax[k] >= DFORM_MIN_A else "no_peak_truncated"))
+    return out
 
 
 # ---------------------------------------------------------------- one job
@@ -175,32 +199,40 @@ def summarize(jid, cls, src, got) -> dict:
                 r[f"{k}_frag0"], r[f"{k}_frag1"], r[f"{k}_tag1_sum"] = f0, f1, float(q[tag].sum())
         else:
             ts = got.get("ts", [])
-            peaks = {"hl": [], "ll": []}
-            has = {"hl": [], "ll": []}
-            hl_frames = []
-            for nm, txt in ts:
+            info = {"hl": [], "ll": []}
+            for nm, txt in sorted(ts):
                 m = PATH_RE.search(nm)
                 if m:
-                    nf, hp, pk = path_peak(txt)
-                    peaks[m.group(1)].append(pk); has[m.group(1)].append(hp)
-                    if m.group(1) == "hl":
-                        hl_frames.append(nf)
+                    try:
+                        info[m.group(1)].append(path_info(nm, txt))
+                    except (ValueError, IndexError):
+                        info[m.group(1)].append(dict(n=0, peak_kcal=np.nan, d_react=np.nan, end="", bonds="", has_peak=None,
+                                                     verdict="unparsed"))
                 elif nm.split("/")[-1] == "autode.log":
                     r["log_no_peak"] = (0 if np.isnan(r["log_no_peak"]) else r["log_no_peak"]) + txt.count("Adaptive path had no peak")
                     r["log_barrierless"] = (0 if np.isnan(r["log_barrierless"]) else r["log_barrierless"]) + txt.count("barrierless bimolecular")
-            r["n_hl_paths"], r["n_ll_paths"] = len(peaks["hl"]), len(peaks["ll"])
-            r["hl_peak_max_kcal"] = max(peaks["hl"]) if peaks["hl"] else np.nan
-            r["ll_peak_max_kcal"] = max(peaks["ll"]) if peaks["ll"] else np.nan
-            r["hl_frames"] = " ".join(map(str, hl_frames))
-            use = has["hl"] or has["ll"]
+            r["n_hl_paths"], r["n_ll_paths"] = len(info["hl"]), len(info["ll"])
+            for lv in ("hl", "ll"):
+                pk = [p["peak_kcal"] for p in info[lv] if np.isfinite(p["peak_kcal"])]
+                r[f"{lv}_peak_max_kcal"] = max(pk) if pk else np.nan
+            r["hl_frames"] = " ".join(str(p["n"]) for p in info["hl"])
+            r["path_detail"] = "; ".join(f"{lv}|{p['bonds']}|peak={int(bool(p['has_peak'])) if p['has_peak'] is not None else '?'}"
+                                         f"|d_react={p['d_react']:.3f}|end={p['end']}|n={p['n']}"
+                                         for lv in ("hl", "ll") for p in info[lv])
+            use = info["hl"] or info["ll"]                    # the decision uses hl paths when present, else ll
+            v = [p["verdict"] for p in use]
+            d = [p["d_react"] for p in use if np.isfinite(p["d_react"])]
+            r["dform_react_min_A"] = min(d) if d else np.nan
             if not use:
                 r["path_verdict"] = "no_path"
-            elif any(h is True for h in use):
+            elif "peak" in v:
                 r["path_verdict"] = "peak"
-            elif all(h is False for h in use):
-                r["path_verdict"] = "barrierless"
-            else:
+            elif "unparsed" in v:
                 r["path_verdict"] = "unparsed"
+            elif "no_peak_truncated" in v:
+                r["path_verdict"] = "no_peak_truncated"
+            else:
+                r["path_verdict"] = "barrierless"
     except Exception as e:                                               # noqa: BLE001
         r["parse_error"] = f"{type(e).__name__}: {str(e)[:120]}"
     return r

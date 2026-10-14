@@ -2,6 +2,10 @@
 
 모든 계산은 계산 노드에서 `sbatch` 로 한다 (CLAUDE.md). 잡은 **저장소 루트에서** 제출한다 (스크립트가 `$SLURM_SUBMIT_DIR` 로 경로를 잡는다).
 제출 전마다 `squeue -u $USER -h | wc -l` 로 대기열을 본다 (배열 원소도 한 칸씩, MaxSubmit 20 · MaxJobs 10). 모든 단계는 멱등이다: 48 h 벽에 걸리면 같은 명령을 다시 제출한다.
+
+> **범위 (2026-10-14 사용자):** 지금 목표는 통계 판정뿐이다 — Phase R → (RELAY_DONE) 확정 export → A → B. **Phase C · D 는 보류**: 코드는 두고 제출하지 않는다. 게이트 C 분모 · D0 dev 겹침 처리 · PREREG 승인은 C/D 를 다시 열 때 정한다.
+> RELAY_DONE 뒤에는 `bash analysis/d1_stats/jobs/submit_after_relay.sh` 한 번으로 export → A → B 를 afterok 사슬로 낸다 (로그인 노드에서 sbatch 세 번만).
+> B2 판정은 d1_archive_scan.py v3: 극대 없음 + 반응물 쪽 끝 형성 결합 큰 거리 ≥ 3.0 Å 일 때만 barrierless, 미만이면 no_peak_truncated.
 D1 본계산 relay 가 아직 돌고 있으면 그 잡들이 10칸 중 대부분을 쓴다 — Phase R 외에는 본계산이 끝난 뒤(RELAY_DONE)에 한다.
 
 | 단계 | 명령 | 끝나면 | 멈춤 |

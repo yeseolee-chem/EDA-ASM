@@ -114,7 +114,7 @@ if ml is not None:
 p("지목 칸 (azomethine ylide × 전자 부족, carbonyl ylide R2):", "", *table(csv("missing_cause_cells.csv"), n=80), "")
 mc = jl("missing_cause.json")
 p("```", json.dumps(mc, indent=1, ensure_ascii=False) if mc else "(missing_cause.json 없음)", "```", "",
-  "- 결론 (사람이 쓴다): 지목 칸의 no_ts 가 고개 없음(barrierless)이면 MNAR — Methods 에 실패율과 함께.", "")
+  "- 결론 (사람이 쓴다): 지목 칸의 no_ts 가 고개 없음(barrierless: 극대 없음 + 반응물 쪽 끝 형성 결합 ≥ 3.0 Å)이면 MNAR — Methods 에 실패율과 함께. no_peak_truncated 는 고개 없음의 근거로 세지 않는다.", "")
 
 p("## 5. B3: 문헌 σ Hammett", "")
 hm = csv("hammett.csv")
