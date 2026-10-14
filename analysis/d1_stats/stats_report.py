@@ -62,6 +62,24 @@ def table(df, n=60, cols=None):
     return out
 
 
+def img(*names):
+    """Markdown image links (relative to OUT): figs.py fig1–4 if the file exists; figs_b.py fig05–19 only if the last
+    figs_b run made it (fig/figs_b_index.json 'made'), otherwise its skipped / failed reason."""
+    fi = RD / "fig" / "figs_b_index.json"
+    idx = json.load(open(fi)) if fi.is_file() else None
+    out = []
+    for nm in names:
+        f = RD / "fig" / nm
+        stem = nm[:-4]
+        if len(stem.split("_")[0]) == 5:                     # figNN_* = figs_b.py; figN_* = figs.py
+            ok = idx is not None and nm in idx.get("made", [])
+            why = (idx or {}).get("skipped", {}).get(stem) or (idx or {}).get("failed", {}).get(stem) or "figs_b.py 미실행"
+        else:
+            ok, why = f.is_file(), "figs.py 미실행"
+        out += [f"![{nm}]({os.path.relpath(f, OUT.parent)})", ""] if ok and f.is_file() else [f"(그림 없음: {nm} — {why})", ""]
+    return out
+
+
 def txt(name, n=60):
     f = RD / name
     if not f.is_file():
@@ -92,15 +110,32 @@ p(f"- 게이트 B: 부호가 바뀐 항목 {gb['n_sign_flips'] if gb else '미�
 bd = csv("robustness_by_dipole.csv")
 if bd is not None:
     p("### dipole 별 (전체와 부호가 다른 칸만)", "", *table(bd[bd.sign_differs.astype(str) == "True"], n=80), "")
+p("### 그림 (B1: figs.py · B4: figs_b.py)", "", *img("fig1_budget.png", "fig2_lowrank.png", "fig3_selectivity.png", "fig4_fingerprint.png",
+                                                "fig11_b4_robustness.png", "fig12_b4_fingerprint_fdr.png"))
 
 p("## 3. B1b: dipole 별 E_int 상관 · 저랭크 CI", "")
 p(*table(csv("q5_dipole_eint.csv"), n=60), "", *txt("b1b_q5q7.txt", 80), "")
 cb = csv("ci_lowrank_boot.csv")
 if cb is not None:
-    num = cb.select_dtypes("number")
-    grp = [c for c in cb.columns if c not in num.columns]
-    s = cb.groupby(grp)[list(num.columns)].quantile([0.025, 0.5, 0.975]).unstack() if grp else num.quantile([0.025, 0.5, 0.975])
-    p("저랭크 CV R² 코어 부트스트랩 (2.5 / 50 / 97.5 %):", "", "```", s.round(3).to_string(), "```", "")
+    # point = boot 0 (original cores); CI = 2.5 / 97.5 % over the core resamples boot >= 1; steps paired within a boot row
+    M5 = [c for c in ("subst", "additive", "rank1", "rank2", "rank3") if c in cb]
+    rows = []
+    for (sd, ch), g in cb.groupby(["side", "ch"], sort=False):
+        p0, bs = g[g.boot == 0], g[g.boot >= 1]
+        r = dict(side=sd, ch=ch, n_boot=len(bs))
+        for c in M5:
+            r[c] = float(p0[c].iloc[0]) if len(p0) else np.nan
+            r[f"{c}_ci"] = (f"[{np.nanpercentile(bs[c], 2.5):.3f}, {np.nanpercentile(bs[c], 97.5):.3f}]" if len(bs) else "")
+        for a_, b_ in (("rank1", "subst"), ("rank2", "rank1"), ("rank3", "rank2")):
+            if a_ in g and b_ in g and len(p0):
+                d = (bs[a_] - bs[b_]).to_numpy(float)
+                r[f"{a_}−{b_}"] = float(p0[a_].iloc[0] - p0[b_].iloc[0])
+                r[f"{a_}−{b_}_ci"] = f"[{np.nanpercentile(d, 2.5):.3f}, {np.nanpercentile(d, 97.5):.3f}]" if len(d) else ""
+                r[f"{a_}−{b_}_P≤0"] = float(np.mean(d <= 0)) if len(d) else np.nan
+        rows.append(r)
+    p("저랭크 CV R² — 점추정 boot 0, 95 % CI = 코어 재표집 boot ≥ 1, 단계 차이는 같은 재표집끼리 짝지음:", "",
+      *table(pd.DataFrame(rows), n=10), "")
+p(*img("fig05_b1b_eint_by_dipole.png", "fig06_b1b_lowrank_ci.png"))
 
 p("## 4. B2: 결측 원인", "")
 p(*table(csv("status_by_dipole.csv"), n=40), "")
@@ -114,14 +149,17 @@ if ml is not None:
 p("지목 칸 (azomethine ylide × 전자 부족, carbonyl ylide R2):", "", *table(csv("missing_cause_cells.csv"), n=80), "")
 mc = jl("missing_cause.json")
 p("```", json.dumps(mc, indent=1, ensure_ascii=False) if mc else "(missing_cause.json 없음)", "```", "",
-  "- 결론 (사람이 쓴다): 지목 칸의 no_ts 가 고개 없음(barrierless: 극대 없음 + 반응물 쪽 끝 형성 결합 ≥ 3.0 Å)이면 MNAR — Methods 에 실패율과 함께. no_peak_truncated 는 고개 없음의 근거로 세지 않는다.", "")
+  "- 결론 (사람이 쓴다): 주 판정 = barrierless (극대 없음 + 반응물 쪽 끝 형성 결합 ≥ 3.0 Å). 지목 칸의 no_ts 가 barrierless 이면 MNAR — Methods 에 실패율과 함께. no_peak_short_scan 은 고개 없음의 근거로 세지 않는다. 다만 autodE 는 고개 없는 경로를 늘 2 × (생성물 결합) 에서 끝내므로 (ratio ≈ 2.000) short_scan 은 생성물 결합 < 1.5 Å 인 반응이다 — 민감도 no_peak_any (= 둘의 합) 를 나란히 적는다.", "")
+p(*img("fig07_b2_status.png", "fig08_b2_missing_cause.png", "fig09_b2_missing_logit.png"))
 
-p("## 5. B3: 문헌 σ Hammett", "")
+p("## 5. B3: 문헌 σ Hammett", "",
+  "σm, σp, F, R: Hansch, Leo & Taft, Chem. Rev. 1991, 91, 165–195, doi:10.1021/cr00002a004, Table I (tosyl not listed).", "")
 hm = csv("hammett.csv")
 if hm is None:
     p("- σ 표(sigma_hansch1991.csv)를 받지 못해 보류 (STOP 아님).", "")
 else:
     p(*table(hm, n=60), "", *table(csv("sigma_vs_rank2.csv"), n=20), "")
+    p(*img("fig10_b3_hammett.png"))
 
 p("## 6. B5: Houk vs Domingo", "")
 p(*table(csv("q2_azide_table.csv"), n=60), "", *txt("b5_q2.txt", 60), "")
@@ -137,14 +175,21 @@ p("GEDT 부호별 기울기:", "", *table(csv("gedt_sign_slopes.csv"), n=40), ""
 asy = RD / "inflection" / "asymmetry_slopes.csv"
 p("σ 비대칭 (inflection.py):", "", *(table(pd.read_csv(asy), n=40) if asy.is_file() else ["- σ 표가 없어 보류"]), "",
   "- 판정 (사람이 쓴다; 셋 중 하나 + 제약 HN3 대리 · B3LYP · 물 SMD): \"D1(물)은 Houk 쪽\" / \"용매화 제외 시 Domingo 쪽\" / \"GEDT가 변형보다 장벽을 더 잘 설명함/못함\"", "")
+p(*img("fig13_b5_houk_domingo.png", "fig14_b5_regio_magnitude.png", "fig15_b5_gedt.png", "fig16_b5_sigma_asymmetry.png"))
 
 p("## 7. B6: σ 순서 채널 변곡점", "")
 isum = RD / "inflection" / "inflection_summary.csv"
 p(*(table(pd.read_csv(isum), n=40) if isum.is_file() else ["- σ 표가 없어 보류"]), "", *txt("b6_inflection.txt", 40), "")
+p(*img("fig17_b6_inflection.png"))
 
 p("## 8. B7 메틸 · cis/trans, B8 carbonyl ylide 민감도", "")
 p(*table(csv("q5_methyl.csv"), n=80), "", *txt("b7_methyl.txt", 40), "")
 p(*table(csv("q4_sensitivity.csv"), n=40), "", *txt("b8_missing.txt", 60), "")
+p(*img("fig18_b7_methyl.png", "fig19_b8_carbonyl_ylide.png"))
+fb = RD / "fig" / "figs_b_index.json"
+if fb.is_file():
+    fi = json.load(open(fb))
+    p(f"- 그림 생성 기록 (figs_b.py): 만든 것 {len(fi['made'])}, 건너뛴 것 {list(fi['skipped'])} (입력 없음), 실패 {list(fi['failed'])}", "")
 
 p("## 9. 한계와 미해결 (사람이 쓴다)", "")
 tmp = OUT.with_name(OUT.name + ".tmp")

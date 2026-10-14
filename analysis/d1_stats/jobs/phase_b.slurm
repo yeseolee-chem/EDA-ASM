@@ -5,7 +5,7 @@
 #   B2   d1_archive_scan.py → missing_cause.py  (아카이브는 읽기만; 누리온 묶음 tar + UBAI 작업 폴더)
 #   B5   q2_houk_domingo.py · b5_gedt.py (Phase C 의 xTB GEDT 가 있으면 함께) · inflection.py (σ 표가 있을 때만)
 #   B6   inflection.py (σ 표 필요; 없으면 보류라고 적는다)      B7  q5_methyl.py      B8  q4_missing.py
-#   끝으로 stats_report.py → analysis/d1_stats/STATS_REPORT.md
+#   끝으로 figs_b.py → results_final/fig/fig05–fig19 (판정 그림; 입력 없는 그림은 건너뜀, 표식 없이 매번 다시 그림) · stats_report.py → STATS_REPORT.md
 #   sbatch -p cpu1,cpu2 -o analysis/d1_stats/logs/phase_b_%j.out analysis/d1_stats/jobs/phase_b.slurm
 #SBATCH --job-name=d1sB
 #SBATCH --time=48:00:00
@@ -29,7 +29,7 @@ FAILED=""
 step b1b_q5q7      python "$ST/q5q7.py" "$LAB" "$RD"
 step b1b_ci_lowrank python "$ST/ci_lowrank.py" 200 "$RD"
 step b4_robustness python "$ST/robustness.py" "$LAB" "$RD" 1000
-step b2_archive_scan python "$ST/d1_archive_scan.py" "$FINAL_STATUS" "$NURION_TARS" "$D1_JOBS" "$RD" "${SLURM_CPUS_PER_TASK:-8}"
+step b2_archive_scan python "$ST/d1_archive_scan.py" "$FINAL_STATUS" "$BUNDLE_DIRS" "$D1_JOBS" "$RD" "${SLURM_CPUS_PER_TASK:-8}"
 step b2_missing_cause python "$ST/missing_cause.py" "$FINAL_STATUS" "$FINAL_MANIFEST" "$RD/archive_scan.csv" "$RD"
 step b5_q2         python "$ST/q2_houk_domingo.py" "$LAB" "$RD"
 # b5_gedt 는 Phase C 가 끝난 뒤 다시 돌리면 gedt_xtb 가 채워진다 (FORCE=1 또는 .done_b5_gedt 를 지우고)
@@ -41,6 +41,9 @@ else
 fi
 step b7_methyl     python "$ST/q5_methyl.py" "$LAB" "$RD"
 step b8_missing    python "$ST/q4_missing.py" "$LAB" "$RD"
+# 판정 그림 (fig05–fig19): 표식 없이 매번 다시 그린다 (σ 표 등 입력이 늘면 새 그림이 생긴다). 실패해도 통계는 그대로 — 실패 목록만 남긴다
+python "$ST/figs_b.py" "$RD" > "$RD/figs_b.txt" 2>&1 || FAILED="$FAILED figs_b"
+tail -n 3 "$RD/figs_b.txt"
 python "$ST/stats_report.py" "$RD" "$ST/STATS_REPORT.md" || FAILED="$FAILED stats_report"
 echo "Phase B 끝 $(date -Is); 실패: ${FAILED:-없음}"
 [ -z "$FAILED" ]

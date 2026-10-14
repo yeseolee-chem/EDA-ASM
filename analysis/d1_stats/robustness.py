@@ -93,6 +93,10 @@ nc = lambda D: D[D.dipole != "carbonyl ylide"]
 variants["no_carbonyl_ylide"] = (nc(Pc), nc(R), nc(E))
 vals = {name: all_metrics(*t) for name, t in variants.items()}
 pair_only = {"alt_same", "lowest_sibling"}
+for n in pair_only:                      # pair-level variants pass the base R / E through: their selectivity values are
+    for k in vals[n]:                    # copies of base, not a robustness check — leave them empty
+        if k.startswith(("regio_", "exo_")):
+            vals[n][k] = np.nan
 
 # ------------------------------------------------------------------ core cluster bootstrap (base)
 rng = np.random.default_rng(SEED)

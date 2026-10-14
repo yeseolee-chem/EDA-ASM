@@ -26,5 +26,7 @@ OUT_FINAL=$ST/results_final
 NURION_TARS=$REPO/../eda-asm-prediction/D1_build/nurion
 [ -d "$NURION_TARS" ] || NURION_TARS=$REPO/D1_build/nurion
 D1_JOBS=$B/d1_scratch/jobs
+# 묶음 tar 를 찾는 폴더들 (':'): 누리온 묶음 + UBAI relay 가 거둔 묶음 (harvest.py → outbox; 작업 폴더는 지워진다). Phase B 가 끝나기 전에 outbox 를 옮기지 않는다
+BUNDLE_DIRS=$NURION_TARS:$B/d1_scratch/outbox
 mkdir -p "$ST/logs"
 cd "$REPO" || exit 2
