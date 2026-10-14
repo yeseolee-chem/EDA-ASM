@@ -26,8 +26,14 @@ def jl(name):
 
 
 def csv(name, **kw):
+    """The CSV, or None if absent or empty (a step can write an empty frame, e.g. gedt_partial.csv with no GEDT pairs)."""
     f = RD / name
-    return pd.read_csv(f, **kw) if f.is_file() else None
+    if not f.is_file():
+        return None
+    try:
+        return pd.read_csv(f, **kw)
+    except pd.errors.EmptyDataError:
+        return None
 
 
 def flat(d, pre=""):

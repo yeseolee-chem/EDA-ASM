@@ -292,10 +292,11 @@ def fig08_b2_missing_cause():
         x = nb.loc[nb.dipole == d, "dform_react_min_A"].dropna()
         if len(x):
             axs[2].hist(x, bins=bins, histtype="step", lw=1.4, color=DC[d], label=f"{d} ({len(x)})")
+    axs[2].legend(frameon=False, fontsize=6.5, loc="upper left")
     axs[2].axvline(3.0, color=T1, lw=1, ls="--"); axs[2].text(3.003, axs[2].get_ylim()[1] * 0.92, "3.0 Å rule", fontsize=7)
-    axs[2].set_xlabel("reactant-end longer forming bond d_react (Å) = 2 × product bond")
-    axs[2].set_ylabel("no-peak no_ts jobs"); axs[2].legend(frameon=False, fontsize=6.5); grid(axs[2], "y")
-    axs[2].set_title("No interior maximum: where autodE's scan ended")
+    axs[2].set_xlabel("d_react (Å) = 2 × product bond")
+    axs[2].set_ylabel("no-peak no_ts jobs"); grid(axs[2], "y")
+    axs[2].set_title("No maximum: where the scan ended")
     fig.suptitle("B2 — missing labels: barrierless (no maximum, d_react ≥ 3.0 Å) vs no-peak short scan (d_react = 2 × product bond < 3.0 Å) vs peak",
                  fontsize=9.5, fontweight="bold")
     save(fig, "fig08_b2_missing_cause.png")
