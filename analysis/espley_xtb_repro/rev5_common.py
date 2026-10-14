@@ -182,3 +182,29 @@ def nadeau_bengio(d, n_test, n_train):
     p = float(2 * stats.t.sf(abs(t), J - 1))
     h = float(stats.t.ppf(0.975, J - 1) * se)
     return dict(mean=m, t=float(t), p=p, ci95=(m - h, m + h), J=J, n_test=float(n_test), n_train=float(n_train))
+
+
+# ---------------------------------------------------------------- D1 (docs/specs/SPEC_D1_ALL.md Phase C)
+# Appended 2026-10-14; nothing above is changed. The rev 5 scripts (g1_geom.py, xtb_slice.py, ext_features.py) run
+# unchanged on D1: analysis/d1_stats/jobs/phase_c_env.sh points their environment variables (ESPLEY_LABELS,
+# ESPLEY_PROF, ESPLEY_META, ESPLEY_SMILES, G1_ROOT, ESPLEY_OUT, R5_SCRATCH) at the D1 roots below, so no D0 file
+# is read for D1 rows or written by a D1 job.
+D1_FEAT_ROOT = Path(os.environ.get("D1_FEAT_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/d1_features"))
+D1_LABELS_G1 = D1_FEAT_ROOT / "labels_g1in.json"         # labels_d1.json ok rows (= ESPLEY_LABELS)
+D1_PROF = D1_FEAT_ROOT / "prof"                          # <rxn_id> -> results/geometries/<job_id> (= ESPLEY_PROF)
+D1_META = D1_FEAT_ROOT / "input_meta.csv"                # rxn_id, job_id, A_idx (= ESPLEY_META)
+D1_SMILES = D1_FEAT_ROOT / "smiles.csv"                  # rxn_id, rxn_smiles (atom-mapped, d1_manifest; = ESPLEY_SMILES)
+D1_G1_ROOT = D1_FEAT_ROOT / "g1"                         # = G1_ROOT
+D1_XTB_ROOT = D1_FEAT_ROOT / "xtb"                       # = ESPLEY_OUT: slices_g1/, xtb_features_g1.parquet (ext input)
+D1_R5_SCRATCH = D1_FEAT_ROOT / "r5"                      # = R5_SCRATCH: ext/<rid>/ cache, ext/slices/
+D1_FEAT = D1_XTB_ROOT / "xtb_features_d1_g1.parquet"     # SPEC output: base (ESPLEY73) columns, job_id key
+D1_FEAT_EXT = D1_XTB_ROOT / "xtb_features_ext_d1_g1.parquet"   # SPEC output: B1..B6 columns, job_id key
+D1_N_SLICES = 18                                         # as rev 4 / rev 5: array element i = slices i and i + 9
+D1_MAX_MISSING = 0.02                                    # gate C (ii): EXT_SEL feature missing rows <= 2 %
+D1_CONTROL = {"C0020": 20, "C0105": 105}                 # gate C (iii): D0 control reactions
+D1_CONTROL_TOL = 1e-6                                    # gate C (iii): max |difference| vs xtb_features_g1.parquet
+# Si (SiMe3 and p/m/o-SiMe3-C6H4 substituents: in D1, absent from D0). New keys only; no existing value changes,
+# so no D0 row is affected. Bondi 1964 (J. Phys. Chem. 68, 441) Si 2.10 A; GFN2-xTB valence electrons of Si = 4.
+assert "Si" not in BONDI and "Si" not in GFN2_VALENCE
+BONDI["Si"] = 2.10
+GFN2_VALENCE["Si"] = 4

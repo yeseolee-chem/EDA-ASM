@@ -13,7 +13,7 @@ BUNDLE_ROOT = Path(__file__).resolve().parent.parent
 # ---- Constants from SPEC ----
 
 COV = {"H": 0.31, "C": 0.76, "N": 0.71, "O": 0.66, "F": 0.57,
-       "Cl": 1.02, "Br": 1.20, "S": 1.05, "I": 1.39}
+       "Cl": 1.02, "Br": 1.20, "Si": 1.11, "S": 1.05, "I": 1.39}
 
 COVALENT_FACTOR_PRIMARY = 1.25
 COVALENT_FACTOR_FALLBACK = 1.20

@@ -43,8 +43,8 @@ from networkx.algorithms.isomorphism import GraphMatcher
 
 # --------------------------------------------------------------------------- constants
 COV = {"H": 0.31, "C": 0.76, "N": 0.71, "O": 0.66, "F": 0.57,
-       "Cl": 1.02, "Br": 1.20, "S": 1.05, "I": 1.39}          # Cordero et al. 2008
-Z = {"H": 1, "C": 6, "N": 7, "O": 8, "F": 9, "Cl": 17, "Br": 35, "S": 16, "I": 53}
+       "Cl": 1.02, "Br": 1.20, "Si": 1.11, "S": 1.05, "I": 1.39}          # Cordero et al. 2008
+Z = {"H": 1, "C": 6, "N": 7, "O": 8, "F": 9, "Cl": 17, "Br": 35, "Si": 14, "S": 16, "I": 53}
 FACTOR = 1.25          # covalent-distance criterion (same as the primary rule)
 MAX_MAPS = 5000        # safety cap on enumerated monomorphisms (dataset max observed: 432)
 
