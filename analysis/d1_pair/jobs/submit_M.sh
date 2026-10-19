@@ -29,3 +29,7 @@ col=$(sbatch --parsable --dependency=afterok:$nn:$grid:$pb:$svr --kill-on-invali
 ev=$(sbatch --parsable --dependency=afterok:$col --kill-on-invalid-dep=yes -p $P -J d1e_all --cpus-per-task=8 \
      --mem=64G --export=$E jobs/py.slurm d1_eval.py all ::: d1_figures.py)
 echo "nn=$nn grid=$grid pb=$pb svr=$svr collect=$col eval=$ev"
+# 2026-10-20: SVR helpers (same slices from the other end, D1PAIR_ORDER=reverse) added as slots freed; collect also
+# waits for them:
+#   sbatch --array=0-3 ... -J d1m_svrH --export=...,D1PAIR_MODELS=SVR,D1PAIR_ORDER=reverse jobs/py.slurm \
+#     d1_train.py run T2 @I 4 ::: d1_train.py run LOSO @I 4 ::: d1_train.py run LODO @I 4 ::: d1_train.py run T1 @I 4

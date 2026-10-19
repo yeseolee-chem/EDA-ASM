@@ -249,11 +249,51 @@ def grid_cells(model):
     raise KeyError(model)
 
 
+def _svr_one(Dtr, Dte, ytr_s, yte, sy, gd, gm, c, e):
+    """one SVR grid cell on one inner fold (same fit and score as _svr_cell, finer parallel unit)."""
+    return _svr_cell(Dtr, Dte, ytr_s, yte, sy, gd, gm, [c], [e])[0]
+
+
+_MMDIR = []
+
+
+def mm(arrs):
+    """write arrays to .npy files in the current temp folder and reopen them as read-only np.memmap: joblib then sends
+    workers a file reference instead of hashing and dumping each large distance matrix for every task (same values)."""
+    out = []
+    for a in arrs:
+        f = os.path.join(_MMDIR[-1], f"m{len(os.listdir(_MMDIR[-1]))}.npy")
+        np.save(f, a)
+        out.append(np.load(f, mmap_mode="r"))
+    return tuple(out)
+
+
 def tune_grid(u, tr):
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"), prefix="d1m_") as d:
+        _MMDIR.append(d)
+        try:
+            return _tune_grid(u, tr)
+        finally:
+            _MMDIR.pop()
+
+
+def _tune_grid(u, tr):
     """inner GroupKFold(4) MAE of every grid cell -> (cells, mean MAE per cell, per-fold MAEs)."""
     from joblib import Parallel, delayed
     cells = grid_cells(u["model"])
     per_fold = []
+    if u["model"] == "SVR":
+        # load balance: one parallel task per (inner fold, grid cell) = 4 x 768 SVR fits (identical fits / scores to
+        # _svr_cell; the per-gamma-pair grouping left most workers idle behind the slow large-C cells)
+        folds = []
+        for itr, ite in inner_folds(tr):
+            sc, (zd, zm, ys, _), (td, tm) = prep(itr, ite, u)
+            folds.append((mm(dist3(zd, zm, zd, zm)), mm(dist3(td, tm, zd, zm)), ys, target_y(u, ite), sc.sy))
+        res = Parallel(n_jobs=N_JOBS, max_nbytes="1M")(
+            delayed(_svr_one)(*folds[k][:5], c["gamma_delta"], c["gamma_xbar"], c["C"], c["epsilon"])
+            for k in range(len(folds)) for c in cells)
+        pf = np.asarray(res, float).reshape(len(folds), len(cells))
+        return cells, pf.mean(axis=0), pf
     for itr, ite in inner_folds(tr):
         sc, (zd, zm, ys, _), (td, tm) = prep(itr, ite, u)
         yte = target_y(u, ite)
@@ -262,7 +302,7 @@ def tune_grid(u, tr):
             per_fold.append([float(np.mean(np.abs(Ridge(alpha=c["alpha"], fit_intercept=False).fit(zd, ys).predict(td) * sc.sy
                                                   - yte))) for c in cells])
         elif u["model"] in ("KRR", "SVR"):
-            Dtr, Dte = dist3(zd, zm, zd, zm), dist3(td, tm, zd, zm)
+            Dtr, Dte = mm(dist3(zd, zm, zd, zm)), mm(dist3(td, tm, zd, zm))
             gg = [(gd, gm) for gd in C.GAMMAS for gm in C.GAMMAS]
             if u["model"] == "KRR":
                 al = C.grid_values("KRR_rbf")["alpha"]
@@ -541,6 +581,8 @@ def cmd_run(group, i, n):
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     us = unit_list(group)[i::n]
+    if os.environ.get("D1PAIR_ORDER") == "reverse":       # helper job: same slice from the other end (cache skips done units)
+        us = us[::-1]
     workers = int(os.environ.get("D1PAIR_WORKERS", "1"))
     print(f"[M {group} {i}/{n}] {len(us)} units, {workers} workers x n_jobs {N_JOBS}; {versions()}", flush=True)
     stop = []
