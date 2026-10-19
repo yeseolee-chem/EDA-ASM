@@ -80,8 +80,9 @@ def cmd_run(i, n):
 
 
 def cmd_infra():
-    """recovery rows whose ladder had an ORCA run that died in orca_util before any cycle (MPI start-up, not
-    chemistry): marker / result.json / attempts.json moved to g1_rec_infra/<rid>.<n>/, so `run` repeats the same ladder;
+    """recovery rows hit by infrastructure, not chemistry: an ORCA run that died in orca_util before any cycle (MPI
+    start-up), or any ORCA / xtb output reporting a failed write (GPFS quota full on 2026-10-19). Their
+    marker / result.json / attempts.json are moved to g1_rec_infra/<rid>.<n>/, so `run` repeats the same ladder;
     r6_recover.orca_run reuses every normally terminated step and reruns the aborted one."""
     rx()
     dest = C.SCRATCH / "g1_rec_infra"
@@ -92,12 +93,13 @@ def cmd_infra():
         if not marks:
             continue
         bad = []
-        for out in d.rglob("*.out"):
-            if out.parent.name.startswith("ref"):
-                continue
+        for out in list(d.rglob("*.out")) + list(d.rglob("*.err")):
             t = out.read_text(errors="replace")
-            if "error termination in orca_util" in t and "OPTIMIZATION CYCLE" not in t:
-                bad.append(str(out.relative_to(d)))
+            if out.suffix == ".out" and not out.parent.name.startswith("ref") and \
+                    "error termination in orca_util" in t and "OPTIMIZATION CYCLE" not in t:
+                bad.append(f"mpi_startup:{out.relative_to(d)}")
+            elif any(s in t for s in ("Failed to write", "Disk quota exceeded", "No space left")):
+                bad.append(f"write_failure:{out.relative_to(d)}")   # GPFS quota full 2026-10-19 ~11:08-13:00
         if not bad:
             continue
         k = len(list(dest.glob(f"{d.name}.*")))
