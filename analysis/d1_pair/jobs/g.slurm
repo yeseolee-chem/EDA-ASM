@@ -9,6 +9,7 @@
 # Array use: an argument '@I' is replaced by $SLURM_ARRAY_TASK_ID.
 set -uo pipefail
 source "$SLURM_SUBMIT_DIR/jobs/env.sh"
+if [ "${D1PAIR_PHASE:-G}" = F ] && [ "${PYENV:-reactot}" != venv5 ]; then echo "STOP: D1PAIR_PHASE=F needs PYENV=venv5 (tblite 0.7.0)"; exit 3; fi
 source "$SLURM_SUBMIT_DIR/jobs/g_env.sh"
 cmd=()
 run() { echo "=== ${cmd[*]}  $(date '+%F %T')"; "$PY" "${cmd[@]}"; rc=$?; echo "=== exit $rc $(date '+%F %T')"; return $rc; }

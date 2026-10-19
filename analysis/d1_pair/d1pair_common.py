@@ -163,9 +163,21 @@ G2_MAX_FAIL = 87                        # G-2: > 87 (1 %) failures = STOP
 G_N_CHECK_D0 = 5                        # G-0 D0 rxns (seed SEED, from rev 6 R_feat)
 G_REF_FAIL_STOP = 16                    # >= 16 of the 157 reference reactions failing = STOP (> 10 %)
 CORE_LOSS_STOP = 0.5                    # a core losing more than half of its reference pairs = STOP
+# G STOP user decision 2026-10-19: 5 of 157 references stay failed after the R_plan ladders; these two cores lose every
+# reference pair and are accepted (44 evaluation cores; they become anchor-only cores, always training in T1)
+CORE_LOSS_ACCEPTED = ("azomethine ylide/A", "carbonyl ylide/A")
+CORE_LOSS_DECISION = "continue with 44 evaluation cores; azomethine ylide/A and carbonyl ylide/A lost all reference pairs (user 2026-10-19)"
+# A_feat user decision 2026-10-19: appendix E rerun on the feature rows with the surviving reference pairs (P_feat) as its
+# pairs file -> families whose reference has no features become anchor families (literal §2-5)
+AFEAT_DECISION = "appendix E rerun on feature rows with P_feat as pairs file; reference-less families become anchor families (user 2026-10-19)"
 F0_N_CHECK = 20                         # F-0 D0 rxns (seed SEED, rev 6 R_feat minus rxn 4994)
 F0_TOL = 1e-8                           # F-0: every block but B1
 F0_TOL_B1 = 1e-6                        # F-0: B1 (tblite)
+# F-0 user decision 2026-10-19: the first F-0 run (job 1024435) had B1 max 0.0 and every other block 0 or ~6.3e-10
+# (one unit in xtb's last printed energy digit, 1e-12 Eh), except B5 scan_curv_Eint of rxn 371 = 2.5e-7 (the same
+# last digit / h^2 = 0.0025): accepted as a pass, recorded as a deviation
+F0_DECISION = "accept: last-printed-digit xtb energy differences (max non-B1 2.5e-7 in scan_curv_Eint) (user 2026-10-19)"
+F0_ACCEPT_MAX = 2.5e-7 * 1.0001         # the accepted maximum (a larger difference is still a STOP)
 # gate F0-1: representative 5-fold CV MAE <= 1.2 x the rev 6 appendix test MAE (barrier: rev 6 B OUR-O KRR,
 # c_ghost: rev 6 main NN-4)
 F0_REF_MAE = {"d1": 1.70, "d2": 1.25, "elst": 3.55, "pauli": 6.45, "oi": 3.98, "disp": 0.470, "cpcm": 1.54,

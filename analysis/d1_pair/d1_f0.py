@@ -233,7 +233,7 @@ def cmd_fit(i, n):
     sklearn GridSearchCV n_jobs = D1PAIR_NJOBS."""
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
-    only = [m for m in os.environ.get("D1PAIR_F0_MODELS", "").split(",") if m]     # e.g. NN2,NN4 (job split only)
+    only = [m for m in os.environ.get("D1PAIR_F0_MODELS", "").split("+") if m]     # e.g. NN2+NN4 (sbatch --export splits at commas)
     us = [u for u in unit_list() if not only or u["model"] in only][i::n]
     workers = int(os.environ.get("D1PAIR_WORKERS", "1"))
     print(f"[f0 fit {i}/{n}] {len(us)} units, {workers} workers, n_jobs {N_JOBS}, versions {versions()}", flush=True)
@@ -291,7 +291,9 @@ def cmd_predict(i, n):
             print(f"STOP: {uname(u)} not fitted", file=sys.stderr); return 3
         pp = pred_path(u)
         pj = pp.with_suffix(".json")
-        if pp.is_file() and pj.is_file() and json.loads(pj.read_text()).get("x_d1_sha256") == xsha:
+        if pp.is_file() and pj.is_file() and json.loads(pj.read_text()).get("x_d1_sha256") == xsha \
+                and json.loads(pj.read_text()).get("unit_fingerprint") == fp \
+                and json.loads(pj.read_text()).get("model_sha256") == rec.get("model_sha256"):
             print(f"  {uname(u)}: cached", flush=True); continue
         t0 = time.time()
         if u["model"].startswith("NN"):
@@ -303,7 +305,8 @@ def cmd_predict(i, n):
             yhat, rid, extra = m.predict(Xd1.to_numpy(float)), [int(r) for r in Xd1.index], {}
         df = pd.DataFrame(dict(rxn_id=rid, target=u["target"], model=u["model"], yhat=yhat))
         C.write_atomic(pp, lambda t: df.to_parquet(t, index=False))
-        C.write_json_safe(pp.with_suffix(".json"), dict(x_d1_sha256=xsha, n=len(df), seconds=time.time() - t0, **extra))
+        C.write_json_safe(pp.with_suffix(".json"), dict(x_d1_sha256=xsha, unit_fingerprint=fp, model_sha256=rec.get("model_sha256"),
+                                                        n=len(df), seconds=time.time() - t0, **extra))
         print(f"  {uname(u)}: {len(df)} D1 predictions ({time.time() - t0:.0f} s)", flush=True)
     return 0
 
@@ -314,7 +317,7 @@ def cmd_collect():
     for u in unit_list():
         pp = pred_path(u)
         meta = json.loads(pp.with_suffix(".json").read_text()) if pp.with_suffix(".json").is_file() else {}
-        if meta.get("x_d1_sha256") != xsha:
+        if meta.get("x_d1_sha256") != xsha or meta.get("unit_fingerprint") != fingerprint(u):
             print(f"STOP: {pp.name} missing or made from another X182_d1", file=sys.stderr); return 3
         parts.append(pd.read_parquet(pp))
     df = pd.concat(parts, ignore_index=True)

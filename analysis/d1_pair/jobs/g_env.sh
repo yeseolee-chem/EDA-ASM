@@ -2,7 +2,9 @@
 # Values = d1_g1.g_env() (d1_g1.check_env exits 3 on any difference) + the ORCA / MPI / xtb settings of rev 4 r4_env.sh.
 S=$D1PAIR_SCRATCH
 export ESPLEY_LABELS=$S/G/labels_d1_g.json ESPLEY_PROF=$S/prof ESPLEY_SMILES=$S/G/smiles_d1.csv ESPLEY_META=$S/G/input_meta_d1.csv
-export ESPLEY_PARTITION=label G1_ROOT=$S/g1 G1_ROOT_REV4=$S/g1 G1_ROOT_R6=$S/g1_rec G2_ROOT=$S/g2_unused
+# D1PAIR_PHASE=F (features): G1_ROOT = g1_final (first attempt or recovered folder per rxn); G (default): the first attempt
+if [ "${D1PAIR_PHASE:-G}" = F ]; then G1R=$S/g1_final; else G1R=$S/g1; fi
+export ESPLEY_PARTITION=label G1_ROOT=$G1R G1_ROOT_REV4=$S/g1 G1_ROOT_R6=$S/g1_rec G2_ROOT=$S/g2_unused
 export ESPLEY_OUT=$S/xtb R5_SCRATCH=$S/r5 R6_SCRATCH=$S/r6 R4_SCRATCH=$S/r4 D1_SNAPSHOT=$S/d1_snapshot_d573111e
 # Si entries for the rev 4-6 element tables (user decision 2026-10-19; site_si/sitecustomize.py)
 export D1PAIR_ESP_DIR=$(cd "$CODE/../espley_xtb_repro" && pwd) PYTHONPATH=$CODE/site_si PYTHONDONTWRITEBYTECODE=1

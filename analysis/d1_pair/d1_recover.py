@@ -2,6 +2,7 @@
 """d1_recover.py — D1PAIR §7-4: rev 6 Phase R ladders (results_rev6/R_plan.md) on the D1 G1 failures.
 
   python d1_recover.py run <i> <n>    # slice i of n of the first-attempt failures (references -> anchors -> job_id)
+  python d1_recover.py infra          # reset rows whose ladder had an ORCA MPI start-up abort (rerun the same ladder)
   python d1_recover.py summary        # results/G_attempts.csv, G_by_reason.csv, G_rows.csv, G_report.json (exit 3 = STOP)
                                       # + $D1PAIR_SCRATCH/g1_final/<rxn_id> -> the g1 or g1_rec folder of every G1 row
 
@@ -75,6 +76,41 @@ def cmd_run(i, n):
         for k, f in enumerate(futs):
             rid, st = f.result()
             print(f"[{k + 1}/{len(futs)}] rxn {rid}: {st}  ({(time.time() - t0) / 60:.1f} min)", flush=True)
+    return 0
+
+
+def cmd_infra():
+    """recovery rows whose ladder had an ORCA run that died in orca_util before any cycle (MPI start-up, not
+    chemistry): marker / result.json / attempts.json moved to g1_rec_infra/<rid>.<n>/, so `run` repeats the same ladder;
+    r6_recover.orca_run reuses every normally terminated step and reruns the aborted one."""
+    rx()
+    dest = C.SCRATCH / "g1_rec_infra"
+    C.assert_write_ok(dest)
+    rows = []
+    for d in sorted(C.G1_ROOT_D1R.iterdir()):
+        marks = list(d.glob(".fail_*"))
+        if not marks:
+            continue
+        bad = []
+        for out in d.rglob("*.out"):
+            if out.parent.name.startswith("ref"):
+                continue
+            t = out.read_text(errors="replace")
+            if "error termination in orca_util" in t and "OPTIMIZATION CYCLE" not in t:
+                bad.append(str(out.relative_to(d)))
+        if not bad:
+            continue
+        k = len(list(dest.glob(f"{d.name}.*")))
+        tgt = dest / f"{d.name}.{k}"
+        tgt.mkdir(parents=True)
+        for f in marks + [d / "result.json", d / "attempts.json"]:
+            if f.exists():
+                os.replace(f, tgt / f.name)
+        rows.append(dict(rxn_id=int(d.name), aborted_runs=";".join(bad), moved_to=str(tgt), time=time.strftime("%Y-%m-%dT%H:%M:%S")))
+    f = C.RES / "G_infra_retry_rec.csv"
+    old = pd.read_csv(f) if f.is_file() else pd.DataFrame()
+    C.write_atomic(f, lambda t: pd.concat([old, pd.DataFrame(rows)], ignore_index=True).to_csv(t, index=False))
+    print(f"[rec infra] {len(rows)} rows reset for a rerun of the same ladder: {[r['rxn_id'] for r in rows]}")
     return 0
 
 
@@ -160,7 +196,10 @@ def cmd_summary():
                                      p90_abs=float(a.quantile(0.9)) if len(v) else None,
                                      max_abs=float(a.max()) if len(v) else None)
     rep["stop_ref_fail"] = ref_fail >= C.G_REF_FAIL_STOP
-    rep["stop_core_loss"] = bool(core_loss.max() > C.CORE_LOSS_STOP)
+    over = sorted(c for c, v in core_loss.items() if v > C.CORE_LOSS_STOP)
+    rep["cores_losing_over_half"] = over
+    rep["core_loss_user_decision"] = C.CORE_LOSS_DECISION if set(over) & set(C.CORE_LOSS_ACCEPTED) else None
+    rep["stop_core_loss"] = bool(set(over) - set(C.CORE_LOSS_ACCEPTED))
     rep["stop"] = bool(bad_setting or bad_hdr or missing or lmf or rep["stop_ref_fail"] or rep["stop_core_loss"])
     # g1_final: one folder per G1 row (features read here)
     C.assert_write_ok(C.G1_ROOT_D1F)
@@ -181,6 +220,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["run"]:
         sys.exit(cmd_run(int(a[1]), int(a[2])))
+    if a[:1] == ["infra"]:
+        sys.exit(cmd_infra())
     if a[:1] == ["summary"]:
         sys.exit(cmd_summary())
     raise SystemExit(__doc__)

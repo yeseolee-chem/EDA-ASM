@@ -5,6 +5,7 @@
   python d1_g1.py g0              # G-0: 5 D0 rxns through the adapter path vs their rev 4 inputs (exit 3 = STOP)
   python d1_g1.py run <i> <n>     # slice i of n of the G1 targets (run order of results/G_targets.csv)
   python d1_g1.py summary         # first-attempt summary -> results/G_g1_summary.csv / .json
+  python d1_g1.py infra           # move rows whose ORCA died in orca_util before any cycle (MPI start-up) for a rerun
 
 What the adapter provides (the code reads them through its environment variables; jobs/g_env.sh sets them):
   ESPLEY_PROF   $D1PAIR_SCRATCH/prof/<rxn_id> -> <D1_JOBS>/<job_id>   (label ts_file / rel1_file / rel2_file are relative)
@@ -60,8 +61,9 @@ ENV_RE = re.compile(r"os\.environ(?:\.get|\.setdefault)?\(\s*[\"']([A-Z0-9_]+)[\
 def g_env():
     """the environment of the D1 G / F jobs (jobs/g_env.sh exports exactly these)."""
     s = C.SCRATCH
+    g1 = C.G1_ROOT_D1F if os.environ.get("D1PAIR_PHASE", "G") == "F" else C.G1_ROOT_D1    # features read g1_final
     return {"ESPLEY_LABELS": str(C.D1G_LABELS), "ESPLEY_PROF": str(C.PROF_D1), "ESPLEY_SMILES": str(C.D1G_SMILES),
-            "ESPLEY_META": str(C.D1G_META), "ESPLEY_PARTITION": "label", "G1_ROOT": str(C.G1_ROOT_D1),
+            "ESPLEY_META": str(C.D1G_META), "ESPLEY_PARTITION": "label", "G1_ROOT": str(g1),
             "G1_ROOT_REV4": str(C.G1_ROOT_D1), "G1_ROOT_R6": str(C.G1_ROOT_D1R), "G2_ROOT": str(s / "g2_unused"),
             "ESPLEY_OUT": str(s / "xtb"), "R5_SCRATCH": str(s / "r5"), "R6_SCRATCH": str(s / "r6"),
             "R4_SCRATCH": str(s / "r4"), "D1_SNAPSHOT": str(SNAP)}
@@ -388,6 +390,36 @@ def cmd_run(i, n):
     return 0
 
 
+def cmd_infra():
+    """first-attempt rows whose ORCA died in orca_util before any optimisation cycle (MPI start-up, not chemistry):
+    their folders are moved to g1_infra/<rid>.<n> (kept) so that `run` redoes them with the same g1_geom.process."""
+    check_env()
+    rows = []
+    dest = C.SCRATCH / "g1_infra"
+    C.assert_write_ok(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    for lab in targets_ok():
+        rid = int(lab["rxn_id"])
+        d = C.G1_ROOT_D1 / str(rid)
+        out = d / "work" / "ts.out"
+        if not (d / ".fail_orca_not_terminated").is_file() or not out.is_file():
+            continue
+        t = out.read_text(errors="replace")
+        if "error termination in orca_util" in t and "GEOMETRY OPTIMIZATION CYCLE" not in t:
+            k = len(list(dest.glob(f"{rid}.*")))
+            tgt = dest / f"{rid}.{k}"
+            os.replace(d, tgt)
+            rows.append(dict(rxn_id=rid, moved_to=str(tgt), host=json.loads((tgt / "result.json").read_text()).get("host"),
+                             time=time.strftime("%Y-%m-%dT%H:%M:%S")))
+    f = C.RES / "G_infra_retry.csv"
+    old = pd.read_csv(f) if f.is_file() else pd.DataFrame()
+    df = pd.concat([old, pd.DataFrame(rows)], ignore_index=True)
+    C.write_atomic(f, lambda t: df.to_csv(t, index=False))
+    print(f"[infra] {len(rows)} rows moved for a rerun of the unchanged first attempt; hosts "
+          f"{pd.Series([r['host'] for r in rows]).value_counts().to_dict() if rows else {}}")
+    return 0
+
+
 def cmd_summary():
     check_env()
     import g1_geom as G
@@ -428,4 +460,6 @@ if __name__ == "__main__":
         sys.exit(cmd_run(int(a[1]), int(a[2])))
     if cmd == "summary":
         sys.exit(cmd_summary())
+    if cmd == "infra":
+        sys.exit(cmd_infra())
     raise SystemExit(__doc__)
