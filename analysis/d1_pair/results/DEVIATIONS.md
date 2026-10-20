@@ -12,3 +12,10 @@ A_feat 규칙, G1 MPI 시작 오류 재실행).
   `results/followup/K_report.json`), SVR helper를 T2 없이 다시 제출. 끝난 T2 unit은 scratch에 보관하고 분석하지 않는다
   (`M_report.json` `skipped_groups`, `E.json` `t2`, `figures/fig7_vblind_NOT_RUN.txt`).
 - 영향: 사양 §4의 보조 분할 T2, §5-4의 T2 대 T1 비교, fig7이 없다.
+
+## FU1 X STOP 처리 (2026-10-21, 추천 옵션)
+
+- `docs/specs/D1PAIR_FU1.md` X-3: 넓힌 XGB grid(XGBW)에서 unit의 90 %가 n_estimators 최댓값(4000)을 골라 STOP 조건(> 50 %)에 걸렸다.
+- 사양은 사용자에게 묻게 되어 있으나, 2026-10-20 사용자 지시("모든 선택은 추천 옵션으로 진행")에 따라 추천 옵션 **"더 넓히지 않고 X를
+  끝낸다"**를 택했다. 이유와 수치는 `results/followup/SUMMARY_FU1.md` X 절.
+- 영향: X는 탐색이며 PREREG 판정에 쓰이지 않는다. 더 넓힌 grid는 돌리지 않았다.

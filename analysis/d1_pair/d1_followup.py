@@ -478,6 +478,7 @@ def cmd_collect(kind):
 def lc_figure(cur, J):
     import d1_figures as Fg
     plt = Fg.style()
+    from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
     fig, axs = plt.subplots(2, 5, figsize=(C.FIG_W, C.FIG_W * 0.42), constrained_layout=True)
     for ax, t in zip(axs.ravel(), C.TARGETS):
         for m, col in (("KRR", Fg.SLOT[0]), ("XGB", Fg.SLOT[1])):
@@ -487,19 +488,22 @@ def lc_figure(cur, J):
         if t in TARGET_MAE:
             ax.axhline(TARGET_MAE[t], color=Fg.MUTED, lw=0.6)
         ax.set_xscale("log"); ax.set_title(Fg.TLAB[t])
+        # log-axis minor labels collide at this width -> fixed major ticks only
+        ax.xaxis.set_major_locator(FixedLocator([2000, 3000, 4000, 6000]))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1000:g}k"))
+        ax.xaxis.set_minor_locator(NullLocator())
     for ax in axs[1]:
         ax.set_xlabel("training pairs")
     for ax in axs[:, 0]:
         ax.set_ylabel("para ΔΔ MAE (kcal/mol)")
-    axs[0, -1].legend(loc="upper right")
+    h, lab = axs[0, 0].get_legend_handles_labels()
+    fig.legend(h, lab, loc="outside upper center", ncol=2, frameon=False)
     Fg.FIG = OUT
     cap = ("Learning curve (exploratory): arm C, T1, para test-pair MAE vs number of training pairs "
            "(training cores subsampled at 25 / 50 / 75 %, 3 repeats, band = range; 100 % = the T1 units). Gray line = the "
            "post-hoc target MAE (median bend size x 0.28); any extrapolation to it is for reference only.")
     C.write_atomic(OUT / "LC_curve_CAPTION.md", cap + "\n")
-    Fg.save(fig, "LC_curve", cur, "Learning curve (exploratory): arm C, T1, para test-pair MAE vs number of training pairs "
-            "(training cores subsampled at 25 / 50 / 75 %, 3 repeats, band = range; 100 % = the T1 units). Gray line = the "
-            "post-hoc target MAE (median bend size x 0.28); any extrapolation to it is for reference only.")
+    Fg.save(fig, "LC_curve", cur, cap)
     plt.close(fig)
 
 

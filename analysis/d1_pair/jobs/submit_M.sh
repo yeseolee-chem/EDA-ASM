@@ -33,3 +33,6 @@ echo "nn=$nn grid=$grid pb=$pb svr=$svr collect=$col eval=$ev"
 # waits for them:
 #   sbatch --array=0-3 ... -J d1m_svrH --export=...,D1PAIR_MODELS=SVR,D1PAIR_ORDER=reverse jobs/py.slurm \
 #     d1_train.py run T2 @I 4 ::: d1_train.py run LOSO @I 4 ::: d1_train.py run LODO @I 4 ::: d1_train.py run T1 @I 4
+# 2026-10-20 FU1: T2 stopped (SKIP_GROUPS); SVR helpers resubmitted without T2 (d1m_svrH2 1025589 / 1025616);
+# collect -> eval -> figures as one job (afterany on the remaining M jobs), job 1025641; LC 1025639, XW 1025640 (d1_followup.py)
+# 2026-10-20 09:3x: helpers 1025512_3 / 1025589 / 1025616 cancelled so LC / XW start; resubmitted at --nice=10000 as 1025642 (collect waits for it)

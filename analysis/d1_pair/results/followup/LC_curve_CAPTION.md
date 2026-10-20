@@ -1,0 +1,1 @@
+Learning curve (exploratory): arm C, T1, para test-pair MAE vs number of training pairs (training cores subsampled at 25 / 50 / 75 %, 3 repeats, band = range; 100 % = the T1 units). Gray line = the post-hoc target MAE (median bend size x 0.28); any extrapolation to it is for reference only.
