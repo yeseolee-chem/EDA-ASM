@@ -33,6 +33,11 @@ CH = list(HE.CH)                       # barrier + 8 channels (appendix D order)
 ARM_ORDER = ["null", "A", "B", "C", "P", "B_ref"]
 
 
+def TR_SKIP():
+    import d1_train as TR
+    return TR.skipped()
+
+
 # ================================================================ loading
 def load():
     S = pd.read_csv(C.RES / "S_folds.csv")
@@ -237,7 +242,8 @@ def secondary_tests(L, reps):
             add(f"{sp} {ser} pairs: B vs A", sp, t, ("A", "rep"), ("B", "rep"), extra=lambda d, s=ser: d.series == s)
         add("P_sens: B vs A", "T1", t, ("A", "rep"), ("B", "rep"), sset="P_sens")
         add("no D0 overlap: B vs A", "T1", t, ("A", "rep"), ("B", "rep"), sset="no_d0")
-        add("T2: B vs A", "T2", t, ("A", "rep"), ("B", "rep"))
+        if "T2" not in TR_SKIP():
+            add("T2: B vs A", "T2", t, ("A", "rep"), ("B", "rep"))
     # sum of the 9 channel predictions (each with its B representative) vs the direct barrier
     for sp in ("T1",):
         d = L[(L.split == sp) & (L.arm == "B") & L.rep & L.in_P_main & (L.ref_kind == "reference")]
@@ -345,6 +351,7 @@ def input_gate():
     if bad:
         print("Phase E input gate:\n  " + "\n  ".join(bad), file=sys.stderr); sys.exit(3)
     pre = SP.gate_prereg()
+    SP.gate_add1()                                         # FU1 Phase A addendum committed before any LODO / LOSO evaluation
     mrep = json.loads((C.RES / "M_report.json").read_text())
     f0r = json.loads((C.RES / "f0_report.json").read_text())
     if mrep.get("stop") or mrep.get("n_missing") or mrep.get("n_leak") or mrep.get("m1_fail"):
@@ -357,7 +364,9 @@ def input_gate():
     if f0r["representative"] != pre["f0_representative"]:
         bad.append("f0 representative differs from PREREG")
     os.environ.pop("D1PAIR_MODELS", None)
-    exp = {T.uname(u) for g in T.GROUPS for u in T.unit_list(g)}
+    if T.skipped() - T.ALLOWED_SKIP or mrep.get("skipped_groups") != sorted(T.skipped()):
+        bad.append(f"skip set {sorted(T.skipped())} not allowed or differs from M_report {mrep.get('skipped_groups')}")
+    exp = {T.uname(u) for g in T.GROUPS if g not in T.skipped() for u in T.unit_list(g)}   # FU1 K-3
     U = pd.read_csv(C.RES / "M_units.csv")
     got = {T.uname(dict(split=r.split, arm=r.arm, model=r.model, target=r.target, fold=int(r.fold))) for r in U.itertuples()}
     if got != exp:
@@ -373,28 +382,53 @@ def input_gate():
     return pre
 
 
+def add1_tests(L):
+    """FU1 A-2 (PREREG_D1PAIR_ADD1, confirmatory): LODO / LOSO x 9 targets, arm C representative vs arm B
+    representative, d = MAE(B) - MAE(C) on the P_main test pairs of the split, core cluster bootstrap 2,000
+    (seed 20261019), two-sided p, Holm over the 18; hypothesis B - C > 0."""
+    rows = []
+    for sp in ("LODO", "LOSO"):
+        for t in C.PRIMARY_TARGETS:
+            eb, ec, cores, fb, fc = paired(L, sp, t, ("B", "rep"), ("C", "rep"))
+            d, lo, hi, p = boot_diff(eb, ec, cores)
+            wins, nf = fold_wins(eb, ec, fc)
+            rows.append(dict(split=sp, target=t, n_pairs=len(eb), n_cores=len(np.unique(cores)),
+                             mae_B=float(np.mean(np.abs(eb))), mae_C=float(np.mean(np.abs(ec))), d_B_minus_C=d, ci_lo=lo,
+                             ci_hi=hi, p=p, folds_C_lower=wins, n_folds=nf))
+    T = pd.DataFrame(rows)
+    T["p_holm"] = C.holm(T.p.to_numpy())
+    T["C_better_confirmed"] = (T.p_holm < C.ALPHA) & (T.ci_lo > 0)
+    return T
+
+
 def cmd_all():
     pre = input_gate()
+    import d1_train as TR
+    skip = TR.skipped()
     S, M, U, f0r, f0 = load()
     L, reps = rep_table(S, M, U, f0, f0r)
     Mt = metrics(L, U)
     C.write_atomic(C.RES / "E_metrics.csv", lambda t: Mt.to_csv(t, index=False))
     Pt = primary_tests(L)
     C.write_atomic(C.RES / "E_primary_tests.csv", lambda t: Pt.to_csv(t, index=False))
+    At = add1_tests(L)
+    C.write_atomic(C.RES / "E_add1_tests.csv", lambda t: At.to_csv(t, index=False))
     St = secondary_tests(L, reps)
-    Bd = bends(L)
+    bsplits = ("T1",) if "T2" in skip else ("T1", "T2")          # FU1 K-3: no T2 analysis when T2 was stopped
+    Bd = bends(L, splits=bsplits)
     br1 = bend_rates(Bd, "T1")
-    hidden_v = sorted(S.loc[S.hidden_V_fam.astype(bool), "fam"].unique())
-    hidden_b = sorted(S.loc[S.hidden_bend_fam.astype(bool), "fam"].unique())
     t2 = []
-    for sp in ("T1", "T2"):
-        for name, fams in (("hidden_V", hidden_v), ("hidden_bend", hidden_b)):
-            for c, r in bend_rates(Bd, sp, fams).items():
-                mm = L[(L.split == sp) & (L.arm == "B") & L.rep & (L.target == c) & L.fam.isin(fams) & L.in_P_main]
-                t2.append(dict(comparison=f"T2 vs T1 {name}", split=sp, target=c, n_fam=r["n_fam"], sens=r["sens"],
-                               sens_ci_lo=r["sens_ci"][0], sens_ci_hi=r["sens_ci"][1], fpr=r["fpr"], V_sens=r["V_sens"],
-                               V_sens_ci_lo=r["V_sens_ci"][0], V_sens_ci_hi=r["V_sens_ci"][1], n_V_dft=r["n_V_dft"],
-                               mae_x=mae((mm.yhat - mm.y).to_numpy(float)), n_pairs=len(mm)))
+    if "T2" not in skip:
+        hidden_v = sorted(S.loc[S.hidden_V_fam.astype(bool), "fam"].unique())
+        hidden_b = sorted(S.loc[S.hidden_bend_fam.astype(bool), "fam"].unique())
+        for sp in ("T1", "T2"):
+            for name, fams in (("hidden_V", hidden_v), ("hidden_bend", hidden_b)):
+                for c, r in bend_rates(Bd, sp, fams).items():
+                    mm = L[(L.split == sp) & (L.arm == "B") & L.rep & (L.target == c) & L.fam.isin(fams) & L.in_P_main]
+                    t2.append(dict(comparison=f"T2 vs T1 {name}", split=sp, target=c, n_fam=r["n_fam"], sens=r["sens"],
+                                   sens_ci_lo=r["sens_ci"][0], sens_ci_hi=r["sens_ci"][1], fpr=r["fpr"], V_sens=r["V_sens"],
+                                   V_sens_ci_lo=r["V_sens_ci"][0], V_sens_ci_hi=r["V_sens_ci"][1], n_V_dft=r["n_V_dft"],
+                                   mae_x=mae((mm.yhat - mm.y).to_numpy(float)), n_pairs=len(mm)))
     St = pd.concat([St, pd.DataFrame(t2)], ignore_index=True)
     C.write_atomic(C.RES / "E_secondary_tests.csv", lambda t: St.to_csv(t, index=False))
     C.write_atomic(C.RES / "E_bends.csv", lambda t: Bd.to_csv(t, index=False))
@@ -404,19 +438,19 @@ def cmd_all():
                       {f"{sp}|{a}|{t}": m for (sp, a, t), m in sorted(reps.items())} | {f"f0|{t}": m for t, m in f0r["representative"].items()})
     Fl = data_flow(S)
     C.write_atomic(C.RES / "E_data_flow.csv", lambda t: Fl.to_csv(t, index=False))
-    import d1_split as SP
-    pre = json.loads(SP.PREREG_JSON.read_text())
     E = dict(inputs_sha256={str(p): C.sha256(p) for p in (C.RES / "M_predictions.parquet", C.RES / "M_units.csv",
                                                           C.RES / "S_folds.csv", C.RES / "F_pairs.csv", C.RES / "f0_d1.parquet")},
-             prereg_inputs_sha256=pre["inputs_sha256"], bend_rates_T1=br1,
+             prereg_inputs_sha256=pre["inputs_sha256"], prereg_git_head=pre.get("git_head"), bend_rates_T1=br1,
              gates={k: json.loads((C.RES / f).read_text()).get("stop") for k, f in
                     (("P", "P_report.json"), ("P4", "P4_report.json"), ("G_prep", "G_prep_report.json"), ("G0", "G0_report.json"),
                      ("G", "G_report.json"), ("F", "F_report.json"), ("F0chk", "F0_report.json"), ("f0", "f0_report.json"),
                      ("S", "S_report.json"), ("M", "M_report.json"))},
              n_test_P_main_T1=int(L[(L.split == "T1") & (L.arm == "null") & (L.target == "barrier") & L.in_P_main
-                                    & (L.ref_kind == "reference")].shape[0]))
+                                    & (L.ref_kind == "reference")].shape[0]),
+             t2="stopped by user decision 2026-10-20 (FU1 F1)" if "T2" in skip else "run",
+             add1_tests="E_add1_tests.csv (PREREG_D1PAIR_ADD1 A-2, confirmatory, Holm over 18)")
     C.write_json_safe(C.RES / "E.json", E)
-    print(Pt.to_string()); print(Sg.to_string())
+    print(Pt.to_string()); print(At.to_string()); print(Sg.to_string())
     return 0
 
 

@@ -52,6 +52,15 @@ import d1pair_common as C  # noqa: E402
 CODE_VERSION = "d1pair-train-1"
 M_DIR = C.SCRATCH / "M"
 UNITS = M_DIR / "units"
+SKIP_FILE = M_DIR / "SKIP_GROUPS"          # one group name per line; user decision 2026-10-20 (FU1 F1): T2
+
+
+ALLOWED_SKIP = frozenset({"T2"})               # FU1 D-1: only T2 may be skipped
+
+
+def skipped():
+    return set(SKIP_FILE.read_text().split()) if SKIP_FILE.is_file() else set()
+
 N_JOBS = int(os.environ.get("D1PAIR_NJOBS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
 GROUPS = ("T1", "LODO", "LOSO", "T2", "PB")
 GCOL = {"T1": "core", "T2": "core", "LODO": "dipole", "LOSO": "skeleton"}
@@ -568,6 +577,8 @@ def run_unit(u):
 
 
 def _worker(u):
+    if u["group"] in skipped():                          # FU1 K-1: queued units of a skipped group never start
+        return uname(u), "skipped", 0.0
     t0 = time.time()
     try:
         return uname(u), run_unit(u), time.time() - t0
@@ -576,6 +587,9 @@ def _worker(u):
 
 
 def cmd_run(group, i, n):
+    if group in skipped():
+        print(f"[M {group}] skipped (SKIP_GROUPS, user 2026-10-20)", flush=True)
+        return 0
     import d1_split as SP
     SP.gate_prereg()
     import multiprocessing as mp
@@ -608,8 +622,16 @@ def cmd_run(group, i, n):
 
 def cmd_collect():
     S = data()[0]
+    skip = skipped()                                     # FU1 K-3: skipped groups are neither expected nor collected
+    if skip - ALLOWED_SKIP:
+        print(f"STOP: SKIP_GROUPS lists {sorted(skip - ALLOWED_SKIP)} (only T2 may be skipped, FU1 D-1)", file=sys.stderr)
+        return 3
+    import d1_split as SP
+    SP.gate_add1()                                       # FU1 Phase A: the addendum is committed before LODO / LOSO scores are pooled
     recs, parts, missing = [], [], []
     for g in GROUPS:
+        if g in skip:
+            continue
         for u in unit_list(g):
             f = UNITS / g / f"{uname(u)}.json"
             if not f.is_file():
@@ -617,6 +639,7 @@ def cmd_collect():
             rec = json.loads(f.read_text())
             recs.append({k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in rec.items() if k != "grid_mae"})
             parts.append(pd.read_parquet(f.with_suffix(".parquet")))
+    n_skip_disk = {g: len(list((UNITS / g).glob("*.json"))) for g in sorted(skip)}
     U = pd.DataFrame(recs)
     Pm = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
     # tuning-cache audit (§9): no test pair_id inside any unit's training pairs
@@ -635,7 +658,10 @@ def cmd_collect():
                if len(U) else 0, leak=leak[:20], n_leak=len(leak), predictions=dict(n=len(Pm), sha256=C.sha256(C.RES / "M_predictions.parquet")),
                units=dict(n=len(U), sha256=C.sha256(C.RES / "M_units.csv")),
                antisym_max=float(max((json.loads(a)["max_sum"] for a in U.antisym.dropna()), default=0.0)) if len(U) else None,
-               antisym_zero_max=float(max((json.loads(a)["max_zero"] for a in U.antisym.dropna()), default=0.0)) if len(U) else None)
+               antisym_zero_max=float(max((json.loads(a)["max_zero"] for a in U.antisym.dropna()), default=0.0)) if len(U) else None,
+               skipped_groups=sorted(skip),
+               skipped_reason="user decision 2026-10-20 (D1PAIR_FU1 F1): T2 stopped, finished units kept but not analysed"
+               if skip else None, n_skipped_units_on_disk=n_skip_disk)
     rep["stop"] = bool(rep["n_leak"] or rep["m1_fail"])
     C.write_json_safe(C.RES / "M_report.json", rep)
     print(json.dumps(rep, indent=1, default=str))

@@ -246,7 +246,14 @@ def main():
     L, reps = E.rep_table(S, M, U, f0, f0r)
     Mt = pd.read_csv(C.RES / "E_metrics.csv")
     Bd = pd.read_csv(C.RES / "E_bends.csv")
-    fig1(plt, Mt); fig2(plt, L); fig3(plt, L); fig4(plt, Bd); fig5(plt, L); fig6(plt, Mt); fig7(plt, L, Bd)
+    fig1(plt, Mt); fig2(plt, L); fig3(plt, L); fig4(plt, Bd); fig5(plt, L); fig6(plt, Mt)
+    import d1_train as TR
+    if "T2" in TR.skipped():                               # FU1 K-3: T2 stopped by the user (2026-10-20)
+        FIG.mkdir(parents=True, exist_ok=True)
+        C.write_atomic(FIG / "fig7_vblind_NOT_RUN.txt", "fig7 (hidden-V, T2) not drawn: T2 was stopped by user decision "
+                       "2026-10-20 (D1PAIR_FU1 F1); finished T2 units are kept but not analysed.\n")
+    else:
+        fig7(plt, L, Bd)
     md = ["# D1PAIR figures — captions", ""] + [f"- **{k}**: {v}" for k, v in CAPTIONS.items()]
     C.write_atomic(FIG / "CAPTIONS.md", "\n".join(md) + "\n")
     print("\n".join(md))

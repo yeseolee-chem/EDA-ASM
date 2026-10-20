@@ -283,6 +283,37 @@ def gate_prereg():
     return dict(rec, git_head=git("rev-parse", "HEAD").stdout.strip())
 
 
+
+
+ADD1_MD = C.RES / "PREREG_D1PAIR_ADD1.md"
+ADD1_JSON = C.RES / "prereg_d1pair_add1.json"
+
+
+def gate_add1():
+    """FU1 Phase A gate (same method as gate_prereg): PREREG_D1PAIR_ADD1.md / prereg_d1pair_add1.json committed and
+    unchanged since the commit, and their content sha256 equal to the values recorded in the json; exits 3 otherwise."""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(HERE), *a], capture_output=True, text=True)
+    bad = []
+    for p in (ADD1_MD, ADD1_JSON):
+        if not p.is_file():
+            bad.append(f"{p.name} missing")
+        elif git("ls-files", "--error-unmatch", str(p)).returncode != 0:
+            bad.append(f"{p.name} not committed")
+        elif git("diff", "--quiet", "HEAD", "--", str(p)).returncode != 0:
+            bad.append(f"{p.name} modified since its commit")
+    rec = {}
+    if not bad:
+        rec = json.loads(ADD1_JSON.read_text())
+        if C.sha256(ADD1_MD) != rec.get("md_sha256"):
+            bad.append("PREREG_D1PAIR_ADD1.md sha256 differs from prereg_d1pair_add1.json md_sha256")
+    if bad:
+        print("PREREG ADD1 gate (FU1 Phase A: commit the addendum before L / X / LODO-LOSO evaluation):\n  " + "\n  ".join(bad),
+              file=sys.stderr)
+        sys.exit(3)
+    return dict(rec, git_head=git("rev-parse", "HEAD").stdout.strip())
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     fn = {"build": cmd_build, "prereg": cmd_prereg}.get(cmd)
