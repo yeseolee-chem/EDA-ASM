@@ -36,3 +36,8 @@ echo "nn=$nn grid=$grid pb=$pb svr=$svr collect=$col eval=$ev"
 # 2026-10-20 FU1: T2 stopped (SKIP_GROUPS); SVR helpers resubmitted without T2 (d1m_svrH2 1025589 / 1025616);
 # collect -> eval -> figures as one job (afterany on the remaining M jobs), job 1025641; LC 1025639, XW 1025640 (d1_followup.py)
 # 2026-10-20 09:3x: helpers 1025512_3 / 1025589 / 1025616 cancelled so LC / XW start; resubmitted at --nice=10000 as 1025642 (collect waits for it)
+# 2026-10-21 03:4x: after LC / XW freed 2 slots, 3rd SVR helpers for LOSO slices 2-3 starting mid-slice (D1PAIR_ORDER=middle)
+#   as d1m_svrM 1029020; job 1025641 (collect -> eval -> figures) also waits for it (afterany)
+# 2026-10-21 07:58: d1m_svrM 1029020_2-3 cancelled (user OK): after wrapping to the slice start they ran in the same
+#   direction as d1m_svr_2 / _3 and recomputed the same units (LOSO__B__SVR__d1__f6 / d1__f3 computed twice, identical
+#   values); cancelling frees 2 slots for FU2 with no loss of finished units (atomic writes, no partial files left)

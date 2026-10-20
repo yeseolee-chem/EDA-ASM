@@ -597,6 +597,8 @@ def cmd_run(group, i, n):
     us = unit_list(group)[i::n]
     if os.environ.get("D1PAIR_ORDER") == "reverse":       # helper job: same slice from the other end (cache skips done units)
         us = us[::-1]
+    elif os.environ.get("D1PAIR_ORDER") == "middle":      # 3rd helper: start mid-slice, wrap (ordering only; fingerprint unchanged)
+        us = us[len(us) // 2:] + us[:len(us) // 2]
     workers = int(os.environ.get("D1PAIR_WORKERS", "1"))
     print(f"[M {group} {i}/{n}] {len(us)} units, {workers} workers x n_jobs {N_JOBS}; {versions()}", flush=True)
     stop = []
