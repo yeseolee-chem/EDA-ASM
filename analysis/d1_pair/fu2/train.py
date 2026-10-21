@@ -50,6 +50,17 @@ class Data:
         self.trep = F.read_json(F.FU2_RES / "T_report.json")
         if self.trep.get("stop"):
             raise SystemExit("STOP: T_report.json stop")
+        # review (F1-F5 check): tokens must come from the current Q report / splits / token code version
+        import atoms as _atoms
+        import tokens as _tokens
+        qrep = F.read_json(F.FU2_RES / "Q_report.json")
+        self.q_report_sha, self.t_report_sha = F.sha256(F.FU2_RES / "Q_report.json"), F.sha256(F.FU2_RES / "T_report.json")
+        bad = [k for k, ok in (("token_version", self.trep.get("token_version") == _tokens.TOKEN_VERSION),
+                               ("q_report_sha256", self.trep.get("q_report_sha256") == self.q_report_sha),
+                               ("splits_sha256", self.trep.get("splits_sha256") == F.sha256(F.FU2_RES / "S_splits.json")),
+                               ("atom_version", qrep.get("atom_version") == _atoms.ATOM_VERSION)) if not ok]
+        if bad:
+            raise SystemExit(f"STOP: T_report.json does not match the current inputs: {bad} (rebuild Q gate -> T)")
         man = pd.read_csv(F.FU2_RES / "T_manifest.csv")
         if F.sha256(F.FU2_RES / "T_manifest.csv") != self.trep["manifest_sha256"]:
             raise SystemExit("STOP: T_manifest.csv changed after T_report.json")
@@ -86,6 +97,7 @@ class Data:
         if F.sha256(F.SPLITS / "pairs.parquet") != srep["pairs_sha256"]:
             raise SystemExit("STOP: splits/pairs.parquet changed after S_splits.json")
         self.srep = srep
+        self.s_splits_sha = F.sha256(F.FU2_RES / "S_splits.json")
         P["has_atoms"] = P.a_rxn.isin(set(self.row)) & P.b_rxn.isin(set(self.row))
         self.P = P.set_index("pair_id")
         self.y = self.P[[f"dd_{t}" for t in F.TARGETS]].to_numpy(float)
@@ -187,6 +199,11 @@ def seed_all(seed):
     torch.cuda.manual_seed_all(seed)
 
 
+def stop(msg):
+    print(f"STOP: {msg}", file=sys.stderr, flush=True)
+    sys.exit(3)
+
+
 def epoch_batches(rng, ra_all, rb_all, ytr, batch_size):
     """one epoch of training batches: random pair order + random (a, b) / (b, a) order per pair (M-1), y sign with it.
     ra_all / rb_all: reaction rows of the training pairs, ytr: their standardised y (torch [n, 10])."""
@@ -227,10 +244,14 @@ def fit(D, model_name, cell, variant, tr, val=None, seed=F.SEED, n_epochs=F.MAX_
         sched.step()
         rec = dict(epoch=ep, loss=float(np.mean([x[0] for x in tl])), l1=float(np.mean([x[1] for x in tl])),
                    pen=float(np.mean([x[2] for x in tl])), t=time.time() - t0)
+        if not all(np.isfinite([x for t3 in tl for x in t3])):
+            stop(f"training loss not finite at epoch {ep} ({model_name} {cell} {variant})")       # review F4
         if val is not None:
             yh = predict(model, T, D.ra[val], D.rb[val])
             mae_t = np.abs(yh - D.y[val] / std.sy).mean(0)
             rec["val"] = float(mae_t[F.I_PRIM].mean())
+            if not np.isfinite(rec["val"]):
+                stop(f"validation MAE not finite at epoch {ep} ({model_name} {cell} {variant})")
             if rec["val"] < best["val"]:
                 best = dict(val=rec["val"], epoch=ep, state=copy.deepcopy(model.state_dict()), per_target=mae_t.tolist())
         hist.append(rec)
@@ -238,7 +259,9 @@ def fit(D, model_name, cell, variant, tr, val=None, seed=F.SEED, n_epochs=F.MAX_
             print(f"    ep {ep} {rec}", flush=True)
         if val is not None and ep - best["epoch"] >= patience:
             break
-    if val is not None and best["state"] is not None:
+    if val is not None and (best["state"] is None or best["epoch"] < 1):
+        stop(f"no finite best epoch ({model_name} {cell} {variant})")                            # review F4
+    if val is not None:
         model.load_state_dict(best["state"])
     return dict(model=model, std=std, sy=std.sy, T=T, history=hist, best_epoch=best["epoch"] if val is not None else n_epochs,
                 best_val=best["val"], best_val_per_target=best["per_target"], seconds=time.time() - t0)
@@ -321,8 +344,15 @@ def uname(u):
     return f"{u['split']}__{u['model']}__{u['variant'].replace('+', '')}__f{u['fold']}"
 
 
+CODE_FILES = ("models.py", "train.py", "fu2_common.py", "tokens.py")          # review F3
+# hashed ONCE at import: the code this process actually runs (an edit during a 48 h job cannot relabel later units)
+CODE_SHA = {**{f: F.sha256(HERE / f) for f in CODE_FILES}, "d1pair_common.py": F.sha256(Path(C.__file__))}
+
+
 def fingerprint(D, u, sp):
-    return dict(q_report=F.sha256(F.FU2_RES / "Q_report.json"), t_report=F.sha256(F.FU2_RES / "T_report.json"),
+    return dict(q_report=D.q_report_sha, t_report=D.t_report_sha,
+                code_sha256=CODE_SHA,
+                s_splits=D.s_splits_sha,                                              # incl. the inner-fold lists (read at Data())
                 t_manifest=D.trep["manifest_sha256"], pairs=D.srep["pairs_sha256"], split_pairs=sp["pairs_sha"],
                 grid=Mo.GRID[u["model"]], code=F.CODE_VERSION, add2=F.sha256(ADD2_MD) if ADD2_MD.is_file() else None,
                 rules=dict(lam=F.LAMBDA, lr=F.LR, wd=F.WD, dropout=F.DROPOUT, batch=F.BATCH, max_epochs=F.MAX_EPOCHS,
@@ -366,7 +396,9 @@ def run_unit(D, u, root=F.UNITS, n_epochs=F.MAX_EPOCHS, seeds=F.FINAL_SEEDS, cel
         if not g["ok"]:
             print(f"STOP: gate M-1' failed ({name}, tuning cell {cell}): {g}", file=sys.stderr); sys.exit(3)
     best = min(range(len(tune)), key=lambda i: (tune[i]["val"], i))
-    cell, ep = tune[best]["cell"], max(1, tune[best]["best_epoch"])
+    cell, ep = tune[best]["cell"], tune[best]["best_epoch"]
+    if not (isinstance(ep, int) and ep >= 1 and np.isfinite(tune[best]["val"])):
+        stop(f"{name}: chosen cell {cell} has best_epoch {ep} / validation {tune[best]['val']}")   # review F4
     preds, finals = [], []
     te = sp["test"]
     for s in seeds:
@@ -436,6 +468,8 @@ def cmd_smoke():
         s, l = c["tune_epoch_seconds"]["smallest"], c["tune_epoch_seconds"]["largest"]
         ub += (s + l + (s + l)) * F.MAX_EPOCHS + 5 * l * 4 / 3 * F.MAX_EPOCHS
     out["phase_M_upper_bound_gpu_hours_T1"] = float(ub * 5 / 3600)                  # x 5 outer folds
+    out["provenance"] = dict(code_sha256=CODE_SHA, q_report=D.q_report_sha, t_report=D.t_report_sha,
+                             s_splits=D.s_splits_sha, code=F.CODE_VERSION)
     F.write_json(F.FU2_RES / "C_smoke.json", out)
     return 0 if ok else 3
 
@@ -453,6 +487,12 @@ def cmd_collect():
             print(f"STOP: {n}.parquet changed after its json", file=sys.stderr); return 3
         if not all(t["gate_M1"]["ok"] for t in r["tune"]) or not all(f["gate_M1"]["ok"] for f in r["final"]):
             print(f"STOP: gate M-1' failed in {n}", file=sys.stderr); return 3
+    D = Data()                                             # review: every unit must carry the CURRENT fingerprint
+    for n, r in recs.items():
+        u = r["unit"]
+        now = fingerprint(D, u, D.split(u["split"], u["fold"]))
+        if {k: v for k, v in r["fingerprint"].items() if k != "gpu"} != {k: v for k, v in now.items() if k != "gpu"}:   # collect may run on CPU
+            print(f"STOP: {n} was computed with other code / inputs than the current ones", file=sys.stderr); return 3
     pred = pd.concat([pd.read_parquet(F.UNITS / f"{n}.parquet") for n in names], ignore_index=True)
     F.write_atomic(F.FU2_RES / "M_predictions.parquet", lambda t: pred.to_parquet(t, index=False))
     rep = dict(n_units=len(names),

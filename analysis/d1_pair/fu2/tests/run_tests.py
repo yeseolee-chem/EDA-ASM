@@ -1,4 +1,5 @@
-"""FU2 Phase C — automatic code checks C1-C12 (docs/specs/D1PAIR_FU2.md, Phase C) -> results/fu2/C_tests.json.
+"""FU2 Phase C — automatic code checks C1-C12 (docs/specs/D1PAIR_FU2.md, Phase C) + C13 / C14 (user review F5)
+-> results/fu2/C_tests.json.
 
   python fu2/tests/run_tests.py         # GPU node (gpu4 / gpu5, RTX A6000), env_d1fu2 (fu2/jobs/fu2.slurm PYENV=fu2);
                                         # exit 3 if any check fails
@@ -157,6 +158,34 @@ def main():
         record(name, max(diffs.values()) <= TOL and all(v >= 0.9 for v in negs.values()), n_pairs=len(p30), tol=TOL,
                max_diff=diffs, negative_controls=negs or None)
 
+    # ---- C13 (review F5): changing only the global token changes A+G outputs and leaves A outputs unchanged
+    c13 = {}
+    rng13 = np.random.default_rng(F.SEED + 13)                      # own generator: C1-C12 keep their original samples
+    for (m, v), (mod, std) in models.items():
+        Tt = tens(std)
+        n_changed, dmax = 0, 0.0
+        for q in p30:
+            R, ia, ib = T.batch(Tt, np.array([D.ra[q]]), np.array([D.rb[q]]))
+            g0 = g_of(mod, R, ia, ib, std.sy)
+            Rg = clone_R(R)
+            Rg["glob"][ia] = R["glob"][ia] + torch.tensor(rng13.normal(size=R["glob"].shape[1]), dtype=R["glob"].dtype,
+                                                          device=R["glob"].device)
+            d = float(np.abs(g_of(mod, Rg, ia, ib, std.sy) - g0).max())
+            dmax = max(dmax, d)
+            n_changed += d > 1e-6
+        c13[f"{m}/{v}"] = dict(max_diff=dmax, changed_frac=n_changed / len(p30))
+    # the production global token = the reaction's own X182_d1 row (after un-standardising), not constant
+    X182 = pd.read_parquet(F.X182).set_index("rxn_id")[D.trep["glob_cols"]]
+    st0 = models[configs[0]][1]
+    Tg = tens(st0)["glob"].cpu().numpy() * st0.gsd + st0.gmu
+    rows10 = rng13.choice(len(D.rids), size=10, replace=False)
+    glob_rel = max(float(np.max(np.abs(Tg[k] - X182.loc[int(D.rids[k])].to_numpy(float))
+                                / np.maximum(1.0, np.abs(X182.loc[int(D.rids[k])].to_numpy(float))))) for k in rows10)
+    glob_nonconst = bool(np.ptp(Tg, axis=0).max() > 0)
+    record("C13", all((c13[f"{m}/A"]["max_diff"] <= 1e-12) and (c13[f"{m}/A+G"]["changed_frac"] >= 0.9) for m in Mo.MODELS)
+           and glob_rel <= 1e-9 and glob_nonconst, n_pairs=len(p30), tol_A=1e-12, AG_changed_threshold=1e-6, configs=c13,
+           glob_vs_X182_rel_maxdiff=glob_rel, glob_nonconstant=glob_nonconst)
+
     # ---- C6 label alignment: loader y = F_pairs dd (a - b) and the training batches' y signs follow the order swap
     Fp = pd.read_csv(C.RES / "F_pairs.csv").set_index("pair_id")
     q50 = rng.choice(tr, size=50, replace=False)
@@ -212,16 +241,43 @@ def main():
         r = real_fit(Dx, m, cell, v, trr, val, **kw)
         calls.append(dict(tr=np.asarray(trr).copy(), val=None if val is None else np.asarray(val).copy(),
                           std_pairs=r["std"].pair_rows.copy(), mu=r["std"].mu.copy(), sd=r["std"].sd.copy(),
-                          x=r["T"]["x"][:, :, -len(D.num_cols):].double().cpu().numpy()))
+                          x=r["T"]["x"][:, :, -len(D.num_cols):].double().cpu().numpy(),
+                          r=r if val is None else None))                      # final fit kept for C14
         return r
 
     T.fit = spy
+    c14 = {}
     try:
         with tempfile.TemporaryDirectory(dir=F.FU2_SCR) as tmp:
-            T.run_unit(D, dict(split="T1", model="AW", variant="A", fold=0), root=Path(tmp), n_epochs=1,
-                       seeds=F.FINAL_SEEDS[:1], cells=[0], log=None)
+            u14 = dict(split="T1", model="AW", variant="A", fold=0)
+            T.run_unit(D, u14, root=Path(tmp), n_epochs=1, seeds=F.FINAL_SEEDS[:1], cells=[0], log=None)
+            # ---- C14 (review F5): the unit parquet as written: y = F_pairs dd by pair_id, yhat = predict x s_y
+            pq = pd.read_parquet(Path(tmp) / f"{T.uname(u14)}.parquet")
+            rf = calls[-1]["r"]
+            yh = T.predict(rf["model"], rf["T"], D.ra[te], D.rb[te]) * rf["sy"]
+            want = pd.DataFrame(yh, columns=F.TARGETS, index=D.P.index[te]).stack().rename("want")
+            want.index.names = ["pair_id", "target"]
+            got = pq.set_index(["pair_id", "target"])
+            jn = got.join(want, how="outer")
+            dd = Fp[[f"dd_{t}" for t in F.TARGETS]].rename(columns=lambda c: c[3:]).stack().rename("dd")
+            dd.index.names = ["pair_id", "target"]
+            jn = jn.join(dd, how="left")
+            rk = pq.drop_duplicates("pair_id").set_index("pair_id").ref_kind
+            c14 = dict(n_rows=len(pq), n_expected=len(te) * len(F.TARGETS),
+                       rows_unmatched=int(jn.want.isna().sum() + jn.yhat.isna().sum() + jn.y.isna().sum() + jn.dd.isna().sum()),
+                       y_vs_F_pairs_maxdiff=float(np.abs(jn.y - jn.dd).max(skipna=False)),
+                       yhat_vs_predict_maxdiff=float(np.abs(jn.yhat - jn.want).max(skipna=False)),
+                       ref_kind_equal_F_pairs=bool((rk == Fp.loc[rk.index, "ref_kind"]).all()),
+                       unit_columns_ok=bool((pq.fold == u14["fold"]).all() and (pq.split == u14["split"]).all()
+                                            and (pq.model == u14["model"]).all() and (pq.variant == u14["variant"]).all()),
+                       seed_sd_zero_for_one_seed=bool((pq.yhat_seed_sd == 0).all()),
+                       pair_ids_equal_test=sorted(pq.pair_id.unique()) == sorted(D.P.index[te]))
     finally:
         T.fit = real_fit
+    record("C14", c14.get("n_rows") == c14.get("n_expected") and c14.get("rows_unmatched") == 0
+           and c14.get("y_vs_F_pairs_maxdiff", 1) <= 1e-12 and c14.get("yhat_vs_predict_maxdiff", 1) <= 1e-6
+           and c14.get("pair_ids_equal_test", False) and c14.get("ref_kind_equal_F_pairs", False)
+           and c14.get("unit_columns_ok", False), tol_y=1e-12, tol_yhat=1e-6, **c14)
     tune_call, final_call = calls[0], calls[1]
     stat_ok = []
     for cl, rows in ((tune_call, sp["inner_train"]), (final_call, sp["train"])):
@@ -389,13 +445,28 @@ def main():
             c12[f"{m}/{tag}"] = dict(train_mae=float(np.abs(yh - ys64).mean()), null_mae=float(np.abs(ys64).mean()),
                                      ratio=float(np.abs(yh - ys64).mean() / np.abs(ys64).mean()),
                                      ratio_per_target=dict(zip(F.TARGETS, per_t.round(4).tolist())), seconds=r["seconds"], **kw)
+    # information only (C12 diagnostic, user decision 2026-10-21): the same 64 pairs, AW larger width / longer schedule
+    old = F.MAX_EPOCHS
+    for tag, cell, ne, tmax in (("AW/info_L1W128_300ep", dict(n_layers=1, width=128), 300, old),
+                                ("AW/info_L1W64_1000ep_Tmax1000", dict(n_layers=1, width=64), 1000, 1000)):
+        try:
+            F.MAX_EPOCHS = tmax                                      # cosine horizon for this information run only
+            r = T.fit(D, "AW", cell, "A", q64, None, seed=F.SEED, n_epochs=ne, dropout=0.0, batch_size=8)
+        finally:
+            F.MAX_EPOCHS = old
+        yh = T.predict(r["model"], r["T"], D.ra[q64], D.rb[q64])
+        ys64 = D.y[q64] / r["sy"]
+        c12[tag] = dict(ratio=float(np.abs(yh - ys64).mean() / np.abs(ys64).mean()), cell=cell, epochs=ne, T_max=tmax,
+                        seconds=r["seconds"])
     record("C12", all(c12[f"{m}/gate"]["ratio"] < 0.05 for m in Mo.MODELS), threshold=0.05, runs=c12,
-           note="gating runs: dropout 0, batch 8 (300 epochs x 8 steps; the spec fixes neither); info runs: M-1 settings")
+           note="gating runs: dropout 0, batch 8 (300 epochs x 8 steps; the spec fixes neither); info runs: M-1 settings "
+                "and two AW diagnostics on the same 64 pairs (not gating)")
 
     allok = all(v["ok"] for v in RES.values())
     out = dict(all_pass=bool(allok), tests=RES, versions=T.versions(), device=str(T.DEV), seconds=time.time() - t_start,
                t_report_sha256=F.sha256(F.FU2_RES / "T_report.json"), q_report_sha256=F.sha256(F.FU2_RES / "Q_report.json"),
-               splits_sha256=F.sha256(F.FU2_RES / "S_splits.json"), code_version=F.CODE_VERSION)
+               splits_sha256=F.sha256(F.FU2_RES / "S_splits.json"), code_version=F.CODE_VERSION,
+               code_sha256={**T.CODE_SHA, "tests/run_tests.py": F.sha256(Path(__file__))})
     F.write_json(F.FU2_RES / "C_tests.json", out)
     print(json.dumps(dict(all_pass=allok, failed=[k for k, v in RES.items() if not v["ok"]]), indent=1))
     return 0 if allok else 3
