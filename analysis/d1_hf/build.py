@@ -22,7 +22,8 @@ g_enuc = the label test (d1_run gates.py audit_gate): the real atoms of the ORCA
 same geometry and is reported only, enuc_diff_frag*_eh); g_bond_ref |E(eda) - E(eda_frag1) - E(eda_frag2) - bond|
 <= 0.02 (label g_bond_reference); g_scf every SCF output has one 'SCF CONVERGED AFTER' and no non-convergence warning;
 g_setting (inputs and all outputs: method, basis, SMD water); orca (every output ORCA 6.1.1, GIT 487d211c).
-  python build.py check <list.csv>   # M checkpoint (spec 7): exit 3 if ok / finished < 90 %, any gate / table failure or
+  python build.py gate_prev          # exit 3 if any results/M_checks/*.json stopped (run before each M batch)
+  python build.py check <list.csv> [geom]   # M checkpoint (spec 7): exit 3 if ok / finished < 90 %, any gate / table failure or
                                      #   any ORCA version / hash mismatch among the listed reactions
 """
 from __future__ import annotations
@@ -207,11 +208,11 @@ def cmd_all(lst=None):
     return 0
 
 
-def cmd_check(lst):
+def cmd_check(lst, geom="dft"):
     """spec 7 checkpoint over the listed reactions (dft): ok / finished >= 90 %, no gate_fail / table / parse failure,
     every finished output ORCA 6.1.1 + GIT 487d211c; exit 3 otherwise (report in results/M_checks/<list>.json)."""
     ids = sorted(set(pd.read_csv(lst, dtype=str).job_id))
-    rows = [parse_rxn(T, "dft") for T in ids]
+    rows = [parse_rxn(T, geom) for T in ids]
     st = pd.Series([r["status"] for r in rows]).value_counts().to_dict()
     fin = sum(v for k, v in st.items() if k not in ("not_done", "not_started"))
     n_ok = st.get("ok", 0)
@@ -228,6 +229,19 @@ def cmd_check(lst):
     H.write_json(H.RES / "M_checks" / f"{Path(lst).stem}.json", rep)
     print(json.dumps(rep, indent=1), flush=True)
     return 3 if stop else 0
+
+
+def cmd_gate_prev():
+    """spec 7 STOP across parallel batch chains: exit 3 if any finished batch check (results/M_checks/*.json) stopped,
+    so that no new batch starts after a failed checkpoint."""
+    bad = {}
+    for f in sorted((H.RES / "M_checks").glob("*.json")):
+        r = json.loads(f.read_text())
+        if r.get("stop"):
+            bad[f.name] = r["stop"]
+    print(json.dumps(dict(n_checks=len(list((H.RES / "M_checks").glob("*.json"))) if (H.RES / "M_checks").is_dir() else 0,
+                          stopped=bad), indent=1), flush=True)
+    return 3 if bad else 0
 
 
 def sel(group):
@@ -279,8 +293,10 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["all"]:
         sys.exit(cmd_all(a[1] if len(a) > 1 else None))
-    if a[:1] == ["check"] and len(a) == 2:
-        sys.exit(cmd_check(a[1]))
+    if a[:1] == ["check"] and len(a) in (2, 3):
+        sys.exit(cmd_check(a[1], a[2] if len(a) == 3 else "dft"))
+    if a[:1] == ["gate_prev"]:
+        sys.exit(cmd_gate_prev())
     if a[:1] == ["s1"]:
         sys.exit(cmd_s1())
     if a[:1] == ["s2"]:

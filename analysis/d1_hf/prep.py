@@ -7,6 +7,7 @@
   python prep.py report      # X-4: results/X_manifest.csv, results/X_report.json (exit 3 = STOP, spec 12 X)
   python prep.py smoke       # S selection -> results/S_select.csv; S-1 inputs $HF/inputs/<T>/orig1/ (orig, %pal 1)
   python prep.py pilot       # P selection -> results/P_sample.csv; G1 EDA inputs $HF/inputs/<T>/g1/eda.inp
+  python prep.py main        # M lists (spec 7): results/M_batches/{dft,g1}_bNN.csv (<= 1,000 each), all G1 inputs
 
 Sources (never modified): d1_pair/d1_jobs/<T>/source.txt names the bundle (nurion:<bundle>.tar = NURION_TARS/<bundle>.tar,
 member jobs/<T>/archive.tgz) or the UBAI folder (ubai:UBAI_JOBS/<T>/archive.tgz); inside archive.tgz the members
@@ -381,11 +382,47 @@ def cmd_pilot():
     return 0
 
 
+def batches(df, size=1000):
+    """size-balanced batches of <= size reactions: sorted by n_atoms, dealt round-robin."""
+    df = df.sort_values(["n_atoms", "job_id"]).reset_index(drop=True)
+    nb = int(np.ceil(len(df) / size)) if len(df) else 0
+    return [df.iloc[k::nb] for k in range(nb)]
+
+
+def cmd_main():
+    """Phase M (spec 7) lists: dft = every X-ok target without runs/dft/<T>/.done; g1 (user decision at P, taken as the
+    recommended option): the G1 EDA inputs of every X-ok target with a G1 structure (g1_input, same rules as the pilot)
+    and every such target without runs/g1/<T>/.done. Batches of <= 1,000 -> results/M_batches/{dft,g1}_bNN.csv."""
+    M = ok_manifest()
+    g1s = []
+    for r in M.itertuples():
+        f = H.INPUTS / r.job_id / "g1" / "eda.inp"
+        if f.is_file():
+            g1s.append("ok"); continue
+        txt, s = g1_input(r.job_id, r.rxn_id)
+        if txt is not None:
+            H.write_atomic(f, txt)
+        g1s.append(s)
+    M["g1"] = g1s
+    H.write_atomic(H.RES / "M_g1_inputs.csv", lambda t: M[["job_id", "rxn_id", "n_atoms", "g1"]].to_csv(t, index=False))
+    out = H.RES / "M_batches"
+    summ = {}
+    for geom, cand in (("dft", M), ("g1", M[M.g1 == "ok"])):
+        todo = cand[[not (H.RUNS / geom / T / ".done").is_file() for T in cand.job_id]]
+        for k, b in enumerate(batches(todo)):
+            H.write_atomic(out / f"{geom}_b{k:02d}.csv", lambda t, b=b: b[["job_id", "n_atoms"]].to_csv(t, index=False))
+        summ[geom] = dict(candidates=len(cand), todo=len(todo), n_batches=int(np.ceil(len(todo) / 1000)))
+    summ["g1_status"] = M.g1.value_counts().to_dict()
+    H.write_json(H.RES / "M_plan.json", summ)
+    print(json.dumps(summ, indent=1), flush=True)
+    return 0
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["run"]:
         sys.exit(cmd_run(int(a[1]) if len(a) > 1 else int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))))
-    cmds = {"report": cmd_report, "smoke": cmd_smoke, "pilot": cmd_pilot}
+    cmds = {"report": cmd_report, "smoke": cmd_smoke, "pilot": cmd_pilot, "main": cmd_main}
     if a[:1] and a[0] in cmds:
         sys.exit(cmds[a[0]]())
     raise SystemExit(__doc__)
