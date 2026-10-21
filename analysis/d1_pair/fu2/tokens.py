@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fu2_common as F  # noqa: E402
 
 C = F.C
-TOKEN_VERSION = "fu2-tokens-2"               # -2: built from fu2-atoms-2 (symmetry-corrected maps)
+TOKEN_VERSION = "fu2-tokens-3"               # -2: fu2-atoms-2 (symmetry-corrected maps); -3: fu2-atoms-3 (O(3) Kabsch)
 BIN_COLS = ["frag_B", "dip_a", "dip_mid", "dip_b", "dph_a", "dph_b"]
 NUM_BASE = ["bond_dist", "q_rel", "q_frag", "q_TS", "dq_dist", "dq_int", "v_rel", "v_frag", "v_TS", "dv_dist", "dv_int"]
 NUM_EXT = ["mu_abs", "f_plus", "f_minus"]

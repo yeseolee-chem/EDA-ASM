@@ -41,8 +41,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fu2_common as F  # noqa: E402
 
 C = F.C
-ATOM_VERSION = "fu2-atoms-2"                 # -2: symmetry-corrected heavy-atom maps (review F1)
+ATOM_VERSION = "fu2-atoms-3"   # -2: symmetry-corrected maps (review F1); -3: reflection-allowed Kabsch (user 2026-10-21)
 ATOM_VERSION_V1 = "fu2-atoms-1"
+OLD_VERSIONS = ("fu2-atoms-1", "fu2-atoms-2")        # converted by convert_v1 (sym_remap on the stored values, no xTB)
 REACT = ("dip_a", "dip_mid", "dip_b", "dph_a", "dph_b")
 MULLIKEN15 = ([f"mulliken_R_dip_{k}" for k in (0, 1, 2)] + [f"mulliken_R_dph_{k}" for k in (0, 1)]
               + [f"mulliken_TSdip_{k}" for k in (0, 1, 2)] + [f"mulliken_TSdph_{k}" for k in (0, 1)]
@@ -183,8 +184,8 @@ def mirror_diag(a):
 def sym_remap(a):
     """review F1: for each fragment, enumerate the automorphisms of the reactant heavy-atom graph (fragmenter.heavy_graph
     labels (element, nH)) that fix the reacting atoms (r1_dip for A, r2_dph for B), compose each with the stored heavy
-    map and keep the one with the lowest Kabsch RMSD between the TS-fragment heavy atoms and the mapped reactant heavy
-    atoms (ties within RMSD_TIE keep the stored map). H: owner rule as before (mean over the owned H of the -- possibly
+    map and keep the one with the lowest Kabsch RMSD (reflection allowed: min of proper / improper superposition; user
+    decision 2026-10-21) between the TS-fragment and mapped reactant heavy atoms (ties within RMSD_TIE keep the stored map). H: owner rule as before (mean over the owned H of the -- possibly
     changed -- mapped heavy atom; edge bijection within owner groups). Pure re-indexing of stored xTB values (no xTB).
     Returns the updated arrays + the fu2-atoms-1 values (q_rel_v1, v_rel_v1, rel_idx_v1) and diagnostics."""
     import fragmenter as fr
@@ -192,7 +193,11 @@ def sym_remap(a):
     zsym = {z: s for s, z in fr.Z.items()}
     n = int(a["n"])
     tsZ, tsP, frag = np.asarray(a["ts_Z"]), np.asarray(a["ts_pos"], dtype=float), np.asarray(a["frag"])
-    rel_idx_v1 = np.asarray(a["rel_idx"]).copy()
+    # the fu2-atoms-1 (VF2) map and values: stored as *_v1 in fu2-atoms-2 / -3 files, as the main fields in -1 files
+    v1 = "rel_idx_v1" in a
+    rel_idx_v1 = np.asarray(a["rel_idx_v1"] if v1 else a["rel_idx"]).copy()
+    q_rel_v1 = np.asarray(a["q_rel_v1"] if v1 else a["q_rel"], dtype=float).copy()
+    v_rel_v1 = np.asarray(a["v_rel_v1"] if v1 else a["v_rel"], dtype=float).copy()
     q_rel, v_rel, rel_idx = np.full(n, np.nan), np.full(n, np.nan), np.full(n, -1, dtype=np.int64)
     diag = {}
     for name, f, Zk, Pk, qk, vk, fixed in (("A", 0, "rel1_Z", "rel1_pos", "q_gs1", "v_gs1", a["r1_dip"]),
@@ -207,17 +212,26 @@ def sym_remap(a):
         hts = [i for i in idx if tsZ[i] != 1]
         m0 = {i: int(rel_idx_v1[i]) for i in hts}
         X = tsP[hts]
-        best_rmsd = kabsch_rmsd(X, rP[[m0[i] for i in hts]])
-        rmsd_v1, best, n_auto = best_rmsd, dict(m0), 0
+        Y0 = rP[[m0[i] for i in hts]]
+        rmsd_v1 = kabsch_rmsd(X, Y0)                           # proper-rotation RMSD of the VF2 map (as reported before)
+        # user decision 2026-10-21: reflection allowed (xTB values are invariant under reflection) -> candidate score =
+        # min(proper, improper) Kabsch RMSD; the proper-only choice is kept for the record (n_changed_vs_proper)
+        best_rmsd = min(rmsd_v1, kabsch_rmsd(X, Y0, True))
+        rmsd_v1_o3, best, n_auto = best_rmsd, dict(m0), 0
+        best_p_rmsd, best_p = rmsd_v1, dict(m0)
         nm = lambda p, q: p["lab"] == q["lab"] and p["fix"] == q["fix"]        # noqa: E731
         for sig in GraphMatcher(G, G, node_match=nm).isomorphisms_iter():
             n_auto += 1
             if n_auto > AUTO_MAX:
                 raise AutoLimit(f"{name}: more than {AUTO_MAX} automorphisms fixing the reacting atoms")
             cand = {i: int(sig[m0[i]]) for i in hts}
-            r = kabsch_rmsd(X, rP[[cand[i] for i in hts]])
+            Yc = rP[[cand[i] for i in hts]]
+            rp = kabsch_rmsd(X, Yc)
+            r = min(rp, kabsch_rmsd(X, Yc, True))
             if r < best_rmsd - RMSD_TIE:
                 best_rmsd, best = r, cand
+            if rp < best_p_rmsd - RMSD_TIE:
+                best_p_rmsd, best_p = rp, cand
         # H: TS owner within the fragment (TS geometry) -> mapped reactant heavy atom -> its owned H (reactant geometry)
         own_t = owners([zsym[int(z)] for z in tsZ], tsP, allowed=set(idx))
         by_t, by_r = {}, {}
@@ -235,8 +249,9 @@ def sym_remap(a):
                 q_rel[ht], v_rel[ht], rel_idx[ht] = np.mean(a[qk][hs_r]), np.mean(a[vk][hs_r]), hr
         if sorted(rel_idx[idx].tolist()) != list(range(len(rZ))):
             raise ValueError(f"h_map:{name}_not_a_bijection_after_sym_remap")
-        diag[name] = dict(n_auto=n_auto, rmsd_v1=rmsd_v1, rmsd_v2=best_rmsd,
-                          n_changed=int(sum(best[i] != m0[i] for i in hts)))
+        diag[name] = dict(n_auto=n_auto, rmsd_v1=rmsd_v1, rmsd_v1_o3=rmsd_v1_o3, rmsd_v2=best_rmsd,
+                          rmsd_proper_choice=best_p_rmsd, n_changed=int(sum(best[i] != m0[i] for i in hts)),
+                          n_changed_vs_proper=int(sum(best[i] != best_p[i] for i in hts)))
     # the covalent edges must not change (automorphisms preserve the reactant bonds)
     bonds = set()
     for f, Zk, Pk in ((0, "rel1_Z", "rel1_pos"), (1, "rel2_Z", "rel2_pos")):
@@ -247,13 +262,11 @@ def sym_remap(a):
             bonds.add(tuple(sorted((inv[int(u)], inv[int(v)]))))
     if bonds != {tuple(map(int, b)) for b in a["bonds"]}:
         raise ValueError("h_map:covalent_edges_changed_after_sym_remap")
-    return dict(q_rel=q_rel, v_rel=v_rel, rel_idx=rel_idx,
-                q_rel_v1=np.asarray(a["q_rel"], dtype=float).copy(), v_rel_v1=np.asarray(a["v_rel"], dtype=float).copy(),
-                rel_idx_v1=rel_idx_v1, n_auto=np.array([diag["A"]["n_auto"], diag["B"]["n_auto"]]),
-                rmsd_v1=np.array([diag["A"]["rmsd_v1"], diag["B"]["rmsd_v1"]]),
-                rmsd_v2=np.array([diag["A"]["rmsd_v2"], diag["B"]["rmsd_v2"]]),
-                n_changed=np.array([diag["A"]["n_changed"], diag["B"]["n_changed"]]),
-                atom_version=np.array([ATOM_VERSION]))
+    pair = lambda k: np.array([diag["A"][k], diag["B"][k]])  # noqa: E731
+    return dict(q_rel=q_rel, v_rel=v_rel, rel_idx=rel_idx, q_rel_v1=q_rel_v1, v_rel_v1=v_rel_v1, rel_idx_v1=rel_idx_v1,
+                n_auto=pair("n_auto"), rmsd_v1=pair("rmsd_v1"), rmsd_v1_o3=pair("rmsd_v1_o3"), rmsd_v2=pair("rmsd_v2"),
+                rmsd_proper_choice=pair("rmsd_proper_choice"), n_changed=pair("n_changed"),
+                n_changed_vs_proper=pair("n_changed_vs_proper"), atom_version=np.array([ATOM_VERSION]))
 
 
 def compute(rid):
@@ -402,7 +415,7 @@ def one(rid, root=None, convert_only=False):
     if ok.is_file():
         with np.load(ok) as z:
             ver = str(z["atom_version"][0])
-        if ver == ATOM_VERSION_V1:
+        if ver in OLD_VERSIONS:
             return rid, convert_v1(rid, root), time.time() - t0
     if convert_only:
         return rid, "skipped_no_v1_file", 0.0
@@ -491,7 +504,7 @@ def cmd_smoke(k=24):
         v1p = F.ATOMS / f"{rid}.npz"
         if v1p.is_file():
             b = dict(np.load(v1p))
-            if str(b["atom_version"][0]) == ATOM_VERSION_V1:
+            if str(b["atom_version"][0]) in OLD_VERSIONS:
                 b.update(sym_remap(b))
             same = all(np.array_equal(a[k], b[k]) for k in ("rel_idx", "q_rel", "v_rel", "n_changed"))
             conv = "same" if same else "DIFFERENT"
@@ -576,7 +589,9 @@ def cmd_gate():
             r["qc_dq_max"], r["qc_dv_max"] = float(dq.max()), float(dv.max())
             r["qc_n_auto_A"], r["qc_n_auto_B"] = int(a["n_auto"][0]), int(a["n_auto"][1])
             for k, nm in enumerate("AB"):
-                r[f"qc_rmsd_{nm}_v1"], r[f"qc_rmsd_{nm}_v2"] = float(a["rmsd_v1"][k]), float(a["rmsd_v2"][k])
+                r[f"qc_rmsd_{nm}_v1"], r[f"qc_rmsd_{nm}_v2"] = float(a["rmsd_v1_o3"][k]), float(a["rmsd_v2"][k])  # both O(3)
+                r[f"qc_rmsd_{nm}_v1_proper"] = float(a["rmsd_v1"][k])
+                r[f"qc_changed_vs_proper_{nm}"] = int(a["n_changed_vs_proper"][k])
             ch = a["rel_idx"] != a["rel_idx_v1"]                     # atoms whose MAPPING changed (heavy + H)
             r["qc_n_atoms_map_changed"] = int(ch.sum())
             r["qc_react_remapped"] = int((a["rel_idx"][a["react"]] != a["rel_idx_v1"][a["react"]]).sum())
@@ -642,6 +657,10 @@ def cmd_gate():
                       gain_A=dict(n_gt_0p01=int((gain > 0.01).sum()), n_gt_0p1=int((gain > 0.1).sum()),
                                   n_gt_0p5=int((gain > 0.5).sum()), median=float(np.median(gain)) if len(gain) else 0.0),
                       n_v2_gt_1A=int((v2 > 1.0).sum()), n_worse=int((v2 > v1 + 1e-12).sum()),
+                      v1_proper_rmsd=dict(median=float(okr[f"qc_rmsd_{nm}_v1_proper"].median()),
+                                          n_gt_1A=int((okr[f"qc_rmsd_{nm}_v1_proper"] > 1.0).sum())),
+                      vs_proper_rule=dict(n_fragments_differ=int((okr[f"qc_changed_vs_proper_{nm}"] > 0).sum()),
+                                          n_heavy_atoms_differ=int(okr[f"qc_changed_vs_proper_{nm}"].sum())),
                       mirror=dict(n_mirror_fit=int(mf.sum()), n_mirror_fit_with_symmetry=int((mf & (okr[f"qc_n_auto_{nm}"] > 1)).sum()),
                                   n_map_would_change_O3=int((okr[f"qc_O3_changed_{nm}"] > 0).sum()),
                                   dq_max_O3=float(okr[f"qc_O3_dq_max_{nm}"].max()),
@@ -657,19 +676,22 @@ def cmd_gate():
                       rmsd_heavy_A=rm["A"], rmsd_heavy_B=rm["B"],
                       n_auto_max=dict(A=int(okr.qc_n_auto_A.max()), B=int(okr.qc_n_auto_B.max())), auto_max=AUTO_MAX,
                       rule="automorphisms of the reactant heavy graph (fragmenter labels) fixing the reacting atoms; "
-                           "lowest Kabsch RMSD (heavy atoms, proper rotation) to the TS fragment; ties within 1e-6 A keep "
-                           "the stored map",
-                      mirror_diag=dict(note="diagnostic only (maps unchanged): mirror_fit = Kabsch with reflection allowed "
-                                            f"lowers the v2 RMSD by > {MIRROR_GAIN} A; O3 = the F1 rule with reflection "
-                                            "allowed (min over automorphisms x proper/improper)",
+                           "lowest Kabsch RMSD (heavy atoms) to the TS fragment with reflection allowed, i.e. min over "
+                           "proper / improper superposition (user decision 2026-10-21, fu2-atoms-3); ties within 1e-6 A "
+                           "keep the stored VF2 map. RMSDs v1 / v2 are both O(3); vs_proper_rule = the fu2-atoms-2 rule",
+                      mirror_diag=dict(note="self-check: mirror_diag recomputes the O(3) choice independently; "
+                                            "n_map_would_change_O3 must be 0. mirror_fit = the stored map superposes "
+                                            f"> {MIRROR_GAIN} A better with reflection (a mirror-image match)",
                                        abs_dq_rel_change_if_O3=qd(mirror_all)))
+    n_o3_mismatch = rm["A"]["mirror"]["n_map_would_change_O3"] + rm["B"]["mirror"]["n_map_would_change_O3"]
     rep["stop"] = bool(n_qa_fail > F.QA_MAX_FAIL or len(qb_bad) > 0 or rep["Q_c"]["z_mismatch_atoms"] > 0
-                       or rep["Q_c"]["react_atoms_remapped"] > 0)
+                       or rep["Q_c"]["react_atoms_remapped"] > 0 or n_o3_mismatch > 0)
     rep["stop_reason"] = ([f"Q-a: {n_qa_fail} > {F.QA_MAX_FAIL} reactions not reproduced"] if n_qa_fail > F.QA_MAX_FAIL else []) \
         + ([f"Q-b: {len(qb_bad)} reactions with fragment charge sum off or non-finite values"] if len(qb_bad) else []) \
         + ([f"Q-c: {rep['Q_c']['z_mismatch_atoms']} atoms map to a reactant atom of another element"]
            if rep["Q_c"]["z_mismatch_atoms"] else []) \
-        + ([f"Q-c: {rep['Q_c']['react_atoms_remapped']} reacting atoms remapped"] if rep["Q_c"]["react_atoms_remapped"] else [])
+        + ([f"Q-c: {rep['Q_c']['react_atoms_remapped']} reacting atoms remapped"] if rep["Q_c"]["react_atoms_remapped"] else []) \
+        + ([f"Q-c: mirror_diag disagrees with sym_remap in {n_o3_mismatch} fragments"] if n_o3_mismatch else [])
     F.write_json(F.FU2_RES / "Q_report.json", rep)
     print(json.dumps({k: v for k, v in rep.items() if k != "excluded"}, indent=1, default=str))
     return 3 if rep["stop"] else 0
