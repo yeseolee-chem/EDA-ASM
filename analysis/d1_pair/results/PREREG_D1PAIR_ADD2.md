@@ -21,6 +21,7 @@ Phase M 학습은 이 문서와 `prereg_d1pair_add2.json`이 commit된 뒤에만
 **코드:** commit `35313e3ae6282549a1e861933224cac39f802eda`(35313e3a, 사용자 승인). 아래 5개 파일은 json `inputs_sha256`에도 들어 있어 `gate_add2`가 매 학습 전에 확인한다.
 각 unit은 실제로 돌린 코드의 sha256을 지문(`code_sha256`, import 때 한 번 계산)에 남긴다. `train.py collect`는 모든 unit 지문을 collect 시점의 코드·입력과 비교해 다르면 STOP한다.
 Phase E는 모든 unit의 `code_sha256`이 아래 값과 같고 지문의 `add2`가 이 md의 sha256과 같은지 확인한다. 아니면 STOP이다.
+unit 지문은 파일 이름만 키로 쓴다(`models.py`, `train.py`, `fu2_common.py`, `tokens.py`, `d1pair_common.py`). 그래서 비교는 같은 값을 그 키로 적은 json `code_sha256_fingerprint_keys`와 한다.
 
 | 파일 (`analysis/d1_pair/`) | sha256 |
 |---|---|
