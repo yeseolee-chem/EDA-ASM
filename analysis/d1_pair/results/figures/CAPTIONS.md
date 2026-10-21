@@ -1,0 +1,8 @@
+# D1PAIR figures — captions
+
+- **fig1_mae**: Test-pair ΔΔ MAE (T1, P_main reference pairs, all outer folds pooled) of the representative model of each arm, overall and by X position. null = 0, A = f0 difference, B = f0 difference + g, C = g alone, P = one KRR on D0 + training-side D1 reactions.
+- **fig2_parity**: Parity of the arm B representative model on the para test pairs (T1, P_main), one panel per target; the gray line is y = x.
+- **fig3_hammett**: Hammett plots (y = −ΔΔ/1.3642, log k units, H at the origin) of six pre-selected para families: DFT points and the arm B representative predictions (T1 test pairs). The first family (nitrile oxide + para-X aryl alkene, skeleton C) is the same reaction type as the experimental V-shaped Hammett plot of nitrile oxide + para-X-phenylacetylene (ρ = −0.34 / +0.61; J. Chem. Soc. B 1967, doi:10.1039/J29670000867); the dipole and the solvent differ, so it is not a direct comparison.
+- **fig4_bends**: Agreement of the hinge (bend) call of appendix D between DFT and the arm B representative predictions on the T1 test para families: sensitivity (DFT bent, prediction bent) and false-positive rate (DFT straight, prediction bent), Clopper-Pearson 95 % intervals; gray lines = stage-2 thresholds (0.7, 0.1).
+- **fig5_r2fam**: Within-family R² (R²_fam, H included, log units) of the para test families, T1, arms A, B, C representative models; gray line = stage-1 threshold 0.5. Values below −1 are drawn at −1 (the CSV keeps them).
+- **fig6_lodo**: Arm B representative MAE on P_main test pairs: core 5-fold (T1) vs leave-one-dipole-out (LODO) and leave-one-skeleton-out (LOSO).

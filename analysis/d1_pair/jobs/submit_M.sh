@@ -41,3 +41,5 @@ echo "nn=$nn grid=$grid pb=$pb svr=$svr collect=$col eval=$ev"
 # 2026-10-21 07:58: d1m_svrM 1029020_2-3 cancelled (user OK): after wrapping to the slice start they ran in the same
 #   direction as d1m_svr_2 / _3 and recomputed the same units (LOSO__B__SVR__d1__f6 / d1__f3 computed twice, identical
 #   values); cancelling frees 2 slots for FU2 with no loss of finished units (atomic writes, no partial files left)
+# 2026-10-21 15:2x: d1m_svr_0 (1025350_0) cancelled (user OK): it and d1m_svrH3_0 were both computing the last unit
+#   LOSO__B__SVR__oi__f8 (svrH3_0 since 14:42, svr_0 since 15:14); identical result, collect 1025641 starts ~30 min earlier
