@@ -103,7 +103,7 @@ def targets():
 XYZ_LINE = re.compile(r"^\s*([A-Z][a-z]?)(?:\((\d)\))?\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s*$")
 
 
-def parse_inp(text):
+def parse_inp(text, atoms=True):
     """{bang: [tokens of the '!' lines], blocks: {name: [lines]}, frag: {FRAG1: str, ...}, charge, mult,
     atoms: [(element, tag or None, x, y, z)]}."""
     out = dict(bang=[], blocks={}, frag={}, charge=None, mult=None, atoms=[], pal=None)
@@ -130,7 +130,7 @@ def parse_inp(text):
                     for b in body[1:]:
                         k, _, v = b.partition(" ")
                         out["frag"][k] = v.strip().strip('"') if k in ("FRAG1", "FRAG2") else v.strip()
-        elif s.startswith("*") and "xyz" in s:
+        elif atoms and s.startswith("*") and "xyz" in s:
             t = s.split()
             out["charge"], out["mult"] = int(t[2]), int(t[3])
             i += 1
@@ -199,4 +199,4 @@ def eda_table(text):
         return None
     return [(m.group(1).strip(), float(m.group(2))) for m in RE_ROW.finditer(t[0])]
 RE_BASIS = re.compile(r"Your calculation utilizes the basis:\s*(\S+)")
-RE_METHOD = re.compile(r"^\s*(?:Density Functional|Ab initio Hamiltonian|Hartree-Fock)?\s*Method\s+\.\.\.\.\s+(\S+)", re.M)
+RE_METHOD = re.compile(r"Hamiltonian:\s*\n\s*(?:Density Functional|Ab initio Hamiltonian)\s+Method\s+\.+\s+(\S+)")

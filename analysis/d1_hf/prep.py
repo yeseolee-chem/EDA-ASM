@@ -314,6 +314,8 @@ def cmd_smoke():
         for c in H.CALCS:
             H.write_atomic(H.INPUTS / T / "orig1" / f"{c}.inp", pal1_text((H.INPUTS / T / "orig" / f"{c}.inp").read_text()))
     H.write_atomic(H.RES / "S_select.csv", lambda t: S.to_csv(t, index=False))
+    for g, f in (("S-1", "S1_list.csv"), ("S-2", "S2_list.csv")):
+        H.write_atomic(H.RES / f, lambda t, g=g: S[S.group == g][["job_id"]].to_csv(t, index=False))
     print(S.to_string(index=False), flush=True)
     return 0
 
