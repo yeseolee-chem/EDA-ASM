@@ -17,8 +17,13 @@ Formulas (Hartree column, x 627.5094740631; = label_true/scripts/stage3_parse.py
 A table row outside this list -> status eda_table_unexplained (spec 4: STOP at S).
 Gates: g1_asm |barrier - (d1 + d2 + eint_spe)| < 1e-6; g2_sum |sum6 - bond| <= 0.11 and g3_seam |(d1 + d2 + sum6 -
 barrier) - bsse_total| <= 0.11 (the label thresholds; the spec's 0.01 / 1e-3 are reported as g2_sum_spec / g3_seam_spec);
-g_enuc |ENuc(frag*_dist) - ENuc(eda_frag*)| <= 1e-6 Eh; g_setting (inputs and all outputs: method, basis, SMD water);
-orca (every output ORCA 6.1.1, GIT 487d211c).
+g_enuc = the label test (d1_run gates.py audit_gate): the real atoms of the ORCA-written eda_frag*.inp equal frag*_dist.inp
+(elements in order, <= 1e-6 A; ORCA rounds eda_frag coordinates to 7 decimals, so ENuc itself differs by ~1e-6 Eh for the
+same geometry and is reported only, enuc_diff_frag*_eh); g_bond_ref |E(eda) - E(eda_frag1) - E(eda_frag2) - bond|
+<= 0.02 (label g_bond_reference); g_scf every SCF output has one 'SCF CONVERGED AFTER' and no non-convergence warning;
+g_setting (inputs and all outputs: method, basis, SMD water); orca (every output ORCA 6.1.1, GIT 487d211c).
+  python build.py check <list.csv>   # M checkpoint (spec 7): exit 3 if ok / finished < 90 %, any gate / table failure or
+                                     #   any ORCA version / hash mismatch among the listed reactions
 """
 from __future__ import annotations
 
@@ -43,6 +48,22 @@ LEVEL = {"hf": dict(method="Hartree-Fock(GTOs)", basis="6-31G*", words=("HF", "6
 S1_KEYS = dict(d1="d1_kcal", d2="d2_kcal", elst="elst_dft", pauli="pauli_dft", oi="oi_dft", disp="disp_dft",
                cpcm="cpcm_dft", cds="cds_dft", barrier="barrier_kcal")
 S1_TOL = 0.01
+RE_FRAG_ATOM = re.compile(r"^\s*([A-Z][a-z]?)\s*(:?)\s*\((\d)\)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s*$", re.M)
+RE_SCF_BAD = re.compile(r"NOT FULLY CONVERGED|SCF NOT CONVERGED|did not converge", re.I)
+BOND_REF_TOL = 0.02                                                       # label config_run.yaml bond_ref_tol
+XYZ_TOL = 1e-6                                                            # A, = d1_run gates.py _same_geometry
+
+
+def frag_real_atoms(inp_text, k):
+    """real (non-ghost) atoms of an ORCA-written eda_frag<k>.inp ('F (1) x y z'; ghosts 'C :(2) x y z')."""
+    return [(m.group(1), float(m.group(4)), float(m.group(5)), float(m.group(6)))
+            for m in RE_FRAG_ATOM.finditer(inp_text) if not m.group(2) and int(m.group(3)) == k]
+
+
+def same_geom(a, b, tol=XYZ_TOL):
+    """elements in order and coordinates within tol (A)."""
+    return len(a) == len(b) > 0 and all(x[0] == y[0] for x, y in zip(a, b)) and \
+        float(np.abs(np.array([x[1:] for x in a]) - np.array([y[1:] for y in b])).max()) <= tol
 
 
 def outputs(geom):
@@ -131,7 +152,13 @@ def parse_rxn(T, geom, level="hf"):
                    **{f"e_{c}_eh": E[c] for c in H.CALCS[:4]})
         g.update(g1_asm=abs(bar - (d1 + d2 + eint)) < H.G1_TOL, g3_seam=abs(seam) <= H.G3_TOL,
                  g3_seam_spec=abs(seam) < H.G3_TOL_SPEC,
-                 g_enuc=all(abs(enuc[f"frag{k}_dist"] - enuc[f"eda_frag{k}"]) <= H.ENUC_TOL_EH for k in (1, 2)))
+                 g_enuc=all(inp[f"eda_frag{k}"] is not None and inp[f"frag{k}_dist"] is not None and
+                            same_geom(frag_real_atoms(inp[f"eda_frag{k}"], k),
+                                      [(a[0],) + a[2:] for a in H.parse_inp(inp[f"frag{k}_dist"])["atoms"]])
+                            for k in (1, 2)))
+        rec.update({f"enuc_diff_frag{k}_eh": enuc[f"frag{k}_dist"] - enuc[f"eda_frag{k}"] for k in (1, 2)})
+    g["g_bond_ref"] = abs(rec["bond_reference_residual"]) <= BOND_REF_TOL
+    g["g_scf"] = all(t.count("SCF CONVERGED AFTER") == 1 and not RE_SCF_BAD.search(t) for t in txt.values())
     g["g_setting"] = not setting
     g["orca"] = ver == {((H.ORCA_VERSION,), (H.ORCA_GIT,))}
     rec.update(gates=g, setting_problems=";".join(setting), orca_versions=sorted(map(str, ver)))
@@ -157,11 +184,13 @@ def cmd_all(lst=None):
     rows = []
     for geom in ("dft", "g1"):
         d = H.RUNS / geom
-        ids = sorted(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
-        if lst:
-            keep = set(pd.read_csv(lst, dtype=str).job_id)
-            ids = [T for T in ids if T in keep]
-        rows += [parse_rxn(T, geom) for T in ids]
+        have = set(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else set()
+        if geom == "dft":                                  # every target (a target without a folder = not_started)
+            ids = sorted(set(pd.read_csv(lst, dtype=str).job_id)) if lst else [t["job_id"] for t in H.targets()]
+        else:                                              # g1: the folders of G1 runs
+            ids = sorted(have & set(pd.read_csv(lst, dtype=str).job_id)) if lst else sorted(have)
+        rows += [parse_rxn(T, geom) if T in have else dict(job_id=T, geom=geom, level="hf", status="not_started",
+                                                         reason="") for T in ids]
     lab = {d["job_id"]: d for d in H.targets()}
     for r in rows:
         r["rxn_id"] = int(lab[r["job_id"]]["rxn_id"]) if r["job_id"] in lab else None
@@ -176,6 +205,29 @@ def cmd_all(lst=None):
                 labels_json_sha256=H.sha256(H.LABELS_JSON), parquet_sha256=H.sha256(H.RES / "labels_d1_hf.parquet"))
     print(json.dumps(summ, indent=1, default=str), flush=True)
     return 0
+
+
+def cmd_check(lst):
+    """spec 7 checkpoint over the listed reactions (dft): ok / finished >= 90 %, no gate_fail / table / parse failure,
+    every finished output ORCA 6.1.1 + GIT 487d211c; exit 3 otherwise (report in results/M_checks/<list>.json)."""
+    ids = sorted(set(pd.read_csv(lst, dtype=str).job_id))
+    rows = [parse_rxn(T, "dft") for T in ids]
+    st = pd.Series([r["status"] for r in rows]).value_counts().to_dict()
+    fin = sum(v for k, v in st.items() if k not in ("not_done", "not_started"))
+    n_ok = st.get("ok", 0)
+    bad_gate = [r["job_id"] for r in rows if r["status"] in ("gate_fail", "eda_table_unexplained", "parse_fail")]
+    bad_orca = [r["job_id"] for r in rows if r.get("gates") and not r["gates"].get("orca")]
+    stop = []
+    if fin and n_ok / fin < 0.90:
+        stop.append(f"ok {n_ok}/{fin} < 90 %")
+    if bad_gate:
+        stop.append(f"gate / table / parse failures: {bad_gate[:10]}")
+    if bad_orca:
+        stop.append(f"ORCA version / hash mismatch: {bad_orca[:10]}")
+    rep = dict(list=str(lst), n=len(ids), by_status=st, n_finished=fin, n_ok=n_ok, stop=stop)
+    H.write_json(H.RES / "M_checks" / f"{Path(lst).stem}.json", rep)
+    print(json.dumps(rep, indent=1), flush=True)
+    return 3 if stop else 0
 
 
 def sel(group):
@@ -227,6 +279,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["all"]:
         sys.exit(cmd_all(a[1] if len(a) > 1 else None))
+    if a[:1] == ["check"] and len(a) == 2:
+        sys.exit(cmd_check(a[1]))
     if a[:1] == ["s1"]:
         sys.exit(cmd_s1())
     if a[:1] == ["s2"]:

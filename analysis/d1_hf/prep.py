@@ -374,6 +374,8 @@ def cmd_pilot():
         st.append(s)
     P["g1"] = st
     H.write_atomic(H.RES / "P_sample.csv", lambda t: P.to_csv(t, index=False))
+    H.write_atomic(H.RES / "P_list.csv", lambda t: P[["job_id"]].to_csv(t, index=False))
+    H.write_atomic(H.RES / "P_g1_list.csv", lambda t: P[P.g1 == "ok"][["job_id"]].to_csv(t, index=False))
     print(f"[P] {len(P)} sampled ({(P.pick == 'stratum').sum()} stratum, {(P.pick == 'fill').sum()} fill, "
           f"{C.groupby(['dipole', 'skeleton']).ngroups} strata); G1: {P.g1.value_counts().to_dict()}", flush=True)
     return 0

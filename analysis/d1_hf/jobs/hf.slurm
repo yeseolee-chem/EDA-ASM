@@ -11,6 +11,7 @@
 set -uo pipefail
 cd "${SLURM_SUBMIT_DIR:?}"
 source jobs/hf_env.sh
+export D1HF_JOB_T0=$(date +%s)
 echo "[d1hf] host=$(hostname) cpus=${SLURM_CPUS_PER_TASK:-?} git=$(git rev-parse --short HEAD 2>/dev/null) $(python -V 2>&1) $(date '+%F %T')"
 cmd=()
 rc=0

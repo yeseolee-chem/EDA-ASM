@@ -34,9 +34,10 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hf_common as H  # noqa: E402
 
-RE_NOCONV = re.compile(r"SCF NOT CONVERGED|did not converge|NOT CONVERGED|error termination in SCF", re.I)
+RE_NOCONV = re.compile(r"SCF NOT CONVERGED|NOT FULLY CONVERGED|did not converge|error termination in SCF", re.I)
+RE_MAXITER = re.compile(r"Maximum # iterations\s+MaxIter\s+\.+\s+(\d+)")
 KEEP = ("inp", "out", "err")                     # copied back (gzip for out / err); everything else is dropped
-T0 = time.time()
+T0 = float(os.environ.get("D1HF_JOB_T0", time.time()))              # job start (hf.slurm), else process start
 STOP_AFTER_H = float(os.environ.get("D1HF_STOP_AFTER_H", "45"))      # do not start a reaction after this (48 h wall)
 
 
@@ -52,12 +53,23 @@ def src_dir(T, geom, level):
     return H.INPUTS / T / ("g1" if geom == "g1" else level)
 
 
-def out_ok(p):
-    return p.is_file() and H.terminated(H.read_text(p))
+def scf_names(calc):
+    return [calc] + ([f"eda_frag{k}" for k in (1, 2)] if calc == "eda" else [])
+
+
+def scf_good(text):
+    """terminated normally, one 'SCF CONVERGED AFTER', no non-convergence message."""
+    return H.terminated(text) and text.count("SCF CONVERGED AFTER") == 1 and not RE_NOCONV.search(text)
+
+
+def cached(dest, calc):
+    return all((dest / f"{n}.out.gz").is_file() and scf_good(H.read_text(dest / f"{n}.out.gz")) for n in scf_names(calc))
 
 
 def retry_text(txt, calc):
-    """spec 4 retry: SlowConv on the '!' line (and in the FRAG strings of eda) + '%scf MaxIter 500 end'."""
+    """spec 4 retry: SlowConv on the '!' line (and in the FRAG strings of eda) + '%scf MaxIter 500 end'. ORCA does not
+    copy the %scf block into the fragment inputs it writes for the EDA, so the EDA fragment SCFs get SlowConv only; the
+    MaxIter each SCF actually used is read from the outputs and written to attempts.tsv."""
     out = []
     for ln in txt.splitlines(keepends=True):
         s = ln.strip()
@@ -72,17 +84,16 @@ def retry_text(txt, calc):
 
 
 def orca(work, calc):
-    """one ORCA process (serial) in the work folder -> (terminated normally, wall seconds)."""
+    """one ORCA process (serial) in the work folder -> (return code, wall seconds)."""
     t = time.time()
     with open(work / f"{calc}.out", "w") as fo, open(work / f"{calc}.err", "w") as fe:
-        subprocess.run([str(H.ORCA_BIN), f"{calc}.inp"], cwd=work, stdout=fo, stderr=fe, env=os.environ.copy())
-    return H.terminated((work / f"{calc}.out").read_text(errors="replace")), time.time() - t
+        p = subprocess.run([str(H.ORCA_BIN), f"{calc}.inp"], cwd=work, stdout=fo, stderr=fe, env=os.environ.copy())
+    return p.returncode, time.time() - t
 
 
 def copy_back(work, dest, calc):
     """gzip <calc>.out / .err (and eda_frag*.out / .err) and copy the .inp files; atomic per file."""
-    names = [calc] + ([f"eda_frag{k}" for k in (1, 2)] if calc == "eda" else [])
-    for n in names:
+    for n in scf_names(calc):
         for ext in KEEP:
             p = work / f"{n}.{ext}"
             if not p.is_file():
@@ -102,11 +113,25 @@ def append_tsv(p, row, cols):
 
 
 def run_rxn(T, geom, level, root):
+    """one reaction; returns (T, status). Statuses: skip, failed_before, not_started, no_input, done, fail, killed,
+    error:<exception> (the last two leave no .fail, so a resubmission runs the reaction again)."""
+    try:
+        return _run_rxn(T, geom, level, root)
+    except Exception as e:                               # one reaction must not stop the pool
+        import traceback
+        print(f"  {T}: ERROR {type(e).__name__}: {e}\n{traceback.format_exc()}", flush=True)
+        return T, f"error:{type(e).__name__}"
+
+
+def _run_rxn(T, geom, level, root):
     dest = H.RUNS / run_name(geom, level) / T
     if (dest / ".done").is_file():
         return T, "skip"
     if (dest / ".fail").is_file() and os.environ.get("D1HF_RETRY_FAILED") != "1":
         return T, "failed_before"                       # spec 4: one retry only; a resubmission does not retry again
+    src = src_dir(T, geom, level)
+    if not all((src / f"{c}.inp").is_file() for c in calcs(geom)):
+        return T, "no_input"
     if time.time() - T0 > STOP_AFTER_H * 3600:
         return T, "not_started"
     dest.mkdir(parents=True, exist_ok=True)
@@ -116,12 +141,12 @@ def run_rxn(T, geom, level, root):
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
-    src = src_dir(T, geom, level)
     meta = dict(job_id=T, geom=geom, level=level, host=socket.gethostname(), slurm_job=os.environ.get("SLURM_JOB_ID"),
                 orca_bin=str(H.ORCA_BIN), calcs={})
+    cols = ["calc", "attempt", "change", "returncode", "ok", "scf_not_converged", "maxiter"]
     try:
         for c in calcs(geom):
-            if out_ok(dest / f"{c}.out.gz") and (c != "eda" or all(out_ok(dest / f"eda_frag{k}.out.gz") for k in (1, 2))):
+            if cached(dest, c):
                 meta["calcs"][c] = "cached"
                 continue
             txt = (src / f"{c}.inp").read_text()
@@ -129,28 +154,29 @@ def run_rxn(T, geom, level, root):
                 for p in work.glob(f"{c}*"):
                     p.unlink() if p.is_file() else shutil.rmtree(p)
                 (work / f"{c}.inp").write_text(txt)
-                ok, wall = orca(work, c)
-                out = (work / f"{c}.out").read_text(errors="replace")
-                if c == "eda":
-                    ok &= all((work / f"eda_frag{k}.out").is_file()
-                              and H.terminated((work / f"eda_frag{k}.out").read_text(errors="replace")) for k in (1, 2))
-                conv = bool(RE_NOCONV.search(out)) or (c == "eda" and any(
-                    (work / f"eda_frag{k}.out").is_file() and RE_NOCONV.search(
-                        (work / f"eda_frag{k}.out").read_text(errors="replace")) for k in (1, 2)))
-                append_tsv(dest / "timing.tsv", dict(calc=c, attempt=att, orca_seconds=H.run_seconds(out),
+                rc, wall = orca(work, c)
+                outs = {n: (work / f"{n}.out").read_text(errors="replace") if (work / f"{n}.out").is_file() else ""
+                        for n in scf_names(c)}
+                ok = all(scf_good(t) for t in outs.values())
+                conv = any(RE_NOCONV.search(t) for t in outs.values())
+                killed = rc < 0 or not outs[c].strip()
+                append_tsv(dest / "timing.tsv", dict(calc=c, attempt=att, orca_seconds=H.run_seconds(outs[c]),
                                                      wall_seconds=round(wall, 3), host=meta["host"]),
                            ["calc", "attempt", "orca_seconds", "wall_seconds", "host"])
-                append_tsv(dest / "attempts.tsv", dict(calc=c, attempt=att, change="none" if att == 1 else
-                                                       "SlowConv + %scf MaxIter 500 end", ok=ok,
-                                                       scf_not_converged=conv),
-                           ["calc", "attempt", "change", "ok", "scf_not_converged"])
+                append_tsv(dest / "attempts.tsv", dict(
+                    calc=c, attempt=att, change="none" if att == 1 else
+                    ("SlowConv (! line + FRAG strings) + %scf MaxIter 500 end (parent SCF only)" if c == "eda"
+                     else "SlowConv + %scf MaxIter 500 end"), returncode=rc, ok=ok, scf_not_converged=conv,
+                    maxiter=";".join(f"{n}:{','.join(RE_MAXITER.findall(t)) or '-'}" for n, t in outs.items())), cols)
                 if ok:
                     break
+                if killed:
+                    return T, "killed"
                 if att == 1 and conv:
                     txt = retry_text(txt, c)
                     continue
                 copy_back(work, dest / "failed", c)
-                H.write_atomic(dest / ".fail", f"{c}: " + ("scf_not_converged" if conv else "orca_error") +
+                H.write_atomic(dest / ".fail", f"{c}: " + ("scf_not_converged" if conv else f"orca_error rc={rc}") +
                                (" (after retry)" if att == 2 else "") + "\n")
                 return T, "fail"
             copy_back(work, dest, c)
@@ -181,7 +207,7 @@ def cmd_run(lst, geom, level, n, i=0, m=1):
             print(f"  {T}: {s}  ({sum(res.values())}/{len(ids)}, {time.time() - T0:.0f} s)", flush=True)
     shutil.rmtree(root, ignore_errors=True)
     print(f"[run] {res}", flush=True)
-    return 0 if not res.get("not_started") else 2
+    return 2 if res.get("not_started") or any(k.startswith(("error", "killed")) for k in res) else 0
 
 
 def cmd_status(geom, level):
