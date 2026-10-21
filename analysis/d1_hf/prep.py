@@ -7,6 +7,7 @@
   python prep.py report      # X-4: results/X_manifest.csv, results/X_report.json (exit 3 = STOP, spec 12 X)
   python prep.py smoke       # S selection -> results/S_select.csv; S-1 inputs $HF/inputs/<T>/orig1/ (orig, %pal 1)
   python prep.py pilot       # P selection -> results/P_sample.csv; G1 EDA inputs $HF/inputs/<T>/g1/eda.inp
+  python prep.py g1frag      # G1 fragment inputs (additional instruction 2): $HF/inputs/<T>/g1/frag*.inp
   python prep.py main        # M lists (spec 7): results/M_batches/{dft,g1}_bNN.csv (<= 1,000 each), all G1 inputs
 
 Sources (never modified): d1_pair/d1_jobs/<T>/source.txt names the bundle (nurion:<bundle>.tar = NURION_TARS/<bundle>.tar,
@@ -418,11 +419,69 @@ def cmd_main():
     return 0
 
 
+def replace_coords(text, atoms):
+    """the input with its coordinate lines replaced, in order, by atoms [(element, x, y, z)] (tags kept)."""
+    lines, k = [], 0
+    for ln in text.splitlines(keepends=True):
+        m = H.XYZ_LINE.match(ln)
+        if m and k < len(atoms):
+            el, x, y, z = atoms[k]
+            lab = f"{el}({m.group(2)})" if m.group(2) else el
+            lines.append(f"  {lab:<6}{x:16.8f}{y:14.8f}{z:14.8f}\n")
+            k += 1
+        else:
+            lines.append(ln)
+    if k != len(atoms):
+        raise ValueError("atom count")
+    return "".join(lines)
+
+
+def g1_frag_inputs(T, rxn_id):
+    """D1HF additional instruction 2 (2026-10-22): G1 fragment single points. frag<k>_dist = the G1 TS atoms of
+    fragment k (eda.inp (k) tags, TS index order); frag<k>_rel = g1_final/<rxn_id>/rel<k>.xyz (the G1 reactants the
+    D1PAIR features use; rel1 = dipole, rel2 = dipolarophile); method, charge, multiplicity and solvent = the DFT-TS HF
+    inputs, only the coordinates change. Element order must equal the DFT-TS HF input -> ({name: text} or None, status)."""
+    g = H.G1_FINAL / str(rxn_id)
+    if not ((g / ".done").is_file() and all((g / f).is_file() for f in ("ts.xyz", "rel1.xyz", "rel2.xyz"))):
+        return None, "no_g1"
+    G = H.read_xyz(g / "ts.xyz")
+    e = H.parse_inp((H.INPUTS / T / "hf" / "eda.inp").read_text())
+    if [a[0] for a in G] != [a[0] for a in e["atoms"]]:
+        return None, "g1_ts_order"
+    tags = [a[1] for a in e["atoms"]]
+    out = {}
+    for k in (1, 2):
+        for kind, atoms in (("dist", [G[i] for i in range(len(G)) if tags[i] == k]), ("rel", H.read_xyz(g / f"rel{k}.xyz"))):
+            src = (H.INPUTS / T / "hf" / f"frag{k}_{kind}.inp").read_text()
+            if [a[0] for a in H.parse_inp(src)["atoms"]] != [a[0] for a in atoms]:
+                return None, f"frag{k}_{kind}_order"
+            out[f"frag{k}_{kind}.inp"] = replace_coords(src, atoms)
+    return out, "ok"
+
+
+def cmd_g1frag():
+    """G1 fragment inputs for every target with a G1 EDA input -> $HF/inputs/<T>/g1/frag*.inp, results/M_g1frag_inputs.csv."""
+    M = ok_manifest().sort_values("job_id")
+    rows = []
+    for r in M.itertuples():
+        if not (H.INPUTS / r.job_id / "g1" / "eda.inp").is_file():
+            continue
+        out, s = g1_frag_inputs(r.job_id, r.rxn_id)
+        if out:
+            for n, txt in out.items():
+                H.write_atomic(H.INPUTS / r.job_id / "g1" / n, txt)
+        rows.append(dict(job_id=r.job_id, rxn_id=r.rxn_id, status=s))
+    D = pd.DataFrame(rows)
+    H.write_atomic(H.RES / "M_g1frag_inputs.csv", lambda t: D.to_csv(t, index=False))
+    print(f"[g1frag] {len(D)} G1 reactions: {D.status.value_counts().to_dict()}", flush=True)
+    return 0
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["run"]:
         sys.exit(cmd_run(int(a[1]) if len(a) > 1 else int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))))
-    cmds = {"report": cmd_report, "smoke": cmd_smoke, "pilot": cmd_pilot, "main": cmd_main}
+    cmds = {"report": cmd_report, "smoke": cmd_smoke, "pilot": cmd_pilot, "main": cmd_main, "g1frag": cmd_g1frag}
     if a[:1] and a[0] in cmds:
         sys.exit(cmds[a[0]]())
     raise SystemExit(__doc__)

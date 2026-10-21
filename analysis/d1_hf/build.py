@@ -67,8 +67,11 @@ def same_geom(a, b, tol=XYZ_TOL):
         float(np.abs(np.array([x[1:] for x in a]) - np.array([y[1:] for y in b])).max()) <= tol
 
 
-def outputs(geom):
-    return (list(H.CALCS) if geom == "dft" else ["eda"]) + ["eda_frag1", "eda_frag2"]
+def outputs(geom, T=None):
+    """outputs of a reaction: dft = the 5 calculations; g1 = the 5 when its G1 fragment inputs exist (additional
+    instruction 2), else the EDA only; + the two ORCA-written EDA fragment outputs."""
+    full = geom == "dft" or (T is not None and all((H.INPUTS / T / "g1" / f"{c}.inp").is_file() for c in H.CALCS))
+    return (list(H.CALCS) if full else ["eda"]) + ["eda_frag1", "eda_frag2"]
 
 
 def setting_ok(inp_text, out_text, kind, level):
@@ -109,8 +112,11 @@ def parse_rxn(T, geom, level="hf"):
         return dict(rec, status="fail", reason=(d / ".fail").read_text().strip())
     if not (d / ".done").is_file():
         return dict(rec, status="not_done", reason="")
-    txt = {c: H.read_text(d / f"{c}.out.gz") for c in outputs(geom)}
-    inp = {c: (d / f"{c}.inp").read_text() if (d / f"{c}.inp").is_file() else None for c in outputs(geom)}
+    want = outputs(geom, T)
+    if not all((d / f"{c}.out.gz").is_file() for c in want):
+        return dict(rec, status="incomplete", reason="missing " + ",".join(c for c in want if not (d / f"{c}.out.gz").is_file()))
+    txt = {c: H.read_text(d / f"{c}.out.gz") for c in want}
+    inp = {c: (d / f"{c}.inp").read_text() if (d / f"{c}.inp").is_file() else None for c in want}
     E, enuc, ver, setting = {}, {}, set(), []
     for c, t in txt.items():
         f = H.RE_FSPE.findall(t)
@@ -141,7 +147,7 @@ def parse_rxn(T, geom, level="hf"):
                bond_reference_residual=(E["eda"] - E["eda_frag1"] - E["eda_frag2"]) * H.KCAL - v["bond"],
                e_eda_eh=E["eda"], e_eda_frag1_eh=E["eda_frag1"], e_eda_frag2_eh=E["eda_frag2"])
     g = dict(g2_sum=abs(s6 - v["bond"]) <= H.G2_TOL, g2_sum_spec=abs(s6 - v["bond"]) < H.G2_TOL_SPEC)
-    if geom == "dft":
+    if "frag1_dist" in txt:                                   # dft, and g1 with its fragment single points
         d1 = (E["frag1_dist"] - E["frag1_rel"]) * H.KCAL
         d2 = (E["frag2_dist"] - E["frag2_rel"]) * H.KCAL
         eint = (E["eda"] - E["frag1_dist"] - E["frag2_dist"]) * H.KCAL
@@ -166,7 +172,7 @@ def parse_rxn(T, geom, level="hf"):
     tim = pd.read_csv(d / "timing.tsv", sep="\t") if (d / "timing.tsv").is_file() else pd.DataFrame()
     if len(tim):
         sec = tim.groupby("calc").wall_seconds.sum()                     # serial: wall = core time
-        rec.update({f"coreh_{c}": float(sec.get(c, np.nan)) / 3600 for c in (H.CALCS if geom == "dft" else ["eda"])})
+        rec.update({f"coreh_{c}": float(sec.get(c, np.nan)) / 3600 for c in want if c in H.CALCS})
         rec["coreh_total"] = float(sec.sum()) / 3600
         rec["n_attempts"] = int(len(tim))
     decide = [k for k in g if not k.endswith("_spec")]
@@ -214,7 +220,7 @@ def cmd_check(lst, geom="dft"):
     ids = sorted(set(pd.read_csv(lst, dtype=str).job_id))
     rows = [parse_rxn(T, geom) for T in ids]
     st = pd.Series([r["status"] for r in rows]).value_counts().to_dict()
-    fin = sum(v for k, v in st.items() if k not in ("not_done", "not_started"))
+    fin = sum(v for k, v in st.items() if k not in ("not_done", "not_started", "incomplete"))
     n_ok = st.get("ok", 0)
     bad_gate = [r["job_id"] for r in rows if r["status"] in ("gate_fail", "eda_table_unexplained", "parse_fail")]
     bad_orca = [r["job_id"] for r in rows if r.get("gates") and not r["gates"].get("orca")]

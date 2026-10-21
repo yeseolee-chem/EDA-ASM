@@ -45,12 +45,16 @@ def run_name(geom, level):
     return geom if level == "hf" else f"{geom}_{level}"
 
 
-def calcs(geom):
-    return H.CALCS if geom == "dft" else ("eda",)
-
-
 def src_dir(T, geom, level):
     return H.INPUTS / T / ("g1" if geom == "g1" else level)
+
+
+def calcs(geom, src=None):
+    """dft: the 5 calculations; g1: the 5 as well when the G1 fragment inputs exist (additional instruction 2,
+    2026-10-22: frag*_dist from the G1 TS, frag*_rel = the G1 reactants), else the EDA only."""
+    if geom == "dft" or (src is not None and all((src / f"{c}.inp").is_file() for c in H.CALCS)):
+        return H.CALCS
+    return ("eda",)
 
 
 def scf_names(calc):
@@ -125,12 +129,13 @@ def run_rxn(T, geom, level, root):
 
 def _run_rxn(T, geom, level, root):
     dest = H.RUNS / run_name(geom, level) / T
-    if (dest / ".done").is_file():
-        return T, "skip"
+    src = src_dir(T, geom, level)
+    todo = calcs(geom, src)
+    if (dest / ".done").is_file() and all(cached(dest, c) for c in todo):
+        return T, "skip"                                # a .done reaction missing calculations (G1 fragments) is filled
     if (dest / ".fail").is_file() and os.environ.get("D1HF_RETRY_FAILED") != "1":
         return T, "failed_before"                       # spec 4: one retry only; a resubmission does not retry again
-    src = src_dir(T, geom, level)
-    if not all((src / f"{c}.inp").is_file() for c in calcs(geom)):
+    if not all((src / f"{c}.inp").is_file() for c in todo):
         return T, "no_input"
     if time.time() - T0 > STOP_AFTER_H * 3600:
         return T, "not_started"
@@ -145,7 +150,7 @@ def _run_rxn(T, geom, level, root):
                 orca_bin=str(H.ORCA_BIN), calcs={})
     cols = ["calc", "attempt", "change", "returncode", "ok", "scf_not_converged", "maxiter"]
     try:
-        for c in calcs(geom):
+        for c in todo:
             if cached(dest, c):
                 meta["calcs"][c] = "cached"
                 continue

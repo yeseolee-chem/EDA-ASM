@@ -133,44 +133,54 @@ def band(m):
 
 def cmd_a():
     """Phase A (spec 8; descriptive, not pre-registered): D1PAIR P_main reference pairs (S_folds.csv + F_pairs.csv),
-    HF dd = HF(a_rxn) - HF(b_rxn) (DFT-TS HF values), truth = dd_<t>; per target truth = alpha + beta * HF dd fitted on
-    fold_T1 != k and applied to fold k (5 folds). Baseline: FU2 GNN-A+G on the same pairs (results/fu2/M_predictions)."""
+    HF dd = HF(a_rxn) - HF(b_rxn), truth = dd_<t>; per target truth = beta * HF dd WITHOUT intercept (additional
+    instruction 2, 2026-10-22: a pair with a = b must give 0), beta fitted on fold_T1 != k and applied to fold k
+    (5 folds). Two HF sources: geom dft (label structures) and geom g1 (G1 structures; d1 / d2 / barrier from the G1
+    fragment single points of additional instruction 2), each on the pairs whose two reactions have that value.
+    Baseline: FU2 GNN-A+G on the same pairs (results/fu2/M_predictions.parquet)."""
     S = pd.read_csv(D1PAIR_RES / "S_folds.csv")
     Fp = pd.read_csv(D1PAIR_RES / "F_pairs.csv", usecols=["pair_id"] + [f"dd_{t}" for t in A_TARGETS])
     S = S.merge(Fp, on="pair_id", validate="1:1")
     S = S[S.in_P_main & (S.ref_kind == "reference")].copy()
     L = pd.read_parquet(H.RES / "labels_d1_hf.parquet")
-    hf = L[L.geom == "dft"].set_index("rxn_id")
-    miss = sorted((set(S.a_rxn) | set(S.b_rxn)) - set(hf.index))
-    S = S[S.a_rxn.isin(hf.index) & S.b_rxn.isin(hf.index)]
     G = pd.read_parquet(D1PAIR_RES / "fu2" / "M_predictions.parquet")
     G = G[(G.model == "GNN") & (G.variant == "A+G")].set_index(["pair_id", "target"]).yhat
-    rows, summ = [], []
-    for t in A_TARGETS:
-        d = S[["pair_id", "fold_T1", "pos", "fam", "core"]].assign(
-            y=S[f"dd_{t}"].to_numpy(float), x=hf.loc[S.a_rxn, t].to_numpy(float) - hf.loc[S.b_rxn, t].to_numpy(float))
-        d["pred"] = np.nan
-        fit = {}
-        for k in sorted(d.fold_T1.unique()):
-            tr, te = d.fold_T1 != k, d.fold_T1 == k
-            b, a = np.polyfit(d.x[tr], d.y[tr], 1)
-            d.loc[te, "pred"] = a + b * d.x[te]
-            fit[int(k)] = (float(a), float(b))
-        d["gnn_ag"] = [G.get((p, t), np.nan) for p in d.pair_id]
-        para = d.pos == "p"
-        e, eg = (d.pred - d.y).abs(), (d.gnn_ag - d.y).abs()
-        both = d.gnn_ag.notna()
-        r = dict(target=t, n=len(d), n_para=int(para.sum()), mae_all=float(e.mean()), mae_para=float(e[para].mean()),
-                 null_mae_all=float(d.y.abs().mean()), null_mae_para=float(d.y[para].abs().mean()),
-                 r_hf_vs_truth=float(np.corrcoef(d.x, d.y)[0, 1]), r_pred_vs_truth=float(np.corrcoef(d.pred, d.y)[0, 1]),
-                 alpha_mean=float(np.mean([v[0] for v in fit.values()])),
-                 beta_mean=float(np.mean([v[1] for v in fit.values()])),
-                 fu2_gnn_ag_n=int(both.sum()), fu2_gnn_ag_mae_all=float(eg[both].mean()),
-                 fu2_gnn_ag_mae_para=float(eg[both & para].mean()),
-                 hf_mae_para_same_pairs=float(e[both & para].mean()))
-        r["band_para"] = band(r["mae_para"])
-        summ.append(r)
-        rows.append(d.assign(target=t))
+    rows, summ, info = [], [], {}
+    for geom in ("dft", "g1"):
+        hf = L[L.geom == geom].set_index("rxn_id")
+        info[geom] = dict(n_reactions=len(hf))
+        for t in A_TARGETS:
+            if t not in hf:
+                continue
+            v = hf[t].dropna()
+            q = S[S.a_rxn.isin(v.index) & S.b_rxn.isin(v.index)]
+            d = q[["pair_id", "fold_T1", "pos", "fam", "core"]].assign(
+                y=q[f"dd_{t}"].to_numpy(float), x=v.loc[q.a_rxn].to_numpy(float) - v.loc[q.b_rxn].to_numpy(float))
+            if len(d) < 10:
+                continue
+            d["pred"] = np.nan
+            beta = {}
+            for k in sorted(d.fold_T1.unique()):
+                tr, te = d.fold_T1 != k, d.fold_T1 == k
+                b = float((d.x[tr] * d.y[tr]).sum() / (d.x[tr] ** 2).sum())
+                d.loc[te, "pred"] = b * d.x[te]
+                beta[int(k)] = b
+            d["gnn_ag"] = [G.get((p, t), np.nan) for p in d.pair_id]
+            para = d.pos == "p"
+            e, eg = (d.pred - d.y).abs(), (d.gnn_ag - d.y).abs()
+            both = d.gnn_ag.notna()
+            r = dict(geom=geom, target=t, n=len(d), n_para=int(para.sum()), n_pairs_P_main=len(S),
+                     mae_all=float(e.mean()), mae_para=float(e[para].mean()),
+                     null_mae_all=float(d.y.abs().mean()), null_mae_para=float(d.y[para].abs().mean()),
+                     r_hf_vs_truth=float(np.corrcoef(d.x, d.y)[0, 1]),
+                     r_pred_vs_truth=float(np.corrcoef(d.pred, d.y)[0, 1]),
+                     beta_mean=float(np.mean(list(beta.values()))), beta_by_fold=json.dumps(beta),
+                     fu2_gnn_ag_n=int(both.sum()), fu2_gnn_ag_mae_all=float(eg[both].mean()),
+                     fu2_gnn_ag_mae_para=float(eg[both & para].mean()),
+                     hf_mae_para_same_pairs=float(e[both & para].mean()))
+            r["band_para"] = band(r["mae_para"])
+            summ.append(r)
+            rows.append(d.assign(geom=geom, target=t))
     A = pd.concat(rows, ignore_index=True)
     Sm = pd.DataFrame(summ)
     H.write_atomic(H.RES / "A_pairs.csv", lambda t: A.to_csv(t, index=False))
@@ -181,23 +191,30 @@ def cmd_a():
     plt.rcParams.update({"font.size": 7, "axes.titlesize": 7, "axes.labelsize": 7, "xtick.labelsize": 6,
                          "ytick.labelsize": 6, "axes.edgecolor": "#c3c2b7", "axes.grid": True, "grid.color": "#e1e0d9",
                          "grid.linewidth": 0.5, "axes.axisbelow": True, "savefig.dpi": 300})
-    fig, axs = plt.subplots(3, 3, figsize=(183 / 25.4, 183 / 25.4), constrained_layout=True)
-    for ax, t in zip(axs.ravel(), A_TARGETS):
-        q = A[(A.target == t) & (A.pos == "p")]
-        lo, hi = float(np.nanmin(np.r_[q.x, q.y])), float(np.nanmax(np.r_[q.x, q.y]))
-        ax.plot([lo, hi], [lo, hi], color="#898781", lw=0.6)
-        ax.scatter(q.x, q.y, s=3, color="#2a78d6", linewidths=0, alpha=0.6)
-        s = Sm.set_index("target").loc[t]
-        ax.set_title(f"{t}: r {s.r_hf_vs_truth:.2f}, para MAE {s.mae_para:.2f} ({s.band_para})")
-        ax.set_xlabel("HF/6-31G* ΔΔ (kcal/mol)")
-        ax.set_ylabel("label ΔΔ (kcal/mol)")
-    H.write_atomic(H.RES / "figA_parity.png", lambda p: fig.savefig(p, format="png", bbox_inches="tight"))
-    plt.close(fig)
-    H.write_json(H.RES / "A_report.json", dict(n_pairs=len(S), missing_rxn=miss[:20], n_missing_rxn=len(miss),
+    for geom, name in (("dft", "figA_parity.png"), ("g1", "figA_parity_g1.png")):
+        Sg = Sm[Sm.geom == geom].set_index("target")
+        if not len(Sg):
+            continue
+        fig, axs = plt.subplots(3, 3, figsize=(183 / 25.4, 183 / 25.4), constrained_layout=True)
+        for ax, t in zip(axs.ravel(), A_TARGETS):
+            q = A[(A.geom == geom) & (A.target == t) & (A.pos == "p")]
+            if t not in Sg.index or not len(q):
+                ax.set_axis_off(); continue
+            lo, hi = float(np.nanmin(np.r_[q.x, q.y])), float(np.nanmax(np.r_[q.x, q.y]))
+            ax.plot([lo, hi], [lo, hi], color="#898781", lw=0.6)
+            ax.scatter(q.x, q.y, s=3, color="#2a78d6", linewidths=0, alpha=0.6)
+            s = Sg.loc[t]
+            ax.set_title(f"{t}: r {s.r_hf_vs_truth:.2f}, β {s.beta_mean:.2f}, para MAE {s.mae_para:.2f}")
+            ax.set_xlabel(f"HF/6-31G* ΔΔ @ {'G1' if geom == 'g1' else 'DFT TS'} (kcal/mol)")
+            ax.set_ylabel("label ΔΔ (kcal/mol)")
+        H.write_atomic(H.RES / name, lambda p, fig=fig: fig.savefig(p, format="png", bbox_inches="tight"))
+        plt.close(fig)
+    H.write_json(H.RES / "A_report.json", dict(n_pairs_P_main=len(S), sources=info,
+                                               fit="truth = beta * HF dd, no intercept, beta from the training folds",
                                                note="descriptive, not pre-registered; bands only, no decision",
                                                baseline="FU2 GNN-A+G yhat (5 seeds mean) from results/fu2/M_predictions"
                                                         ".parquet, same pairs (the pair without atom data is missing)"))
-    print(Sm.to_string(index=False), flush=True)
+    print(Sm.drop(columns=["beta_by_fold"]).to_string(index=False), flush=True)
     return 0
 
 
