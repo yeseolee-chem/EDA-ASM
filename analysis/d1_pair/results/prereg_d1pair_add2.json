@@ -7,7 +7,7 @@
   "review_section_9_items": "1-9 (ADD2에 꼭 들어갈 것), all in the md sections 1-9",
   "base_prereg_commit": "10f99d8d",
   "add1_commit": "1de89a0f",
-  "md_sha256": "f77fb8442149889ea456f49865b53a6ed57cc8cf3efb35f9fd63d469a91668e4",
+  "md_sha256": "7dc33a14197a75dd6e53d82c23bc83d22ebc74cdd4f21a809bdaa37766a51687",
   "code_commit": "35313e3ae6282549a1e861933224cac39f802eda",
   "code_sha256": {
     "fu2/models.py": "de2065a7d39c1e008b31274ab1b4fc94fa123ce53eda14a3c2f426dbd0d6197a",
@@ -373,14 +373,20 @@
     "predictions": "results/fu2/M_predictions.parquet (train.py collect, same env_d1fu2)"
   },
   "gpu": {
-    "model": "NVIDIA RTX A6000 (not A6000 Ada)",
+    "model": "any available NVIDIA GPU (RTX 3090 / A10 / RTX 6000 Ada / RTX A6000; all >= 24 GB, peak use 8.3 GB)",
     "partitions": [
+      "gpu1",
+      "gpu2",
+      "gpu3",
       "gpu4",
-      "gpu5"
+      "gpu5",
+      "gpu6"
     ],
-    "gres": "gpu:a6000:1",
-    "enforcement": "submit flags; GPU name in every unit fingerprint; run_unit stops on a cache from another GPU; collect does not compare it; Phase E stops unless all units carry one RTX A6000 name",
-    "nondeterminism": "allowed and recorded (seeds fixed, cudnn.deterministic True, benchmark False)"
+    "gres": "gpu:1",
+    "originally": "RTX A6000 only (gpu4 / gpu5, gres gpu:a6000:1)",
+    "amended": "2026-10-21 before any training, user instruction (A6000 expected start after 2026-11-03); deviation 5",
+    "enforcement": "each unit runs on one GPU; GPU name in every unit fingerprint; run_unit stops on a cache from another GPU (resubmit with the same GPU type); collect does not compare it; Phase E reports the GPU per unit",
+    "nondeterminism": "allowed and recorded (seeds fixed, cudnn.deterministic True, benchmark False); hardware differences allowed"
   },
   "representative": {
     "per_target": "for each of the 6 configs and each outer fold: the chosen cell's inner-validation MAE for the target at the best epoch, converted to kcal/mol by x s_y of that fold's tuning fit (std, ddof 0, of the target over the first-inner-fold training pairs with atom data; recomputed from the split files); mean over the 5 outer folds; lowest = representative",
@@ -470,7 +476,8 @@
     "C12 excluded from the Phase C verdict: AW smallest cell 0.064 > 0.05 in C_tests.json (fu2-tokens-3, job 1030202); same 64 pairs: width 128 0.0075, 1,000 epochs (T_max 1,000) 0.0007; earlier 3-subset diagnosis C12_diag.json (fu2-tokens-2) same conclusion; capacity / budget, not a bug; user decision 2026-10-21; grid and rules unchanged; C_tests all_pass false only because of C12",
     "atom maps: H through the owner heavy atom (spec maps are heavy-only); symmetry correction (automorphisms fixing the 5 reacting atoms, lowest Kabsch RMSD, ties keep VF2; review F1); reflection allowed, min(proper, improper) (user decision 2026-10-21); fu2-atoms-3 without xTB; Q-a 0, Q-c 0",
     "reaction 1007141 excluded (extension self-check failed) -> T1 f0 test loses 1 pair (the same pair is a training pair in folds 1-4)",
-    "final training uses the tuned epoch count on ~1.33x more pairs -> ~1.33x optimizer steps (spec rule, kept)"
+    "final training uses the tuned epoch count on ~1.33x more pairs -> ~1.33x optimizer steps (spec rule, kept)",
+    "GPU type no longer pinned: any available NVIDIA GPU instead of RTX A6000 only (user instruction 2026-10-21, before any training; A6000 expected start after 2026-11-03); rules, grid and decisions unchanged"
   ],
   "choices_not_fixed_by_spec_set_before_phase_C": {
     "C12_gating_runs": "dropout 0, batch 8",
@@ -489,7 +496,7 @@
     ],
     "phase_E": [
       "test-pair lists differ between compared models (after removing pairs without atom data identically)",
-      "unit fingerprint code_sha256 / add2 / GPU name differ from sections 1-2",
+      "unit fingerprint code_sha256 / add2 differ from section 1 (GPU name reported only)",
       "C-XGB prediction files differ from comparator_sha256"
     ],
     "principles": [
@@ -570,7 +577,7 @@
     "cause_basis": "SMILES ($D1PAIR_SCRATCH/G/smiles_d1.csv) and pairs_d1.csv substituent / position columns; not verified geometrically",
     "mark_in_phase_E_figures": true,
     "phase_M_upper_bound_A10_gpu_hours": 132,
-    "phase_M_upper_bound_note": "smoke-based, no early stopping; expected shorter on A6000",
+    "phase_M_upper_bound_note": "smoke-based, no early stopping; actual time depends on the GPU type",
     "label_identity_residual_kcal": {
       "mean": 0.005,
       "max": 0.096

@@ -111,11 +111,12 @@ unit 지문은 파일 이름만 키로 쓴다(`models.py`, `train.py`, `fu2_comm
 - 구성 6 × fold 5 = 30 unit, unit당 학습 9번(튜닝 4 + 최종 5).
 - 예측은 `results/fu2/M_predictions.parquet`(`train.py collect`)에 모은다. 6개 구성의 결과를 모두 보고한다.
 
-**GPU:**
-- **RTX A6000만** 쓴다(`-p gpu4,gpu5 --gres=gpu:a6000:1`). 제출 옵션으로 정한다.
-- GPU 이름은 지문에 들어간다. `run_unit`은 다른 GPU로 만든 캐시를 만나면 STOP한다. `collect`는 GPU 이름을 비교하지 않는다.
-- 그래서 Phase E가 모든 unit 지문의 GPU 이름을 확인한다. RTX A6000(A6000 Ada 아님) 하나로 같아야 하고, 아니면 STOP이다.
+**GPU (정정, 사용자 결정 2026-10-21; 8절 ⑤):**
+- 처음에는 **RTX A6000만** 쓰기로 했다(`-p gpu4,gpu5 --gres=gpu:a6000:1`). 그러나 스케줄러 예상 시작이 11월 3일 이후여서, 사용자 지시("a6000 말고 다른 gpu라도 아무거나 넣기")로 **가용한 아무 NVIDIA GPU**로 바꾼다(`-p gpu1,gpu2,gpu3,gpu4,gpu5,gpu6 --gres=gpu:1`; RTX 3090 / A10 / RTX 6000 Ada / RTX A6000, 모두 24 GB 이상이며 최대 메모리는 8.3 GB).
+- 한 unit(튜닝 4 + 최종 5)은 한 GPU에서 끝까지 돈다. unit마다 GPU 이름이 지문에 남는다. `run_unit`은 다른 GPU로 만든 캐시를 만나면 STOP하므로, 다시 제출할 때는 같은 기종을 지정한다.
+- Phase E는 unit별 GPU 이름을 결과와 함께 보고한다. GPU 기종 차이(부동소수점·비결정성)는 허용한다.
 - GPU 비결정성은 허용하고 기록한다(seed 고정, `cudnn.deterministic = True`, `benchmark = False`).
+- 이 정정은 학습 전에 했다(`$D1PAIR_SCRATCH/fu2/units` 없음).
 
 ## 3. 대표 구성 (주 비교에 쓰는 원자 모델)
 
@@ -190,6 +191,7 @@ rev 9 부록 D 규칙(`hammett_eval.calls`, `d1_eval`과 같은 함수)을 따�
    - xTB 재계산 없이 저장 값에서 다시 만들었다(fu2-atoms-3). Q-a 0, Q-c(원소 불일치·반응 원자 재대응·자기 검사) 모두 0.
 3. **반응 1007141 제외(확장 값 자기 검사 실패):** T1 fold 0 시험에서 1짝이 빠진다. 같은 짝이 fold 1–4에서는 학습 쪽 1짝이다.
 4. **최종 학습 step 약 1.33배:** 최종 학습은 튜닝에서 고른 epoch 수를 그대로 쓰지만, 짝이 약 1.33배라 optimizer step도 약 1.33배가 된다. 명령서 규칙 그대로이며 고치지 않는다.
+5. **GPU 기종 고정 해제 (학습 전 정정):** 검토 9절 2번의 "GPU = RTX A6000"을 "가용한 아무 GPU"로 바꿨다. A6000 예상 시작이 11월 3일 이후라는 이유로 사용자가 지시했다(2026-10-21). 학습 규칙·grid·판정은 그대로다.
 
 명령서가 정하지 않아 정한 값(모두 Phase C 실행 전에 정했다; `C_review.md` 1-1):
 - C12 판정 실행의 설정: dropout 0, batch 8.
@@ -211,7 +213,7 @@ rev 9 부록 D 규칙(`hammett_eval.calls`, `d1_eval`과 같은 함수)을 따�
 
 **Phase E:** 다음이면 STOP이다.
 - 비교하는 모델 사이 시험 짝 목록이 다름(원자 대표, C-XGB, 부 비교 상대 모두; 원자 데이터 없는 짝을 똑같이 뺀 뒤)
-- unit 지문의 `code_sha256`·`add2`·GPU 이름이 1·2절과 다름
+- unit 지문의 `code_sha256`·`add2`가 1절과 다름(GPU 이름은 보고만 함, 2절)
 - C-XGB 예측 파일의 sha256이 1절과 다름
 
 **원칙:**
@@ -242,5 +244,5 @@ rev 9 부록 D 규칙(`hammett_eval.calls`, `d1_eval`과 같은 함수)을 따�
 - Phase E 해석 그림에서 이 반응들을 표시한다.
 
 **기타:**
-- Phase M 시간 상한(조기 종료 없음 가정)은 smoke 기준 약 132 A10 GPU-시간이다. A6000에서는 더 짧을 것으로 예상한다.
+- Phase M 시간 상한(조기 종료 없음 가정)은 smoke 기준 약 132 A10 GPU-시간이다. 실제 시간은 GPU 기종에 따라 다르다.
 - 짝 차이의 항등식 잔차(barrier − Σ9)는 평균 0.005, 최대 0.096 kcal/mol이다(ORCA 표 마감 오차). 그래서 손실의 벌점 항은 정답에서도 약 2e-4다.
