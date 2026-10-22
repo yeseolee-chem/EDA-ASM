@@ -293,7 +293,7 @@ def cmd_report():
 
 
 def ok_manifest():
-    M = pd.read_csv(H.RES / "X_manifest.csv", keep_default_na=False)
+    M = pd.read_csv(H.X_MANIFEST, keep_default_na=False)
     return M[~M.x_fail.astype(bool)].copy()
 
 
@@ -322,18 +322,20 @@ def cmd_smoke():
     return 0
 
 
-def g1_input(T, rxn_id):
+def g1_input(T, rxn_id, geom="g1"):
     """G1 EDA input = the HF eda.inp with the coordinates of g1_final/<rxn_id>/ts.xyz (same tags, charges, fragments);
-    None if no G1 structure or its atom order / elements differ from the DFT TS."""
-    g = H.G1_FINAL / str(rxn_id)
+    None if no G1 structure or its atom order / elements differ from the DFT TS. geom = a hf_common.GEOM_ROOT key (g2:
+    the same rule on $D1HF_G2_ROOT/<rxn_id>/ts.xyz; statuses no_<geom>, <geom>_...); the HF eda.inp is read from
+    hf_common.TEMPLATES (default $HF/inputs)."""
+    g = H.GEOM_ROOT[geom] / str(rxn_id)
     if not ((g / ".done").is_file() and (g / "ts.xyz").is_file()):
-        return None, "no_g1"
+        return None, f"no_{geom}"
     G = H.read_xyz(g / "ts.xyz")
-    hf = (H.INPUTS / T / "hf" / "eda.inp").read_text()
+    hf = (H.TEMPLATES / T / "hf" / "eda.inp").read_text()
     p = H.parse_inp(hf)
     ts = H.read_xyz(DP.D1_JOBS / T / "ts.xyz")
     if [a[0] for a in G] != [a[0] for a in p["atoms"]] or [a[0] for a in G] != [a[0] for a in ts]:
-        return None, "g1_order_or_elements_differ"
+        return None, f"{geom}_order_or_elements_differ"
     lines, k = [], 0
     for ln in hf.splitlines(keepends=True):
         m = H.XYZ_LINE.match(ln)
@@ -344,7 +346,7 @@ def g1_input(T, rxn_id):
         else:
             lines.append(ln)
     if k != len(G):
-        return None, "g1_atom_count"
+        return None, f"{geom}_atom_count"
     return "".join(lines), "ok"
 
 
@@ -436,23 +438,36 @@ def replace_coords(text, atoms):
     return "".join(lines)
 
 
-def g1_frag_inputs(T, rxn_id):
+# D1-G2 Phase H (docs/specs/D1G2.md 9): not in the module docstring (= the usage text of the D1HF commands, unchanged);
+# GEOM_USAGE is printed for the new command's own argument errors.
+GEOM_USAGE = """D1-G2 Phase H (docs/specs/D1G2.md 9):
+  python prep.py geominputs <geom> [list.csv]
+                             # geom in hf_common.GEOM_ROOT (g2: $D1HF_G2_ROOT): every X-ok target (or those of the
+                             #   list) whose <root>/<rxn_id> has .done, ts.xyz, rel1.xyz, rel2.xyz ->
+                             #   $HF/inputs/<T>/<geom>/{eda,frag1_dist,frag2_dist,frag1_rel,frag2_rel}.inp =
+                             #   $D1HF_TEMPLATES/<T>/hf/*.inp with only the coordinates replaced (the g1_input /
+                             #   g1_frag_inputs rules); all five or none; results/<geom>_inputs.csv"""
+
+
+def g1_frag_inputs(T, rxn_id, geom="g1"):
     """D1HF additional instruction 2 (2026-10-22): G1 fragment single points. frag<k>_dist = the G1 TS atoms of
     fragment k (eda.inp (k) tags, TS index order); frag<k>_rel = g1_final/<rxn_id>/rel<k>.xyz (the G1 reactants the
     D1PAIR features use; rel1 = dipole, rel2 = dipolarophile); method, charge, multiplicity and solvent = the DFT-TS HF
-    inputs, only the coordinates change. Element order must equal the DFT-TS HF input -> ({name: text} or None, status)."""
-    g = H.G1_FINAL / str(rxn_id)
+    inputs, only the coordinates change. Element order must equal the DFT-TS HF input -> ({name: text} or None, status).
+    geom = a hf_common.GEOM_ROOT key (g2: $D1HF_G2_ROOT/<rxn_id>; statuses no_<geom>, <geom>_ts_order); the HF inputs
+    are read from hf_common.TEMPLATES (default $HF/inputs)."""
+    g = H.GEOM_ROOT[geom] / str(rxn_id)
     if not ((g / ".done").is_file() and all((g / f).is_file() for f in ("ts.xyz", "rel1.xyz", "rel2.xyz"))):
-        return None, "no_g1"
+        return None, f"no_{geom}"
     G = H.read_xyz(g / "ts.xyz")
-    e = H.parse_inp((H.INPUTS / T / "hf" / "eda.inp").read_text())
+    e = H.parse_inp((H.TEMPLATES / T / "hf" / "eda.inp").read_text())
     if [a[0] for a in G] != [a[0] for a in e["atoms"]]:
-        return None, "g1_ts_order"
+        return None, f"{geom}_ts_order"
     tags = [a[1] for a in e["atoms"]]
     out = {}
     for k in (1, 2):
         for kind, atoms in (("dist", [G[i] for i in range(len(G)) if tags[i] == k]), ("rel", H.read_xyz(g / f"rel{k}.xyz"))):
-            src = (H.INPUTS / T / "hf" / f"frag{k}_{kind}.inp").read_text()
+            src = (H.TEMPLATES / T / "hf" / f"frag{k}_{kind}.inp").read_text()
             if [a[0] for a in H.parse_inp(src)["atoms"]] != [a[0] for a in atoms]:
                 return None, f"frag{k}_{kind}_order"
             out[f"frag{k}_{kind}.inp"] = replace_coords(src, atoms)
@@ -477,10 +492,51 @@ def cmd_g1frag():
     return 0
 
 
+def cmd_geominputs(geom, lst=None):
+    """D1-G2 Phase H (docs/specs/D1G2.md 9): the 5 HF inputs on the structures of hf_common.GEOM_ROOT[geom] for every
+    X-ok target, or for the job_ids of <list.csv>. eda = g1_input, frag* = g1_frag_inputs (element order of the TS = the
+    DFT-TS HF eda.inp and the DFT TS, of each fragment = its template; templates from hf_common.TEMPLATES). All five
+    are written (eda.inp last; a file with the same text is not rewritten) or none -> $HF/inputs/<T>/<geom>/,
+    results/<geom>_inputs.csv (job_id, rxn_id, status; a listed job that is not X-ok = not_x_ok, a target without the
+    5 templates = no_template)."""
+    if geom not in H.GEOM_ROOT:
+        H.stop(f"bad geom {geom} (not in {sorted(H.GEOM_ROOT)})")
+    M = ok_manifest().sort_values("job_id")
+    rows = []
+    if lst:
+        want = set(pd.read_csv(lst, dtype=str).job_id)
+        X = pd.read_csv(H.X_MANIFEST, keep_default_na=False)
+        rid = dict(zip(X.job_id, X.rxn_id))
+        rows += [dict(job_id=T, rxn_id=rid.get(T), status="not_x_ok") for T in sorted(want - set(M.job_id))]
+        M = M[M.job_id.isin(want)]
+    for r in M.itertuples():
+        if not all((H.TEMPLATES / r.job_id / "hf" / f"{c}.inp").is_file() for c in H.CALCS):
+            rows.append(dict(job_id=r.job_id, rxn_id=r.rxn_id, status="no_template"))
+            continue
+        eda, s = g1_input(r.job_id, r.rxn_id, geom)
+        frag, s = g1_frag_inputs(r.job_id, r.rxn_id, geom) if eda is not None else (None, s)
+        if eda is not None and frag:
+            for n, txt in list(frag.items()) + [("eda.inp", eda)]:
+                f = H.INPUTS / r.job_id / geom / n
+                if not (f.is_file() and f.read_text() == txt):
+                    H.write_atomic(f, txt)
+        rows.append(dict(job_id=r.job_id, rxn_id=r.rxn_id, status=s))
+    D = pd.DataFrame(rows, columns=["job_id", "rxn_id", "status"]).sort_values("job_id")
+    D["rxn_id"] = D.rxn_id.astype("Int64")
+    H.write_atomic(H.RES / f"{geom}_inputs.csv", lambda t: D.to_csv(t, index=False))
+    print(f"[geominputs] {geom}: root {H.GEOM_ROOT[geom]}, templates {H.TEMPLATES}, inputs {H.INPUTS}/<T>/{geom}; "
+          f"{len(D)} reactions: {D.status.value_counts().to_dict()}", flush=True)
+    return 0
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["run"]:
         sys.exit(cmd_run(int(a[1]) if len(a) > 1 else int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))))
+    if a[:1] == ["geominputs"]:                           # D1-G2 (GEOM_USAGE)
+        if len(a) not in (2, 3):
+            raise SystemExit(GEOM_USAGE)
+        sys.exit(cmd_geominputs(a[1], a[2] if len(a) == 3 else None))
     cmds = {"report": cmd_report, "smoke": cmd_smoke, "pilot": cmd_pilot, "main": cmd_main, "g1frag": cmd_g1frag}
     if a[:1] and a[0] in cmds:
         sys.exit(cmds[a[0]]())

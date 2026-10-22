@@ -45,13 +45,18 @@ def run_name(geom, level):
     return geom if level == "hf" else f"{geom}_{level}"
 
 
+# D1-G2 Phase H (docs/specs/D1G2.md 9): geom g2 = the G2 structures, level hf only: $HF/inputs/<T>/g2/ written by
+# 'prep.py geominputs g2', the 5 calculations as for g1 with its fragment inputs (not in the module docstring = the
+# usage text, unchanged).
 def src_dir(T, geom, level):
-    return H.INPUTS / T / ("g1" if geom == "g1" else level)
+    """g1 / g2: the geometry folder $HF/inputs/<T>/<geom>/; dft: the level folder (hf, orig1)."""
+    return H.INPUTS / T / (geom if geom in ("g1", "g2") else level)
 
 
 def calcs(geom, src=None):
     """dft: the 5 calculations; g1: the 5 as well when the G1 fragment inputs exist (additional instruction 2,
-    2026-10-22: frag*_dist from the G1 TS, frag*_rel = the G1 reactants), else the EDA only."""
+    2026-10-22: frag*_dist from the G1 TS, frag*_rel = the G1 reactants), else the EDA only; g2: as g1 ('prep.py
+    geominputs' writes all 5 inputs or none)."""
     if geom == "dft" or (src is not None and all((src / f"{c}.inp").is_file() for c in H.CALCS)):
         return H.CALCS
     return ("eda",)
@@ -194,7 +199,7 @@ def _run_rxn(T, geom, level, root):
 
 
 def cmd_run(lst, geom, level, n, i=0, m=1):
-    if geom not in ("dft", "g1") or level not in ("hf", "orig1") or (geom == "g1" and level != "hf"):
+    if geom not in ("dft", "g1", "g2") or level not in ("hf", "orig1") or (geom in ("g1", "g2") and level != "hf"):
         H.stop(f"bad geom / level {geom} / {level}")
     if not os.access(H.ORCA_BIN, os.X_OK):
         H.stop(f"{H.ORCA_BIN} not executable")

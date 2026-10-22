@@ -52,10 +52,122 @@ VALENCE15 = [c.replace("mulliken_", "wbo_valence_") for c in MULLIKEN15]
 Q30 = MULLIKEN15 + VALENCE15
 _LABELS = _META = None
 
+# ---------------------------------------------------------------- D1-G2 roots (docs/specs/D1G2.md 4 T-2, 8)
+# `atoms.py root run <i> <n> | root gate | root tokens` (D1PAIR_PHASE=FROOT) = run / gate / tokens.py build with
+#   FU2_SCR (atoms / tokens write root), FU2_RES (Q_* / T_* reports), FU2_X182 (reaction ids, global token) and
+#   FU2_ATOM_VERSION / FU2_TOKEN_VERSION (unset = fu2-atoms-3 / fu2-tokens-3, else <that>-<tag> with one tag; G2: -g2)
+#   rebound in this process and in its pool workers (root_bind, _init); the rev 4-6 input roots (G1_ROOT,
+#   ESPLEY_LABELS / META / PROF) from the environment (_env_root). fu2_common.py and tokens.py are not edited: fu2/train.py
+#   hashes both into every Phase M unit fingerprint (CODE_FILES). SPLITS stays the D1PAIR one (read only); S_splits.json
+#   is copied byte for byte into FU2_RES (tokens.py reads it there); nothing is converted (OLD_VERSIONS = ()).
+#   The plain commands exit 3 when D1PAIR_PHASE=FROOT or an FU2_* variable is set (they would ignore it); tokens.py
+#   build itself never reads FU2_* (use `atoms.py root tokens`).
+ROOT_USAGE = """D1-G2 (D1PAIR_PHASE=FROOT; FU2_SCR, FU2_RES, FU2_X182 set away from the D1PAIR ones):
+  python fu2/atoms.py root run <i> <n>   # run on the FU2_X182 reactions -> $FU2_SCR/atoms/<rxn_id>.npz
+  python fu2/atoms.py root gate          # gate -> $FU2_RES/Q_manifest.csv, Q_report.json (+ overrides)
+  python fu2/atoms.py root tokens        # tokens.py build -> $FU2_SCR/tokens/<rxn_id>.npz, $FU2_RES/T_manifest.csv,
+                                         #   T_report.json"""
+FU2_ENV = ("FU2_SCR", "FU2_RES", "FU2_X182", "FU2_ATOM_VERSION", "FU2_TOKEN_VERSION")
+ROOT_ENV = ("G1_ROOT", "ESPLEY_LABELS", "ESPLEY_META", "ESPLEY_PROF", "ESPLEY_OUT", "R5_SCRATCH")   # FROOT: may differ
+D1PAIR_FU2 = dict(FU2_SCR=F.FU2_SCR, FU2_RES=F.FU2_RES, FU2_X182=F.X182)        # the fu2_common values
+ATOM_VERSION_D1PAIR, TOKEN_VERSION_D1PAIR = ATOM_VERSION, "fu2-tokens-3"        # = tokens.TOKEN_VERSION (root tokens)
+ROOT = {}                                                  # root_bind: the values in effect (Q_report "overrides")
+
+
+def same_path(a, b):
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
+def _tag(v, base):
+    return "" if v == base else (v[len(base) + 1:] if v.startswith(base + "-") and len(v) > len(base) + 1 else None)
+
+
+def root_bind():
+    """`atoms.py root ...` and its pool workers: exit 3 unless D1PAIR_PHASE=FROOT, FU2_SCR / FU2_RES / FU2_X182 are set
+    away from the D1PAIR ones (no D1PAIR atoms, reports or X182_d1 are read as this run's or overwritten) and the
+    versions are <D1PAIR version>[-<tag>] with one tag; then the fu2_common roots (FU2_SCR, FU2_RES, ATOMS, TOKENS, UNITS,
+    SMOKE, X182; SPLITS kept) and ATOM_VERSION, OLD_VERSIONS = () are rebound in this process -> ROOT."""
+    global ATOM_VERSION, OLD_VERSIONS
+    e = {k: os.environ.get(k) or None for k in FU2_ENV}
+    av, tv = e["FU2_ATOM_VERSION"] or ATOM_VERSION_D1PAIR, e["FU2_TOKEN_VERSION"] or TOKEN_VERSION_D1PAIR
+    ta, tt = _tag(av, ATOM_VERSION_D1PAIR), _tag(tv, TOKEN_VERSION_D1PAIR)
+    p = {k: Path(os.path.abspath(e[k])) for k in D1PAIR_FU2 if e[k]}
+    ph = os.environ.get("D1PAIR_PHASE")
+    bad = ([f"D1PAIR_PHASE={ph!r} (need FROOT)"] if ph != "FROOT" else []) \
+        + [f"{k} not set" for k in D1PAIR_FU2 if k not in p] \
+        + [f"{k} {v} = the D1PAIR one" for k, v in p.items() if same_path(v, D1PAIR_FU2[k])] \
+        + ([f"FU2_ATOM_VERSION {av!r} is not {ATOM_VERSION_D1PAIR}[-<tag>]"] if ta is None else []) \
+        + ([f"FU2_TOKEN_VERSION {tv!r} is not {TOKEN_VERSION_D1PAIR}[-<tag>]"] if tt is None else []) \
+        + ([f"version tags differ: atoms {ta!r}, tokens {tt!r}"] if None not in (ta, tt) and ta != tt else [])
+    if bad:
+        print(f"STOP: atoms.py root: {'; '.join(bad)}", file=sys.stderr)
+        sys.exit(3)
+    F.FU2_SCR, F.FU2_RES, F.X182 = p["FU2_SCR"], p["FU2_RES"], p["FU2_X182"]
+    F.ATOMS, F.TOKENS, F.UNITS, F.SMOKE = (F.FU2_SCR / n for n in ("atoms", "tokens", "units", "smoke"))
+    ATOM_VERSION, OLD_VERSIONS = av, ()
+    ROOT.clear()
+    ROOT.update(FU2_SCR=str(F.FU2_SCR), FU2_RES=str(F.FU2_RES), FU2_X182=str(F.X182), FU2_ATOM_VERSION=av,
+                FU2_TOKEN_VERSION=tv, **{k: os.environ.get(k) for k in ("D1PAIR_PHASE",) + ROOT_ENV[:4]})
+    return ROOT
+
+
+def _plain_guard():
+    """the plain commands: exit 3 when D1PAIR_PHASE=FROOT or an FU2_* variable is set (only `atoms.py root ...` uses
+    them; fu2_common has no overrides)."""
+    s = [k for k in FU2_ENV if os.environ.get(k)] + (["D1PAIR_PHASE=FROOT"] if os.environ.get("D1PAIR_PHASE") == "FROOT"
+                                                     else [])
+    if s:
+        print(f"STOP: {s} set: only `atoms.py root ...` uses them\n{ROOT_USAGE}", file=sys.stderr)
+        sys.exit(3)
+
 
 def _env():
     import d1_g1 as DG
+    if ROOT:
+        return _env_root(DG)                                  # D1-G2 `atoms.py root ...`: input roots elsewhere
+    _plain_guard()
     return DG.check_env()                                     # exits 3 unless the Phase F env + Si entries are active
+
+
+def _env_root(DG):
+    """`atoms.py root ...` (D1PAIR_PHASE=FROOT, after root_bind): d1_g1.check_env with the ROOT_ENV variables allowed
+    elsewhere (G1_ROOT = a G1-format root, ESPLEY_LABELS / META / PROF = its label rows, A_idx csv and prof links;
+    ESPLEY_OUT / R5_SCRATCH are not read here). Every other g_env() value, the Si entries and the rev 4-6 write guard as
+    check_env; the modules must have picked up the same roots. Exit 3 otherwise."""
+    bad = {k: (os.environ.get(k), v) for k, v in DG.g_env().items() if k not in ROOT_ENV and os.environ.get(k) != v}
+    bad.update({k: (None, "set") for k in ROOT_ENV if not os.environ.get(k)})
+    if bad:
+        print(f"STOP: D1PAIR_PHASE=FROOT environment differs from g_env() outside {ROOT_ENV}: {bad}", file=sys.stderr)
+        sys.exit(3)
+    import fragmenter as fr
+    import r6_partition as RP
+    import rev5_common as R5
+    import rev6_common as R6
+    import xtb_slice as xs
+    si = (os.environ.get("D1PAIR_SI_PATCH"), fr.COV.get("Si"), fr.Z.get("Si"), R5.BONDI.get("Si"), R5.GFN2_VALENCE.get("Si"))
+    if si != ("1", 1.11, 14, 2.10, 4):
+        print(f"STOP: Si element entries not active (site_si/sitecustomize.py): {si}", file=sys.stderr); sys.exit(3)
+    E = {k: Path(os.environ[k]) for k in ROOT_ENV}
+    same = dict(xtb_slice_g1=(xs.GEOM_ROOT["g1"], "G1_ROOT"), R5_G1_ROOT=(R5.G1_ROOT, "G1_ROOT"),
+                xtb_slice_LABELS=(xs.LABELS_PATH, "ESPLEY_LABELS"), R5_LABELS=(R5.LABELS, "ESPLEY_LABELS"),
+                xtb_slice_META=(xs.META, "ESPLEY_META"), R5_META=(R5.META, "ESPLEY_META"),
+                R5_PROF=(R5.PROF, "ESPLEY_PROF"), r6_partition_PROF=(RP.PROF, "ESPLEY_PROF"),
+                R5_SCRATCH=(R5.SCRATCH, "R5_SCRATCH"), R5_XTB_ROOT=(R5.XTB_ROOT, "ESPLEY_OUT"))
+    bad = {k: (str(p), str(E[v])) for k, (p, v) in same.items() if Path(p) != E[v]}
+    bad.update({k: str(p) for k, p, ok in (("G1_ROOT", E["G1_ROOT"], E["G1_ROOT"].is_dir()),
+                                           ("ESPLEY_LABELS", E["ESPLEY_LABELS"], E["ESPLEY_LABELS"].is_file()),
+                                           ("ESPLEY_META", E["ESPLEY_META"], E["ESPLEY_META"].is_file()),
+                                           ("ESPLEY_PROF", E["ESPLEY_PROF"], E["ESPLEY_PROF"].is_dir()),
+                                           ("FU2_X182", F.X182, F.X182.is_file())) if not ok})
+    if bad or xs.PARTITION_MODE != "label":
+        print(f"STOP: modules not on the FROOT roots / inputs missing: {bad}, partition {xs.PARTITION_MODE}", file=sys.stderr)
+        sys.exit(3)
+    paths = dict(xtb_slice_g1=xs.GEOM_ROOT["g1"], xtb_slice_g2=xs.GEOM_ROOT["g2"], R5_SCRATCH=R5.SCRATCH,
+                 R5_XTB_ROOT=R5.XTB_ROOT, R5_G1_ROOT=R5.G1_ROOT, R6_SCRATCH=R6.SCRATCH, R6_G1_ROOT_R6=R6.G1_ROOT_R6,
+                 R6_XTB_R6=R6.XTB_R6)
+    for k, p in paths.items():
+        C.assert_write_ok(p)
+    return {k: str(v) for k, v in paths.items()}
 
 
 def rxn_ids():
@@ -438,6 +550,8 @@ def one(rid, root=None, convert_only=False):
 
 def _init():
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    if os.environ.get("D1PAIR_PHASE") == "FROOT":
+        root_bind()                                           # pool worker of `atoms.py root run`: the parent's roots
     labels()
 
 
@@ -554,6 +668,8 @@ def recompute_q30_ts(a):
 
 
 def cmd_gate():
+    if not ROOT:
+        _plain_guard()
     ids = rxn_ids()
     X = pd.read_parquet(F.X182, columns=["rxn_id"] + Q30).set_index("rxn_id")
     rows, n_missing, qc_vals, mirror_vals = [], 0, [], []
@@ -692,9 +808,44 @@ def cmd_gate():
            if rep["Q_c"]["z_mismatch_atoms"] else []) \
         + ([f"Q-c: {rep['Q_c']['react_atoms_remapped']} reacting atoms remapped"] if rep["Q_c"]["react_atoms_remapped"] else []) \
         + ([f"Q-c: mirror_diag disagrees with sym_remap in {n_o3_mismatch} fragments"] if n_o3_mismatch else [])
+    if ROOT:                                                   # D1-G2 `root gate` only (today's report keeps its keys)
+        rep["overrides"] = dict(ROOT)
     F.write_json(F.FU2_RES / "Q_report.json", rep)
     print(json.dumps({k: v for k, v in rep.items() if k != "excluded"}, indent=1, default=str))
     return 3 if rep["stop"] else 0
+
+
+def cmd_root_tokens():
+    """`atoms.py root tokens`: tokens.py build (its code unchanged) on the rebound roots with TOKEN_VERSION =
+    FU2_TOKEN_VERSION. First: $FU2_RES/Q_report.json must come from `root gate` with these roots and this ATOM_VERSION;
+    the D1PAIR S_splits.json is copied byte for byte into FU2_RES (tokens.py reads it there for the T-a pair coverage;
+    the split files stay at the D1PAIR SPLITS, read only). Exit 3 otherwise."""
+    import tokens as T
+    q = F.FU2_RES / "Q_report.json"
+    qrep = F.read_json(q) if q.is_file() else {}
+    keys = ("FU2_SCR", "FU2_RES", "FU2_X182", "FU2_ATOM_VERSION")
+    got, want = {k: (qrep.get("overrides") or {}).get(k) for k in keys}, {k: ROOT[k] for k in keys}
+    if T.TOKEN_VERSION != TOKEN_VERSION_D1PAIR or qrep.get("atom_version") != ATOM_VERSION or got != want:
+        print(f"STOP: root tokens: tokens.TOKEN_VERSION {T.TOKEN_VERSION} (need {TOKEN_VERSION_D1PAIR}); {q}: atom_version "
+              f"{qrep.get('atom_version')} (need {ATOM_VERSION}), overrides {got} (need the current roots)", file=sys.stderr)
+        return 3
+    src, dst = D1PAIR_FU2["FU2_RES"] / "S_splits.json", F.FU2_RES / "S_splits.json"
+    if dst.is_file() and dst.read_bytes() != src.read_bytes():
+        print(f"STOP: {dst} differs from {src}", file=sys.stderr); return 3
+    if not dst.is_file():
+        F.write_atomic(dst, src.read_bytes())
+    T.TOKEN_VERSION = ROOT["FU2_TOKEN_VERSION"]
+    return T.cmd_build()
+
+
+def cmd_root(a):
+    """`atoms.py root run <i> <n> | root gate | root tokens` (ROOT_USAGE)."""
+    if not ((a[:1] == ["run"] and len(a) == 3) or a in (["gate"], ["tokens"])):
+        print(ROOT_USAGE); return 2
+    root_bind()
+    if a[0] == "run":
+        return cmd_run(a[1], a[2])
+    return cmd_gate() if a[0] == "gate" else cmd_root_tokens()
 
 
 if __name__ == "__main__":
@@ -707,4 +858,6 @@ if __name__ == "__main__":
         sys.exit(cmd_gate())
     if a[:1] == ["smoke"]:
         sys.exit(cmd_smoke(*(a[1:2] or [24])))
+    if a[:1] == ["root"]:                                   # D1-G2: FU2_* roots (ROOT_USAGE)
+        sys.exit(cmd_root(a[1:]))
     print(__doc__); sys.exit(2)

@@ -1,8 +1,12 @@
 """D1-HF common paths, constants and helpers (docs/specs/D1HF.md).
 
-Writes only under $HF (= $D1HF_SCRATCH, default /gpfs/tmp_cpu2/yeseo1ee/d1_hf) and analysis/d1_hf/results (spec 11);
-every D1 / D1PAIR input is read only. The D1 label loader and the D'' list come from analysis/d1_pair/d1pair_common.py
-(spec 1)."""
+Writes only under $HF (= $D1HF_SCRATCH, default /gpfs/tmp_cpu2/yeseo1ee/d1_hf) and RES (= $D1HF_RES, default
+analysis/d1_hf/results) (spec 11); every D1 / D1PAIR input is read only. The D1 label loader and the D'' list come from
+analysis/d1_pair/d1pair_common.py (spec 1).
+Optional overrides (D1-G2 Phase T-3 / H, docs/specs/D1G2.md 4, 9; unset = the D1HF paths): D1HF_RES (where the results
+files are written), D1HF_TEMPLATES (read-only root of the DFT-TS HF inputs <T>/hf/*.inp, default $HF/inputs),
+D1HF_G2_ROOT (the G2 structures <rxn_id>/{.done, ts.xyz, rel1.xyz, rel2.xyz}, default
+/gpfs/tmp_cpu2/yeseo1ee/d1_g2/g2_final). X_MANIFEST is always analysis/d1_hf/results/X_manifest.csv (read only)."""
 from __future__ import annotations
 
 import gzip
@@ -15,9 +19,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-RES = HERE / "results"
+RES = Path(os.environ.get("D1HF_RES", HERE / "results"))
+X_MANIFEST = HERE / "results" / "X_manifest.csv"        # D1HF Phase X (read only; the same file whatever RES is)
 HF = Path(os.environ.get("D1HF_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/d1_hf"))
 INPUTS, RUNS, LOGS = HF / "inputs", HF / "runs", HF / "logs"
+TEMPLATES = Path(os.environ.get("D1HF_TEMPLATES", INPUTS))  # <T>/hf/*.inp = the DFT-TS HF inputs (read only)
 LABELS_JSON = HF / "labels_d1_hf.json"
 sys.path.insert(0, str(REPO / "analysis" / "d1_pair"))
 import d1pair_common as DP  # noqa: E402              (load_d1_labels, DPP, D1_JOBS, NURION_TARS, UBAI_JOBS, ...)
@@ -30,6 +36,8 @@ CALCS = ("frag1_dist", "frag2_dist", "frag1_rel", "frag2_rel", "eda")       # ru
 SUB = (("B3LYP", "HF"), ("def2-TZVP", "6-31G*"))        # spec 2: the only two words that change
 EPS_WATER = 78.3550
 G1_FINAL = DP.G1_ROOT_D1F                               # /gpfs/tmp_cpu2/yeseo1ee/d1_pair/g1_final/<rxn_id>/ts.xyz
+G2_FINAL = Path(os.environ.get("D1HF_G2_ROOT", "/gpfs/tmp_cpu2/yeseo1ee/d1_g2/g2_final"))   # D1G2 2: G1-format folders
+GEOM_ROOT = {"g1": G1_FINAL, "g2": G2_FINAL}            # structure root of each non-DFT geometry
 # gates (spec 4). The spec table says "same as the label" but prints tighter g2 / g3 thresholds than the label used;
 # decision = the label thresholds (D1_build config_run.yaml: 1e-6 / 0.11 / 0.11), the spec values are reported too
 G1_TOL, G2_TOL, G3_TOL = 1e-6, 0.11, 0.11

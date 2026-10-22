@@ -53,6 +53,17 @@ RE_FRAG_ATOM = re.compile(r"^\s*([A-Z][a-z]?)\s*(:?)\s*\((\d)\)\s+(-?\d+\.\d+)\s
 RE_SCF_BAD = re.compile(r"NOT FULLY CONVERGED|SCF NOT CONVERGED|did not converge", re.I)
 BOND_REF_TOL = 0.02                                                       # label config_run.yaml bond_ref_tol
 XYZ_TOL = 1e-6                                                            # A, = d1_run gates.py _same_geometry
+# build.py all / allgeom: geometries -> (labels json, results parquet, results status csv)
+ALL_OUT = {("dft", "g1"): (H.LABELS_JSON, "labels_d1_hf.parquet", "hf_status.csv"),
+           ("g2",): (H.HF / "labels_d1_hf_g2.json", "labels_d1_hf_g2.parquet", "H_status.csv")}
+# D1-G2 Phase H (docs/specs/D1G2.md 9): a separate command, so `all` (any arguments) and the module docstring (= the
+# usage text) stay as they were; ALLGEOM_USAGE is printed for its own argument errors.
+ALLGEOM_USAGE = """D1-G2 Phase H (docs/specs/D1G2.md 9):
+  python build.py allgeom <list.csv | -> g2
+                                     # runs/g2 of every target (or of the list; '-' = no list) -> $HF/labels_d1_hf_g2.json,
+                                     #   results/labels_d1_hf_g2.parquet, results/H_status.csv (a target without a folder
+                                     #   = not_started, or no_input with the results/g2_inputs.csv status when that is not
+                                     #   ok); 'dft,g1' = the same outputs as 'all'"""
 
 
 def frag_real_atoms(inp_text, k):
@@ -69,8 +80,9 @@ def same_geom(a, b, tol=XYZ_TOL):
 
 def outputs(geom, T=None):
     """outputs of a reaction: dft = the 5 calculations; g1 = the 5 when its G1 fragment inputs exist (additional
-    instruction 2), else the EDA only; + the two ORCA-written EDA fragment outputs."""
-    full = geom == "dft" or (T is not None and all((H.INPUTS / T / "g1" / f"{c}.inp").is_file() for c in H.CALCS))
+    instruction 2), else the EDA only (g2: the same with $HF/inputs/<T>/g2/); + the two ORCA-written EDA fragment
+    outputs."""
+    full = geom == "dft" or (T is not None and all((H.INPUTS / T / geom / f"{c}.inp").is_file() for c in H.CALCS))
     return (list(H.CALCS) if full else ["eda"]) + ["eda_frag1", "eda_frag2"]
 
 
@@ -187,29 +199,37 @@ def flat(r):
     return out
 
 
-def cmd_all(lst=None):
+def cmd_all(lst=None, geoms=("dft", "g1")):
+    geoms = tuple(geoms)
+    if geoms not in ALL_OUT:
+        H.stop(f"build.py allgeom: geometries {geoms} not in {list(ALL_OUT)}")
+    js, pq, sc = ALL_OUT[geoms]
     rows = []
-    for geom in ("dft", "g1"):
+    for geom in geoms:
         d = H.RUNS / geom
         have = set(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else set()
-        if geom == "dft":                                  # every target (a target without a folder = not_started)
+        if geom in ("dft", "g2"):                          # every target (a target without a folder = not_started)
             ids = sorted(set(pd.read_csv(lst, dtype=str).job_id)) if lst else [t["job_id"] for t in H.targets()]
         else:                                              # g1: the folders of G1 runs
             ids = sorted(have & set(pd.read_csv(lst, dtype=str).job_id)) if lst else sorted(have)
-        rows += [parse_rxn(T, geom) if T in have else dict(job_id=T, geom=geom, level="hf", status="not_started",
-                                                         reason="") for T in ids]
+        f = H.RES / f"{geom}_inputs.csv"                   # g2: prep.py geominputs status (no_g2, g2_ts_order, ...)
+        inp = dict(pd.read_csv(f, dtype=str, keep_default_na=False)[["job_id", "status"]].values) \
+            if geom == "g2" and f.is_file() else {}
+        rows += [parse_rxn(T, geom) if T in have else
+                 dict(job_id=T, geom=geom, level="hf", status="no_input", reason=inp[T]) if inp.get(T, "ok") != "ok" else
+                 dict(job_id=T, geom=geom, level="hf", status="not_started", reason="") for T in ids]
     lab = {d["job_id"]: d for d in H.targets()}
     for r in rows:
         r["rxn_id"] = int(lab[r["job_id"]]["rxn_id"]) if r["job_id"] in lab else None
     ok = [r for r in rows if r["status"] == "ok"]
-    H.write_json(H.LABELS_JSON, ok)
+    H.write_json(js, ok)
     df = pd.DataFrame([flat(r) for r in ok])
-    H.write_atomic(H.RES / "labels_d1_hf.parquet", lambda t: df.to_parquet(t, index=False))
+    H.write_atomic(H.RES / pq, lambda t: df.to_parquet(t, index=False))
     st = pd.DataFrame([dict(job_id=r["job_id"], rxn_id=r["rxn_id"], geom=r["geom"], status=r["status"],
                             reason=r.get("reason", "")) for r in rows])
-    H.write_atomic(H.RES / "hf_status.csv", lambda t: st.to_csv(t, index=False))
+    H.write_atomic(H.RES / sc, lambda t: st.to_csv(t, index=False))
     summ = dict(n=len(rows), by_status=st.groupby(["geom", "status"]).size().reset_index().values.tolist(),
-                labels_json_sha256=H.sha256(H.LABELS_JSON), parquet_sha256=H.sha256(H.RES / "labels_d1_hf.parquet"))
+                labels_json_sha256=H.sha256(js), parquet_sha256=H.sha256(H.RES / pq))
     print(json.dumps(summ, indent=1, default=str), flush=True)
     return 0
 
@@ -299,6 +319,10 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["all"]:
         sys.exit(cmd_all(a[1] if len(a) > 1 else None))
+    if a[:1] == ["allgeom"]:                              # D1-G2: allgeom <list.csv | -> <geom[,geom]> (ALLGEOM_USAGE)
+        if len(a) != 3:
+            raise SystemExit(ALLGEOM_USAGE)
+        sys.exit(cmd_all(None if a[1] == "-" else a[1], tuple(a[2].split(","))))
     if a[:1] == ["check"] and len(a) in (2, 3):
         sys.exit(cmd_check(a[1], a[2] if len(a) == 3 else "dft"))
     if a[:1] == ["gate_prev"]:

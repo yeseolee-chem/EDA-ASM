@@ -262,6 +262,208 @@ def _f0run(ids):
     return 0
 
 
+# ================================================================ root argument (D1G2 T-1 / Phase F)
+# runroot / mergeroot (docs/specs/D1G2.md §4 T-1, §8): the same code with the input root as an argument. The rev 4-6
+# modules read their roots from the environment at interpreter start, so runroot (Phase F environment, check_env as
+# run) starts a child interpreter with G1_ROOT=<root>, ESPLEY_OUT=<out>/xtb, R5_SCRATCH=<out>/r5 (own ext cache),
+# D1PAIR_PHASE=FROOT and ESPLEY_LABELS / ESPLEY_META / ESPLEY_PROF = L / M / P when given; slices (run naming) and the
+# selection record {tag}_root.json under <out>/xtb/f_slices. mergeroot = merge_rows + the F_ok selection into <x182_path>
+# (rxn_id + the 182 columns) + <report_json>, without the D1PAIR row flow (G_prep.csv / G_rows.csv). Both write only
+# under $D1G2_SCRATCH (/gpfs/tmp_cpu2/yeseo1ee/d1_g2) or analysis/d1_g2/results. Not in the module docstring (= the
+# usage text of the D1PAIR commands, unchanged); ROOT_USAGE is printed for their own argument errors.
+ROOT_USAGE = """D1G2 (docs/specs/D1G2.md 4 T-1, 8), Phase F environment:
+  python d1_features.py runroot <root> <out> <ids.csv | i n | ids.csv i n> [--labels L] [--meta M] [--prof P]
+                                        # 'run' on any G1-format root (the .done rxns of <root>, restricted to the
+                                        # rxn_id column of ids.csv, slice i of n; ids.csv alone = slice 0 of 1)
+  python d1_features.py mergeroot <out> <x182_path> <report_json>   # 'merge' of the runroot slices of <out>"""
+G2_SCRATCH = Path(os.environ.get("D1G2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/d1_g2"))
+G2_RES = C.REPO / "analysis" / "d1_g2" / "results"
+ROOT_WRITE_OK = (G2_SCRATCH, G2_RES)                   # D1G2 spec 13: new files only under $G2 / analysis/d1_g2
+ROOT_ENV = ("G1_ROOT", "ESPLEY_OUT", "R5_SCRATCH", "D1PAIR_PHASE", "ESPLEY_LABELS", "ESPLEY_META", "ESPLEY_PROF")
+
+
+def assert_root_write_ok(path):
+    """runroot / mergeroot writes: d1pair_common.assert_write_ok (rev 4-6 / D1 inputs; Path.relative_to compares whole
+    components, so /gpfs/tmp_cpu2/yeseo1ee/d1_g2 is not inside the protected /gpfs/tmp_cpu2/yeseo1ee/d1) and inside
+    ROOT_WRITE_OK (symlinks resolved); exit 3 otherwise."""
+    C.assert_write_ok(path)
+    p = Path(path).resolve()
+    for ok in ROOT_WRITE_OK:
+        try:
+            p.relative_to(Path(ok).resolve())
+            return p
+        except ValueError:
+            continue
+    print(f"STOP: write path {p} is outside {', '.join(map(str, ROOT_WRITE_OK))}", file=sys.stderr)
+    sys.exit(3)
+
+
+def root_ids(root, ids_csv=None):
+    """(sorted .done rxn ids of root [restricted to the rxn_id column of ids_csv], {requested rxn id without .done:
+    root:<its .fail_ marker> | root:no_marker | root:missing}). Only all-digit folder names count: a writer's
+    <rxn_id>.tmp folder (g2_autode: .done is written before the rename) is skipped and printed."""
+    root = Path(root)
+    names = [p.parent.name for p in root.glob("*/.done")]
+    skip = sorted(n for n in names if not n.isdigit())
+    if skip:
+        print(f"[root] {len(skip)} non-rxn folders with .done skipped: {skip[:20]}", flush=True)
+    done = sorted(int(n) for n in names if n.isdigit())
+    if ids_csv is None:
+        return done, {}
+    want = set(int(r) for r in pd.read_csv(ids_csv).rxn_id)
+    miss = {}
+    for r in sorted(want - set(done)):
+        d = root / str(r)
+        fails = sorted(p.name for p in d.glob(".fail_*")) if d.is_dir() else []
+        miss[r] = "root:" + (fails[0][1:] if fails else ("no_marker" if d.exists() else "missing"))
+    return [r for r in done if r in want], miss
+
+
+def cmd_runroot(root, out, sel, labels=None, meta=None, prof=None):
+    DG.check_env()
+    if os.environ.get("D1PAIR_PHASE") != "F":
+        print("STOP: runroot needs the Phase F environment (D1PAIR_PHASE=F, PYENV=venv5)", file=sys.stderr); return 3
+    if len(sel) not in (1, 2, 3):
+        raise SystemExit(ROOT_USAGE)
+    ids_csv = str(Path(os.path.abspath(sel[0]))) if len(sel) != 2 else None
+    i, n = (0, 1) if len(sel) == 1 else (int(sel[-2]), int(sel[-1]))
+    if not 0 <= i < n:
+        raise SystemExit(f"slice {i} of {n}?")
+    root, out = Path(os.path.abspath(root)), Path(os.path.abspath(out))
+    if not root.is_dir():
+        print(f"STOP: root {root} is not a folder", file=sys.stderr); return 3
+    sdir = out / "xtb" / "f_slices"
+    for p in (sdir, out / "r5"):
+        assert_root_write_ok(p)
+    done, miss = root_ids(root, ids_csv)
+    ids = done[i::n]
+    tag = f"slice{i:02d}of{n:02d}"
+    print(f"[F root slice {i}/{n}] {len(ids)} rxns of {len(done)} .done ({len(miss)} requested without .done), root "
+          f"{root}, out {out}", flush=True)
+    if not ids:
+        print(f"GATE: slice {tag} has no rxn", file=sys.stderr); return 2
+    env = {**os.environ, "G1_ROOT": str(root), "ESPLEY_OUT": str(out / "xtb"), "R5_SCRATCH": str(out / "r5"),
+           "D1PAIR_PHASE": "FROOT"}
+    for k, v in (("ESPLEY_LABELS", labels), ("ESPLEY_META", meta), ("ESPLEY_PROF", prof)):
+        if v is not None:
+            env[k] = str(Path(os.path.abspath(v)))
+    if not (Path(env["ESPLEY_LABELS"]).is_file() and Path(env["ESPLEY_META"]).is_file()
+            and Path(env["ESPLEY_PROF"]).is_dir()):
+        print(f"STOP: labels / meta / prof missing: {[env[k] for k in ROOT_ENV[4:]]}", file=sys.stderr); return 3
+    rec = dict(root=str(root), ids_csv=ids_csv, ids_csv_sha256=C.sha256(ids_csv) if ids_csv else None, i=i, n=n,
+               env={k: env[k] for k in ROOT_ENV}, labels_sha256=C.sha256(env["ESPLEY_LABELS"]),
+               meta_sha256=C.sha256(env["ESPLEY_META"]), n_ids=len(ids), ids=ids)
+    f = sdir / f"{tag}_root.json"
+    if f.is_file() and json.loads(f.read_text()) != json.loads(json.dumps(rec)):
+        print(f"STOP: {f} was made for another root / selection / environment (use a fresh <out>)", file=sys.stderr)
+        return 3
+    if not f.is_file():
+        assert_root_write_ok(f)
+        C.write_json_safe(f, rec)
+    r = subprocess.run([sys.executable, str(HERE / "d1_features.py"), "_rootrun", tag, str(f)], env=env)
+    if r.returncode != 0:
+        print(f"STOP: runroot child exit {r.returncode}", file=sys.stderr); return 3
+    return 0
+
+
+def _rootrun(tag, rec_path):
+    """child of runroot: exit 3 unless the rev 4-6 modules picked up the root environment, then run_ids."""
+    import aggregate
+    import fragmenter as fr
+    import r6_partition as RP
+    import rev5_common as R5
+    import xtb_slice as xs
+    rec = json.loads(Path(rec_path).read_text())
+    e = rec["env"]
+    bad = {k: (os.environ.get(k), v) for k, v in e.items() if os.environ.get(k) != v}
+    if bad or e["D1PAIR_PHASE"] != "FROOT":
+        print(f"STOP: child environment differs from {rec_path}: {bad}", file=sys.stderr); return 3
+    paths = dict(R5_G1_ROOT=(R5.G1_ROOT, "G1_ROOT"), xtb_slice_g1=(xs.GEOM_ROOT["g1"], "G1_ROOT"),
+                 R5_SCRATCH=(R5.SCRATCH, "R5_SCRATCH"), R5_XTB_ROOT=(R5.XTB_ROOT, "ESPLEY_OUT"),
+                 aggregate_ROOT=(aggregate.ROOT, "ESPLEY_OUT"), R5_LABELS=(R5.LABELS, "ESPLEY_LABELS"),
+                 xtb_slice_LABELS=(xs.LABELS_PATH, "ESPLEY_LABELS"), R5_META=(R5.META, "ESPLEY_META"),
+                 xtb_slice_META=(xs.META, "ESPLEY_META"), R5_PROF=(R5.PROF, "ESPLEY_PROF"),
+                 r6_partition_PROF=(RP.PROF, "ESPLEY_PROF"))
+    bad = {k: (str(p), e[v]) for k, (p, v) in paths.items() if Path(p) != Path(e[v])}
+    si = (os.environ.get("D1PAIR_SI_PATCH"), fr.COV.get("Si"), fr.Z.get("Si"), R5.BONDI.get("Si"), R5.GFN2_VALENCE.get("Si"))
+    if bad or xs.PARTITION_MODE != "label" or si != ("1", 1.11, 14, 2.10, 4):
+        print(f"STOP: modules not on the root environment: {bad}, partition {xs.PARTITION_MODE}, Si {si}", file=sys.stderr)
+        return 3
+    for p in (R5.XTB_ROOT, R5.SCRATCH):
+        assert_root_write_ok(p)
+    run_ids([int(x) for x in rec["ids"]], tag, R5.XTB_ROOT / "f_slices", R5.SCRATCH / "ext",
+            int(os.environ.get("SLURM_CPUS_PER_TASK", "4")))
+    return 0
+
+
+def cmd_mergeroot(out, x182_path, report):
+    DG.check_env()
+    out, x182_path, report = (Path(os.path.abspath(p)) for p in (out, x182_path, report))
+    for p in (out / "xtb", x182_path, report):
+        assert_root_write_ok(p)
+    sd = out / "xtb" / "f_slices"
+    g1p, exp = sorted(sd.glob("slice*_g1.parquet")), sorted(sd.glob("slice*_ext.parquet"))
+    n = {p.name.split("of")[1][:2] for p in g1p}
+    if len(n) != 1 or len(g1p) != int(n.pop()) or len(exp) != len(g1p):
+        print(f"GATE: incomplete slices {len(g1p)} g1 / {len(exp)} ext", file=sys.stderr); return 2
+    vers = {p.name: json.loads(p.read_text()) for p in sorted(sd.glob("slice*_versions.json"))}
+    v0 = check_engines()
+    if len(vers) != len(g1p) or any(json.loads(json.dumps(v)) != json.loads(json.dumps(v0)) for v in vers.values()):
+        print(f"STOP: slice engine versions differ or are missing: {vers}", file=sys.stderr); return 3
+    recs = [json.loads(p.read_text()) for p in sorted(sd.glob("slice*_root.json"))]
+    same = {json.dumps({k: r[k] for k in ("root", "ids_csv", "ids_csv_sha256", "n", "env", "labels_sha256",
+                                         "meta_sha256")}, sort_keys=True) for r in recs}
+    if len(recs) != len(g1p) or len(same) != 1 or sorted(r["i"] for r in recs) != list(range(len(g1p))):
+        print(f"STOP: slice root records missing or from different roots / selections ({len(recs)} records)",
+              file=sys.stderr); return 3
+    r0 = recs[0]
+    ids = sorted(int(x) for r in recs for x in r["ids"])
+    g, e, m, cols = merge_rows(g1p, exp)
+    if sorted(g.rxn_id) != ids:
+        print(f"STOP: g1feat rows {len(g)} != recorded slice rxns {len(ids)}", file=sys.stderr); return 3
+    if r0["ids_csv"] and C.sha256(r0["ids_csv"]) != r0["ids_csv_sha256"]:
+        print(f"STOP: {r0['ids_csv']} changed since runroot", file=sys.stderr); return 3
+    done, miss = root_ids(r0["root"], r0["ids_csv"])
+    if done != ids:
+        print(f"STOP: .done rxns of {r0['root']} ({len(done)}) changed since runroot ({len(ids)})", file=sys.stderr)
+        return 3
+    x = m.loc[m.F_ok, ["rxn_id"] + cols].sort_values("rxn_id").reset_index(drop=True)
+    gp, ep = out / "xtb" / "xtb_features_g1_d1.parquet", out / "xtb" / "xtb_features_ext_g1_d1.parquet"
+    C.write_atomic(gp, lambda t: g.to_parquet(t, index=False))
+    C.write_atomic(ep, lambda t: e.to_parquet(t, index=False))
+    C.write_atomic(x182_path, lambda t: x.to_parquet(t, index=False))
+    x0 = pd.read_parquet(C.X182_D1)
+    mm = m.set_index("rxn_id")
+    why = {}
+    for rid in ids:
+        if mm.loc[rid, "xtb_status"] != "ok":
+            why[rid] = f"g1feat:{mm.loc[rid, 'xtb_status']}"
+        elif mm.loc[rid, "ext_status"] != "ok":
+            why[rid] = f"ext:{mm.loc[rid, 'ext_status']}"
+        elif mm.loc[rid, "n_nonfinite"]:
+            why[rid] = "nonfinite_182"
+        else:
+            why[rid] = "ok"
+    why.update(miss)
+    import ext_features as ef
+    rep = dict(root=r0["root"], out=str(out), ids_csv=r0["ids_csv"], ids_csv_sha256=r0["ids_csv_sha256"],
+               n_slices=len(g1p), env=r0["env"], labels_sha256=r0["labels_sha256"], meta_sha256=r0["meta_sha256"],
+               n_requested=len(ids) + len(miss) if r0["ids_csv"] else None, n_done=len(ids), n_feat=len(x),
+               F_fail_rate=(len(ids) - len(x)) / len(ids),
+               x182=dict(path=str(x182_path), sha256=C.sha256(x182_path), n=len(x),
+                         columns_equal_X182_d1=list(x.columns) == list(x0.columns)),
+               sha256=dict(g1=C.sha256(gp), ext=C.sha256(ep)),
+               reasons=pd.Series(list(why.values()), dtype=object).value_counts().to_dict(),
+               not_ok={str(r): w for r, w in sorted(why.items()) if w != "ok"},
+               xtb_status=m.xtb_status.value_counts().to_dict(), ext_status=m.ext_status.value_counts().to_dict(),
+               F1_all_finite=bool(np.isfinite(x[cols].to_numpy(float)).all()), versions=ef.versions(), versions_slices=vers,
+               si_decision=C.SI_DECISION)
+    rep["stop"] = not rep["x182"]["columns_equal_X182_d1"] or not rep["F1_all_finite"]
+    C.write_json_safe(report, rep)
+    print(json.dumps({k: v for k, v in rep.items() if k != "not_ok"}, indent=1, default=str))
+    return 3 if rep["stop"] else 0
+
+
 # ================================================================ pair sets (§2-5)
 def p4_v2(pairs):
     """stereo rule v2 of d1_phase_p for (a_job, b_job) pairs -> list of v2 status."""
@@ -377,6 +579,24 @@ if __name__ == "__main__":
         sys.exit(cmd_run(int(a[1]), int(a[2])))
     if cmd == "_f0run":
         sys.exit(_f0run(a[1]))
+    if cmd == "runroot":
+        pos, opt = a[1:], {}
+        for k in ("--labels", "--meta", "--prof"):
+            if k in pos:
+                j = pos.index(k)
+                if j + 1 >= len(pos):
+                    raise SystemExit(ROOT_USAGE)
+                opt[k[2:]] = pos[j + 1]
+                del pos[j:j + 2]
+        if len(pos) < 3:
+            raise SystemExit(ROOT_USAGE)
+        sys.exit(cmd_runroot(pos[0], pos[1], pos[2:], **opt))
+    if cmd == "_rootrun":
+        sys.exit(_rootrun(a[1], a[2]))
+    if cmd == "mergeroot":
+        if len(a) != 4:
+            raise SystemExit(ROOT_USAGE)
+        sys.exit(cmd_mergeroot(a[1], a[2], a[3]))
     fn = {"merge": cmd_merge, "f0check": cmd_f0check, "pairs": cmd_pairs}.get(cmd)
     if fn is None:
         raise SystemExit(__doc__)
