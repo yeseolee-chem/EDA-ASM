@@ -50,6 +50,7 @@ VERSIONS = dict(FU2_ATOM_VERSION="fu2-atoms-3-g2", FU2_TOKEN_VERSION="fu2-tokens
 FINAL_FILES = ("ts.xyz", "ts.hess", "rel1.xyz", "rel2.xyz", "result.json", "work/ts.hess")
 BAD_WORDS = re.compile(r"B3LYP|def2|CPCM|SMD", re.I)
 N_OK_MIN, COREH_MAX = 7, 50000.0
+N_XTB = [0]                                              # xtb xcontrol inputs seen by audit_inputs (S-1, reported)
 
 
 def s_list():
@@ -156,17 +157,25 @@ def cmd_h():
 
 # ================================================================ report
 def audit_inputs(T):
-    """S-1 for one reaction: (n inputs, [problems], {name: text} of the OptTS inputs)."""
+    """S-1 for one reaction: (n ORCA inputs, [problems], {name: text} of the OptTS inputs); xtb xcontrol inputs (first
+    line '$...', make_reference scans) are counted in N_XTB and only checked for the forbidden words."""
     f = G.G2_JOBS / T / "inputs.tar.gz"
     if not f.is_file():
         return 0, [f"{T}: no inputs.tar.gz"], {}
-    n, bad, ex = 0, [], {}
+    n, bad, ex, n_xtb = 0, [], {}, N_XTB
     with tarfile.open(f, "r:gz") as t:
         for m in t:
             if not (m.isfile() and m.name.endswith(".inp")):
                 continue
-            n += 1
             txt = t.extractfile(m).read().decode(errors="replace")
+            first = next((ln.strip() for ln in txt.splitlines() if ln.strip()), "")
+            if first.startswith("$"):                      # xtb xcontrol (make_reference rotatability scan), not ORCA
+                n_xtb[0] += 1
+                w = sorted(set(x.upper() for x in BAD_WORDS.findall(txt)))
+                if w:
+                    bad.append(f"{T}/{m.name} (xtb input): {w}")
+                continue
+            n += 1
             bang = " ".join(ln for ln in txt.splitlines() if ln.lstrip().startswith("!"))
             if "XTB2" not in bang or "ALPB(water)" not in bang:
                 bad.append(f"{T}/{m.name}: '!' lines {bang!r}")
@@ -258,7 +267,7 @@ def cmd_report():
               g2_median_x_N=float(D.core_h.median() * len(X)),
               fit_hf=dict(a=ha, b=hb, n=int(hk.sum())), hf_total_core_h=hf_tot, total_core_h=tot, limit=COREH_MAX,
               n_targets=len(X), sum_n_atoms=float(N.sum()))
-    chk = {"S-1": dict(n_inputs=s1_n, problems=s1_bad[:30], pass_=not s1_bad and s1_n > 0),
+    chk = {"S-1": dict(n_inputs=s1_n, n_xtb_inputs=N_XTB[0], problems=s1_bad[:30], pass_=not s1_bad and s1_n > 0),
            "S-2": dict(n_reached=s2_reached, problems=s2_bad, pass_=not s2_bad and s2_reached > 0),
            "S-3": dict(problems=s3_bad, pass_=not s3_bad),
            "S-4": dict(n_ok=n_ok, n=len(D), min_ok=N_OK_MIN, pipeline_errors=pipe, pass_=n_ok >= N_OK_MIN and not pipe),
