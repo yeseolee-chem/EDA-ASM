@@ -1,0 +1,120 @@
+# D1-G2 config = d1_run/config_run.yaml (sha256 9f24da4e...) with only scratch and orca_optts_block changed (docs/specs/D1G2.md 2).
+# The ORCA hmethod keyword sets (XTB2 ALPB(water) only) are set by analysis/d1_g2/g2_autode.py after
+# pilot_common.configure_autode, which still reads the functional / basis keys below and is then overridden.
+# D1 run — config (SPEC_D1_RUN §4.3). Method and gate blocks are FROZEN: they are copied verbatim from
+# D1_build/validation/config_val.yaml (the pre-registered, validated settings; commit 85214ce) and define
+# parity with the D0 labels (labels_all.json). Only the "host" block and the "run" block may be edited.
+
+# ---------------------------------------------------------------- host (EDIT for this server)
+repo_root: /gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/EDA-ASM      # UBAI (Nurion: /home01/e1977a01/d1_env/EDA-ASM)
+scratch: /gpfs/tmp_cpu2/yeseo1ee/d1_g2                         # D1-G2 (spec D1G2.md): job folders $G2/jobs/<T>
+conda_sh: null
+conda_env: null
+venv: /gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/venv                # UBAI: python 3.9.5 venv, same packages (ubai/install.slurm)
+orca_bin: /home1/yeseo1ee/orca_6_1_1_avx2/orca       # UBAI install = Nurion's shared_openmpi418_avx2 build, all 3,030 files sha256-equal (ubai/premigration)
+xtb_bin: /gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/xtb-6.7.1/bin/xtb
+mpi_root: /gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/openmpi-4.1.8f   # Nurion's OpenMPI 4.1.8f rebuilt on UBAI (same source + configure; no XPMEM/UCX)
+g16_bin: null                                      # stays null: the TS engine is ORCA (validated); changing it is a user decision
+cpus_per_task: 8
+maxcore_mb: 3000                                   # autodE %maxcore per core (TS stage); SPs keep 3500 (frozen below)
+
+# ---------------------------------------------------------------- D0 references (read-only; only the two control reactions are needed)
+labels_all: labels_all.json                        # relative to repo_root
+d0_profiles: /gpfs/tmp_cpu2/yeseo1ee/d1/d1_run/d0_profiles     # D0 대조 2행(20, 105)만 복사해 둠
+d0_csv: null                                       # full_dataset.csv            (only for the optional D0-wide S0 steps)
+d0_inputs_standalone: null                         # UBAI-only D0 input files    (only for the optional byte-parity step)
+d0_inputs_eda_smd: null
+
+# ---------------------------------------------------------------- method (FROZEN)
+ts_stage:
+  engine: orca
+  functional: B3LYP
+  dispersion: D3BJ
+  opt_basis: def2-SVP
+  sp_basis: def2-TZVP
+  solvent: water
+  solvation: smd
+  temp_K: 298.15
+  hmethod_conformers: false
+  free_energy: true
+  orca_optts_block: "\n%geom\nCalc_Hess true\nRecalc_Hess 5\nMaxIter 200\nend"   # D1-G2: the G1 block (spec 2); D1 was Recalc_Hess 30 / Trust -0.1 / MaxIter 100
+  g16_ts: "Opt=(TS, CalcFC, NoEigenTest, MaxCycles=100, MaxStep=10, NoTrustUpdate, RecalcFC=30)"
+  g16_iop: "IOp(2/9=2000)"
+  g16_disp: "EmpiricalDispersion=GD3BJ"
+
+sp_stage:
+  eda_level: "B3LYP D3BJ def2-TZVP SMD(water) NoSym TightSCF"
+  frag_level: "B3LYP D3BJ def2-TZVP CPCM(water) NoSym TightSCF"
+  frag_solv_block: "%cpcm\n  smd true\n  smdsolvent \"water\"\nend\n\n"
+  maxcore_mb: 3500
+  eda_nprocs: 8                 # SPEC_D1_FIX1 §4 (user decision 2026-10-05): the only change allowed in the frozen blocks
+  covalent_factor: 1.25
+
+# ---------------------------------------------------------------- gates (FROZEN)
+gates:
+  identity_tol: 1.0e-6          # G1  |d1 + d2 + eint_spe - barrier|
+  bond_ref_tol: 0.02            #     |E(AB) - E(eda_frag1) - E(eda_frag2) - Bond Energy|
+  closure_tol: 0.11             # G2  |sum6ch - Bond|   and   G3  |d1 + d2 + sum6ch + bsse_shift - barrier|
+  enuc_tol_eh: 1.0e-6
+  min_imag_cm: -40
+  extra_imag_tol_cm: -50
+  forming_max_A: 3.0
+  forming_min_A: 1.6
+  no_bond_A: 3.3
+  mode_share_min: 0.5
+  d_min_kcal: -0.5
+  control_barrier_tol: 1.0
+  control_channel_tol: 1.0
+  control_dform_tol_A: 0.05
+
+report:
+  ref_corrected_autode: true
+  copy_geometries: true
+
+seed: 20261003
+
+# ---------------------------------------------------------------- run (executor settings; not criteria)
+run:
+  worker_safety_h: 2            # a worker stops claiming when less than this is left of its wall time
+                                # (generation model, user decision 2026-10-05: rows cut at the wall time resume next generation)
+  n_workers: 10                 # unused in the generation model — main_submit.sh cycle sizes each generation from the remaining rows
+  retry_infra_once: true        # SPEC §9.3
+  replay_tol_kcal: 0.1          # pilot P2: D0_replay vs labels_all, 9 targets
+  same_ts: {rmsd_A: 0.10, dform_A: 0.02}
+  nc: 8                         # cores per reaction = cpus_per_task (SPEC_D1_FIX1 §2: worker and run_task refuse to run otherwise)
+  bands:                        # reactions per node by molecule size (heavy atoms), 8 cores each. Same MPI ranks per node as the
+    - {min: 0,  max: 99, slots: 1}    # UBAI: one 8-core reaction per SLURM job, 10 jobs at once (user 2026-10-13). Nurion: 0-14/15-19 8, 20-24 6, 25-99 4 slots per KNL node
+  local_trees: [ts, sp]         # stages whose working tree lives in node memory ($TMPDIR is tmpfs, 84.7 GB — nodelocal_probe
+                                # 2026-10-05); /scratch keeps one checkpoint tar per stage, refreshed every 10 min
+  row_growth_files: 70          # /scratch files one in-flight reaction may hold with local trees (measured 2026-10-05:
+                                # TS stage ~20, SP stage ~60 = top 19 + ref 33 + dirs/tars/links/queue ~8; ~130 only for the
+                                # minutes between SP end and pack). Without local trees it is ~1,300 — run_task.sh refuses to
+                                # run (exit 3) rather than fall back to /scratch trees when local_trees is set.
+  quota_files_frac: 0.85        # new claims stop when files used + in-flight growth would pass this share of the limit
+  interim_stop_kills: false     # §9.4 as written: an interim STOP only stops new claims (running calculations finish); true would also write STOP_NOW
+  long_pool:                    # long queue (120 h, 30 jobs per user) — user arrangement 2026-10-05: all 11,596 rows at once
+    enabled: false              # UBAI: off — every job is 48 h (CLAUDE.md); Nurion: true (long queue 120 h)
+    select: cy_d                # carbonyl ylide D skeletons (slowest-risk class) + parked; per size band (run.bands slots)
+    jobs: 30
+    slots: 8                    # (only for the old "largest" selection)
+    risk: 2.0                   # sizing: predicted hours x risk (T02894 took 2x the model)
+    fill_h: 100                 # predicted hours per slot to fill (walltime 120)
+    walltime_h: 120
+  tasks_file: tasks_all.csv     # user decision 2026-10-05: all 11,596 rows at once (overrides FIX1 §8 stage-1-only and the §9 hold);
+                                # tasks.csv - T02935 with pred_h (make_tasks_all.py), largest first
+  max_priority_start: null      # no priority gate (tasks.csv priority = attachment stage 1-4)
+  hold_rule: false              # FIX1 §9 hold rule off (user decision 2026-10-05) — it would hold stages 2-3 by their priority value
+  fill_h: 36                    # each 48 h job gets ~36 h of predicted work per slot (x1.3 still fits); slots take the largest first
+  pred_margin: 1.3              # a slot claims a row only if pred_h / speed x margin fits in the time left
+  long_priority: null           # (stage-1 plan used 3) — FIX1 §9 priority 3 (D-skeleton carbonyl ylides, slowest): only the long pool (120 h) takes them
+                                # ($Q/long_prio; KNL normal and SKL skip them). main_submit.sh topup sends them to -q long.
+  skl_pool:                     # SKL (norm_skl: Xeon Gold 6148, 40 cores, 187 GB; ~6x KNL per process — results/HW_REPORT_skl.md)
+    enabled: false              # UBAI: off — no second CPU class queue (Nurion: true, norm_skl took the largest rows; KNL normal skipped $Q/skl.list)
+    jobs: 5                     # norm_skl max_run 5 per user
+    slots: 5                    # 40 cores / 8
+    ncpus: 40
+    speed: 5.5                  # SKL / KNL per process (HW_REPORT: 6.4x single, 5.9x at 8 processes)
+    rows: 150                   # (used only without pred_h; with pred_h the SKL share is jobs x slots x fill_h x speed)                   # 2026-10-05 plan: top 150 of stage-1 priority 0-1 (~16 h on 25 SKL slots, model)
+    walltime_h: 48
+  ledger_dir: /gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_ledger            # UBAI (Nurion: /home01/e1977a01/d1_ledger)
+  outbox_dir: /gpfs/tmp_cpu2/yeseo1ee/d1/d1_scratch/outbox   # UBAI (Nurion: /scratch/e1977a01/d1_scratch/outbox)
