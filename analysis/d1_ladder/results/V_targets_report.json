@@ -1,0 +1,139 @@
+{
+ "phase": "V-1",
+ "code_version": "d1-ladder-v1",
+ "code_sha": "6501d12b9ce739feda19a0299e70c5634df5ef2f3e75922b0eeed080b5585f64",
+ "started": "2026-10-22 23:30:52",
+ "git_head": "9783236abbd64d22b5b8d4ccd571287555a62ea1",
+ "decisions": {
+  "V1_env": "targets/chain/decide/collect reactot; check/work/conf/dft = D1 run env (autodE 1.4.5, RDKit 2024.3.2, xtb 6.7.1, ORCA 6.1.1, OpenMPI 4.1.8f)",
+  "V2_targets": "(a) dev > 0.5; (b) dipolarophile keys with a D / Dp row; constrained excluded; (c) one default_rng(20261023): 10 dipolarophiles then 10 dipoles from the sorted rest",
+  "V3_trial": "cyclooctyne + 3,3-dimethylcyclooctyne + 8 of sorted (a) with a fresh default_rng(20261023)",
+  "V4_anchor": "lowest label reference with D1-HF orig + hf inputs; all structures in its atom order; its inputs = templates",
+  "V5_forms": "D1 references deduped (dE < 0.05 or RMSD < 0.1) = forms, kept with D1 values, xTB-relaxed into the dedupe pool first; DFT on the 5 lowest new search conformers",
+  "V6_etkdg": "ETKDGv3 defaults, randomSeed 20261023, 300, no pre-pruning, with H",
+  "V7_rr": "autodE get_simanl_conformer x 300 round robin over the forms + autodE prunes; seeded RandomState(20261023+n)",
+  "V8_xtb": "--opt tight --alpb water --gfn 2 --chrg q --uhf 0; graph iso to anchor; stereo3d_sig = the key's signature (unique D1 signature, else the Q E_min source's); not checkable -> molecule failed (no V replacement)",
+  "V9_dft_text": "autodE ORCA text reproduced byte for byte (checked on D1 run inputs); ORCA run directly",
+  "V10_imag": "any freq < 0 -> one 1.0 A displacement + Opt/Freq; any freq < 0 after that = failure 'imag' (spec V-3); the -50 cm-1 (config extra_imag_tol_cm) count is a reported sensitivity only",
+  "V11_sp": "label SP = template with coordinates replaced (checked), no retry; HF route A == route B, D1-HF retry rule; valid conformer = both SPs ok; every ORCA output = 6.1.1 (487d211c) or STOP",
+  "V12_repro": "trial anchors rerun unchanged: |dE| <= 0.05 kcal/mol vs label and labels_d1_hf, else STOP",
+  "V13_v4": "replace iff E_min(Q) - E_V > 0.05; Q-4/Q-5 via refs_q with tag cr2; gates V-a, V-c, V-e added",
+  "V14_hf_refs": "HF of final references: own / Q source / V SP -> $LAD/refs_cr2.parquet",
+  "V15_cost": "estimate = max(mean x N, n_atoms^3 scaling) of allocated core-h; <= 5000 -> go",
+  "V16_layout": "trial 2 tasks %2; main K tasks (K = --max-run, default 4), throttle min(K, 4 - other LADDER tasks); 8 CPUs 48G; chain launcher resubmits; round limit (main from the estimate) -> STOP when hit",
+  "V17_name": "refs_v.py (task) instead of refs.py (spec 8)",
+  "V18_lock": "per-molecule O_EXCL lock with the SLURM job id; held by a live job -> skipped; dead owner -> taken over",
+  "V19_shared_writes": "check.json / STOP written with a per-process temporary name (parallel array tasks)",
+  "V20_mpirun": "check requires mpirun on PATH under $MPI_ROOT"
+ },
+ "found": {
+  "rr_tool": "autodE 1.4.5 conf_gen.get_simanl_conformer (make_reference.coley_port step 4; autodE RR conformer generator) + Conformers.prune_on_energy(e_tol=1e-10), prune_on_rmsd() (0.3 A)",
+  "rr_seed_in_d1": "np.random.RandomState() without a seed (autode/conformers/conf_gen.py get_simanl_atoms)",
+  "autode_rr_for_8_rings": "autode/smiles/smiles.py init_organic_smiles: max_ring_n >= 8 -> init_smiles (RR conformers)",
+  "dft_level": "autodE opt / hess keywords of the D1 run (ts_result.json 'keywords'): 'Opt' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP) | 'Freq' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP)",
+  "orca_text": "autode/wrappers/ORCA.py generate_input_for: '!' words, %cpcm smd block, %output / %scf / Hirshfeld, '% maxcore' 3000, %pal nprocs 8, '*xyz q m' with '{:<3} {:^12.8f} x3' lines",
+  "label_inputs": "$HF/inputs/<job>/orig/frag{k}_rel.inp (D1-HF prep.py byte copies of the archive sp/*.inp)",
+  "hf_rule": "D1-HF prep.hf_text (hf_common.SUB on the '!' line); $HF/inputs/<job>/hf/frag{k}_rel.inp"
+ },
+ "stop": false,
+ "all_pass": true,
+ "q_report_sha256": "b57abc4d645e99dacf0f65350058d6a05fbd8cf2515c02d30eee117c26fabc19",
+ "autode_keywords": {
+  "n_jobs": 152,
+  "n_missing": 0,
+  "n_mismatch": 0,
+  "mismatch": [],
+  "expected": {
+   "opt": "'Opt' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP)",
+   "hess": "'Freq' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP)"
+  },
+  "ledger": {
+   "bad_tars": [],
+   "n_ubai": 0
+  }
+ },
+ "n_keys": 964,
+ "n_keys_by_kind": {
+  "dipolarophile": 330,
+  "dipole": 634
+ },
+ "n_constrained_keys": 445,
+ "n_constrained_excluded_from_a": 86,
+ "n_a": 95,
+ "n_b": 82,
+ "n_a_and_b": 45,
+ "n_c": 20,
+ "n_c_pool": {
+  "dipolarophile": 214,
+  "dipole": 173
+ },
+ "n_targets": 152,
+ "targets_by_kind": {
+  "dipolarophile": 126,
+  "dipole": 26
+ },
+ "a_by_kind": {
+  "dipolarophile": 79,
+  "dipole": 16
+ },
+ "trial": [
+  {
+   "mid": "V0022",
+   "key": "dipolarophile:C1#CCCCCCC1",
+   "why": "cyclooctyne"
+  },
+  {
+   "mid": "V0052",
+   "key": "dipolarophile:CC1(C)C#CCCCCC1",
+   "why": "3,3-dimethylcyclooctyne"
+  },
+  {
+   "mid": "V0054",
+   "key": "dipolarophile:CC1C#CCCCCC1",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0128",
+   "key": "dipole:CN(C)C#[N+][O-]",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0079",
+   "key": "dipolarophile:C[Si](C)(C)c1ccccc1C1C#CCCCCC1",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0068",
+   "key": "dipolarophile:COc1ccccc1C1=CC2CCC1C2",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0039",
+   "key": "dipolarophile:C=Cc1ccccc1N",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0141",
+   "key": "dipole:N#[N+][N-]c1ccccc1[N+](=O)[O-]",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0124",
+   "key": "dipolarophile:Oc1ccc(C2C#CCCCCC2)cc1",
+   "why": "random (a)"
+  },
+  {
+   "mid": "V0041",
+   "key": "dipolarophile:C=Cc1ccccc1[Si](C)(C)C",
+   "why": "random (a)"
+  }
+ ],
+ "n_anchor_not_q_src": 0,
+ "n_refs_total": 5197,
+ "outputs": {
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_targets.csv": "d8cefffe8739d1b5774394e17d576b6aae8b730a5af972a632160444eb227c3b",
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_trial.csv": "84fc9b7b9c9e1ad4df12d3f6a414429f02b38aa02794e16aed76f1876777ab22"
+ },
+ "finished": "2026-10-22 23:31:05",
+ "wall_s": 12.7
+}
