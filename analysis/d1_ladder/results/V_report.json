@@ -1,0 +1,597 @@
+{
+ "phase": "V-4",
+ "code_version": "d1-ladder-v1",
+ "code_sha": "6501d12b9ce739feda19a0299e70c5634df5ef2f3e75922b0eeed080b5585f64",
+ "started": "2026-10-23 15:48:28",
+ "git_head": "825c8017a2fe63f0aa934c39b83cc6f4b5291bef",
+ "decisions": {
+  "V1_env": "targets/chain/decide/collect reactot; check/work/conf/dft = D1 run env (autodE 1.4.5, RDKit 2024.3.2, xtb 6.7.1, ORCA 6.1.1, OpenMPI 4.1.8f)",
+  "V2_targets": "(a) dev > 0.5; (b) dipolarophile keys with a D / Dp row; constrained excluded; (c) one default_rng(20261023): 10 dipolarophiles then 10 dipoles from the sorted rest",
+  "V3_trial": "cyclooctyne + 3,3-dimethylcyclooctyne + 8 of sorted (a) with a fresh default_rng(20261023)",
+  "V4_anchor": "lowest label reference with D1-HF orig + hf inputs; all structures in its atom order; its inputs = templates",
+  "V5_forms": "D1 references deduped (dE < 0.05 or RMSD < 0.1) = forms, kept with D1 values, xTB-relaxed into the dedupe pool first; DFT on the 5 lowest new search conformers",
+  "V6_etkdg": "ETKDGv3 defaults, randomSeed 20261023, 300, no pre-pruning, with H",
+  "V7_rr": "autodE get_simanl_conformer x 300 round robin over the forms + autodE prunes; seeded RandomState(20261023+n)",
+  "V8_xtb": "--opt tight --alpb water --gfn 2 --chrg q --uhf 0; graph iso to anchor; stereo3d_sig = the key's signature (unique D1 signature, else the Q E_min source's); not checkable -> molecule failed (no V replacement)",
+  "V9_dft_text": "autodE ORCA text reproduced byte for byte (checked on D1 run inputs); ORCA run directly",
+  "V10_imag": "any freq < 0 -> one 1.0 A displacement + Opt/Freq; any freq < 0 after that = failure 'imag' (spec V-3); the -50 cm-1 (config extra_imag_tol_cm) count is a reported sensitivity only",
+  "V11_sp": "label SP = template with coordinates replaced (checked), no retry; HF route A == route B, D1-HF retry rule; valid conformer = both SPs ok; every ORCA output = 6.1.1 (487d211c) or STOP",
+  "V12_repro": "trial anchors rerun unchanged: |dE| <= 0.05 kcal/mol vs label and labels_d1_hf, else STOP",
+  "V13_v4": "replace iff E_min(Q) - E_V > 0.05; Q-4/Q-5 via refs_q with tag cr2; gates V-a, V-c, V-e added",
+  "V14_hf_refs": "HF of final references: own / Q source / V SP -> $LAD/refs_cr2.parquet",
+  "V15_cost": "estimate = max(mean x N, n_atoms^3 scaling) of allocated core-h; <= 5000 -> go",
+  "V16_layout": "trial 2 tasks %2; main K tasks (K = --max-run, default 4), throttle min(K, 4 - other LADDER tasks); 8 CPUs 48G; chain launcher resubmits; round limit (main from the estimate) -> STOP when hit",
+  "V17_name": "refs_v.py (task) instead of refs.py (spec 8)",
+  "V18_lock": "per-molecule O_EXCL lock with the SLURM job id; held by a live job -> skipped; dead owner -> taken over",
+  "V19_shared_writes": "check.json / STOP written with a per-process temporary name (parallel array tasks)",
+  "V20_mpirun": "check requires mpirun on PATH under $MPI_ROOT"
+ },
+ "found": {
+  "rr_tool": "autodE 1.4.5 conf_gen.get_simanl_conformer (make_reference.coley_port step 4; autodE RR conformer generator) + Conformers.prune_on_energy(e_tol=1e-10), prune_on_rmsd() (0.3 A)",
+  "rr_seed_in_d1": "np.random.RandomState() without a seed (autode/conformers/conf_gen.py get_simanl_atoms)",
+  "autode_rr_for_8_rings": "autode/smiles/smiles.py init_organic_smiles: max_ring_n >= 8 -> init_smiles (RR conformers)",
+  "dft_level": "autodE opt / hess keywords of the D1 run (ts_result.json 'keywords'): 'Opt' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP) | 'Freq' Functional(B3LYP) ResolutionOfIdentity(rijcosx) DispersionCorrection(D3BJ) BasisSet(def2-SVP) 'def2/J' EffectiveCorePotential(def2-ECP)",
+  "orca_text": "autode/wrappers/ORCA.py generate_input_for: '!' words, %cpcm smd block, %output / %scf / Hirshfeld, '% maxcore' 3000, %pal nprocs 8, '*xyz q m' with '{:<3} {:^12.8f} x3' lines",
+  "label_inputs": "$HF/inputs/<job>/orig/frag{k}_rel.inp (D1-HF prep.py byte copies of the archive sp/*.inp)",
+  "hf_rule": "D1-HF prep.hf_text (hf_common.SUB on the '!' line); $HF/inputs/<job>/hf/frag{k}_rel.inp"
+ },
+ "stop": false,
+ "all_pass": true,
+ "env": {
+  "python": "3.10.14",
+  "numpy": "1.26.4",
+  "pandas": "2.3.3",
+  "networkx": "3.4.2",
+  "host": "n115.hpc",
+  "rdkit": "2026.03.2"
+ },
+ "q_report_sha256": "b57abc4d645e99dacf0f65350058d6a05fbd8cf2515c02d30eee117c26fabc19",
+ "targets_report_sha256": "bba09da4791516406d1776c06b03a5937a4f33b41bad79e62788247ca7a9b2ba",
+ "decide": {
+  "phase": "V-5",
+  "code_version": "d1-ladder-v1",
+  "started": "2026-10-23 02:37:11",
+  "stop": false,
+  "trial_failed_molecules": [],
+  "ready": true,
+  "trial": [
+   "V0079",
+   "V0068",
+   "V0124",
+   "V0041",
+   "V0052",
+   "V0054",
+   "V0022",
+   "V0039",
+   "V0141",
+   "V0128"
+  ],
+  "trial_core_h": {
+   "V0079": 10.345870572196112,
+   "V0068": 0.8391809256871542,
+   "V0124": 8.3595035733117,
+   "V0041": 1.8960404984156292,
+   "V0052": 3.6565818299187556,
+   "V0054": 5.706170138253106,
+   "V0022": 1.4459823560714722,
+   "V0039": 1.27913254737854,
+   "V0141": 0.8297777504391141,
+   "V0128": 0.5065991719563802
+  },
+  "trial_core_h_total": 34.864839363627965,
+  "trial_busy_core_h": 32.42446622133255,
+  "n_targets": 152,
+  "estimate": {
+   "mean_based": 529.945558327145,
+   "size_based_n_atoms3": 685.9646643899597,
+   "used": 685.9646643899597,
+   "limit": 5000.0,
+   "remaining": 651.0998250263317
+  },
+  "dft": {
+   "n_started": 23,
+   "n_fail": 0,
+   "rate": 0.0,
+   "statuses": {
+    "ok": 23
+   },
+   "rule": "failure = ORCA error / Opt not converged / any imaginary frequency after the one re-optimisation (spec V-3)",
+   "n_imag_after_reopt": 0,
+   "n_imag_fail_within_d1_tol": 0,
+   "rate_if_d1_tol": 0.0,
+   "note_d1_tol": "sensitivity only: the failure rate if modes above extra_imag_tol_cm (-50 cm-1) were kept"
+  },
+  "repro": [
+   {
+    "mid": "V0079",
+    "status": "ok",
+    "d_label_kcal": 0.0,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0068",
+    "status": "ok",
+    "d_label_kcal": -4.216881849500833e-07,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0124",
+    "status": "ok",
+    "d_label_kcal": 6.919938071419063e-09,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0041",
+    "status": "ok",
+    "d_label_kcal": 5.635825851980474e-09,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0052",
+    "status": "ok",
+    "d_label_kcal": 0.0,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0054",
+    "status": "ok",
+    "d_label_kcal": -1.284112219438589e-09,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0022",
+    "status": "ok",
+    "d_label_kcal": 1.3240623773766783e-07,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0039",
+    "status": "ok",
+    "d_label_kcal": 0.0,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0141",
+    "status": "ok",
+    "d_label_kcal": 0.0,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   },
+   {
+    "mid": "V0128",
+    "status": "ok",
+    "d_label_kcal": -1.0729470989086877e-07,
+    "d_hf_kcal": 0.0,
+    "label_status": "ok",
+    "hf_status": "ok"
+   }
+  ],
+  "repro_tol_kcal": 0.05,
+  "go": true,
+  "stop_reasons": [],
+  "finished": "2026-10-23 02:37:11"
+ },
+ "dft": {
+  "n_started": 505,
+  "n_fail": 16,
+  "rate": 0.031683168316831684,
+  "statuses": {
+   "ok": 489,
+   "fail:imag": 16
+  },
+  "rule": "failure = ORCA error / Opt not converged / any imaginary frequency after the one re-optimisation (spec V-3)",
+  "n_imag_after_reopt": 16,
+  "n_imag_fail_within_d1_tol": 16,
+  "rate_if_d1_tol": 0.0,
+  "note_d1_tol": "sensitivity only: the failure rate if modes above extra_imag_tol_cm (-50 cm-1) were kept"
+ },
+ "stereo_check": {
+  "on": 148,
+  "on (E_min source signature; the D1 references carry 2)": 4
+ },
+ "gates": {
+  "Q-a": {
+   "ok": true,
+   "tol": 1e-09,
+   "n_rows": 9266,
+   "max_abs": {
+    "d1_kcal": 0.0,
+    "d2_kcal": 0.0,
+    "barrier_kcal": 0.0
+   },
+   "other_max_abs": {
+    "formed_d1": 0.0,
+    "formed_d2": 0.0,
+    "e_ab_eh": 0.0,
+    "e_frag1_dist_eh": 0.0,
+    "e_frag2_dist_eh": 0.0,
+    "e_frag1_dist_ghost_eh": 0.0,
+    "e_frag2_dist_ghost_eh": 0.0,
+    "e_frag1_rel_eh": 0.0,
+    "e_frag2_rel_eh": 0.0,
+    "eint_spe_kcal": 0.0,
+    "elst_dft": 0.0,
+    "pauli_dft": 0.0,
+    "oi_dft": 0.0,
+    "disp_dft": 0.0,
+    "cpcm_dft": 0.0,
+    "cds_dft": 0.0,
+    "e_bond_kcal": 0.0,
+    "eda_sum_minus_bond_kcal": 0.0,
+    "bsse_shift1_kcal": 0.0,
+    "bsse_shift2_kcal": 0.0,
+    "bsse_shift_kcal": 0.0,
+    "identity_residual_kcal": 0.0,
+    "bond_reference_residual_kcal": 0.0,
+    "channel_closure_residual_kcal": 0.0
+   },
+   "n_fail": 0,
+   "fail": [],
+   "errors": [],
+   "n_errors": 0
+  },
+  "Q-b": {
+   "ok": true,
+   "n_channel_values_different": 0,
+   "n_rows_other_fields_different": 0,
+   "rows": [],
+   "recomputed_channels_max_abs": 0.0,
+   "fields": [
+    "elst_dft",
+    "pauli_dft",
+    "oi_dft",
+    "disp_dft",
+    "cpcm_dft",
+    "cds_dft",
+    "bsse_shift_kcal"
+   ]
+  },
+  "Q-c": {
+   "ok": true,
+   "max_abs_d": 1.4210854715202004e-14,
+   "max_abs_barrier": 2.140186916577136e-10,
+   "n_energy_not_the_override": 0,
+   "energy_not_the_override": [],
+   "tol": 1e-09
+  },
+  "Q-d": {
+   "ok": true,
+   "max_abs": 2.14018011646111e-10,
+   "tol": 1e-09,
+   "sum_of": [
+    "d1_kcal",
+    "d2_kcal",
+    "elst_dft",
+    "pauli_dft",
+    "oi_dft",
+    "disp_dft",
+    "cpcm_dft",
+    "cds_dft",
+    "bsse_shift_kcal"
+   ]
+  },
+  "Q-e": {
+   "ok": true,
+   "n_exceptions": 0,
+   "exceptions": []
+  },
+  "V-a": {
+   "ok": true,
+   "note": "Q audit recomputed from labels_d1.json == Q_keys.parquet"
+  },
+  "V-c": {
+   "ok": true,
+   "n_fail": 0,
+   "fail": [],
+   "note": "fragments of non-V keys = labels_d1_cr.json; rows without a V key identical (cr dict but tag)"
+  },
+  "V-e": {
+   "ok": true,
+   "n_fail": 0,
+   "fail": []
+  }
+ },
+ "pairs": {
+  "source": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_pair/results/F_pairs.csv",
+  "source_sha256": "aeaba8f8794358c126a57e2f6829792970d1e5c7d8433100ac3134a56c73f043",
+  "code": {
+   "ok": true,
+   "d1_pairs": {
+    "d1": "d1_kcal",
+    "d2": "d2_kcal",
+    "elst": "elst_dft",
+    "pauli": "pauli_dft",
+    "oi": "oi_dft",
+    "disp": "disp_dft",
+    "cpcm": "cpcm_dft",
+    "cds": "cds_dft",
+    "c_ghost": "bsse_shift_kcal",
+    "barrier": "barrier_kcal"
+   },
+   "d1_anchor_pairs": {
+    "d1": "d1_kcal",
+    "d2": "d2_kcal",
+    "elst": "elst_dft",
+    "pauli": "pauli_dft",
+    "oi": "oi_dft",
+    "disp": "disp_dft",
+    "cpcm": "cpcm_dft",
+    "cds": "cds_dft",
+    "c_ghost": "bsse_shift_kcal",
+    "barrier": "barrier_kcal"
+   },
+   "sha256": {
+    "d1_pairs.py": "424c2bc24b4ed5111c35a00688a88d43f47dffb2e61e50c5326256f31be603e1",
+    "d1_anchor_pairs.py": "f979e1e336df850a0b55d6ed762718b035bf2b151468263919b53a5aa40bac18"
+   }
+  },
+  "proof_original_labels_reproduce_F_pairs": {
+   "max_abs": {
+    "d1": 3.552713678800501e-15,
+    "d2": 1.7763568394002505e-15,
+    "elst": 7.105427357601002e-15,
+    "pauli": 1.4210854715202004e-14,
+    "oi": 7.105427357601002e-15,
+    "disp": 8.881784197001252e-16,
+    "cpcm": 1.7763568394002505e-15,
+    "cds": 2.220446049250313e-16,
+    "c_ghost": 4.440892098500626e-16,
+    "barrier": 1.7763568394002505e-15
+   },
+   "tol": 1e-09,
+   "ok": true
+  },
+  "other_dd_unchanged_max_abs": {
+   "elst": 0.0,
+   "pauli": 0.0,
+   "oi": 0.0,
+   "disp": 0.0,
+   "cpcm": 0.0,
+   "cds": 0.0,
+   "c_ghost": 0.0
+  },
+  "n_rows_rewritten": 3687,
+  "n_lines_differing": 3687,
+  "n_lines_differing_outside_dd": 0,
+  "lines_differing_outside_dd": [],
+  "n_lines_total_same": true,
+  "header_identical": true,
+  "readback": {
+   "columns_rows_order_same": true,
+   "other_columns_identical": true,
+   "dd_vs_new_max_abs": {
+    "d1": 1.7763568394002505e-15,
+    "d2": 1.7763568394002505e-15,
+    "barrier": 1.7763568394002505e-15
+   }
+  },
+  "s_folds": {
+   "path": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_pair/results/S_folds.csv",
+   "sha256": "944a1d1439eb0d54dff90f58f40476c21109cf3a5b71b4bb0f755651b216dcb7",
+   "same_pair_set": true
+  },
+  "output": "/gpfs/tmp_cpu2/yeseo1ee/d1_ladder/F_pairs_cr2.csv",
+  "output_sha256": "f2fe5cab1c61f082b7cf929ca1146d96f8e451d37ed7d4ee2b5b127b4a7fa6ce",
+  "ok": true
+ },
+ "pairs_vs_cr": {
+  "n_pairs_touching_v": 117,
+  "untouched_pairs_identical": true,
+  "dd": {
+   "d1": {
+    "n_changed_vs_cr": 0,
+    "in_P_main": 0,
+    "abs_change": {},
+    "by_skeleton": {},
+    "by_dipole": {},
+    "by_pos": {}
+   },
+   "d2": {
+    "n_changed_vs_cr": 117,
+    "in_P_main": 105,
+    "abs_change": {
+     "n": 117,
+     "min": 0.053929399136801004,
+     "p10": 0.07465450654434003,
+     "p50": 0.22716532150966012,
+     "p90": 1.3264663938395778,
+     "max": 2.2772784444545477,
+     "mean": 0.4367035536498715
+    },
+    "by_skeleton": {
+     "A": 12,
+     "D": 105
+    },
+    "by_dipole": {
+     "azide": 37,
+     "azomethine ylide": 1,
+     "nitrile oxide": 40,
+     "nitrone": 39
+    },
+    "by_pos": {
+     "direct": 24,
+     "m": 57,
+     "o": 36
+    }
+   },
+   "barrier": {
+    "n_changed_vs_cr": 117,
+    "in_P_main": 105,
+    "abs_change": {
+     "n": 117,
+     "min": 0.053929399136800116,
+     "p10": 0.07465450654433958,
+     "p50": 0.22716532150966007,
+     "p90": 1.3264663938395778,
+     "max": 2.2772784444545486,
+     "mean": 0.43670355364987135
+    },
+    "by_skeleton": {
+     "A": 12,
+     "D": 105
+    },
+    "by_dipole": {
+     "azide": 37,
+     "azomethine ylide": 1,
+     "nitrile oxide": 40,
+     "nitrone": 39
+    },
+    "by_pos": {
+     "direct": 24,
+     "m": 57,
+     "o": 36
+    }
+   }
+  }
+ },
+ "n_targets": 152,
+ "groups": {
+  "a": {
+   "n": 95,
+   "n_with_v_conformer": 80,
+   "n_lower_gt_0_05": 12,
+   "frac_lower": 0.12631578947368421,
+   "n_lower_gt": {
+    "0.05": 12,
+    "0.5": 2,
+    "1": 1,
+    "2": 0
+   },
+   "lowering_of_lower": {
+    "n": 12,
+    "min": 0.053929399136801066,
+    "p10": 0.0613391598489199,
+    "p50": 0.20186308846283751,
+    "p90": 0.7352234079876379,
+    "max": 1.1726990732341083,
+    "mean": 0.31339604852312686
+   },
+   "v_minus_emin_all": {
+    "n": 80,
+    "min": -1.1726990732341083,
+    "p10": -0.12966263566528688,
+    "p50": 0.02419356972198205,
+    "p90": 2.2814817553459776,
+    "max": 99.55459959352443,
+    "mean": 4.156482976665946
+   }
+  },
+  "b": {
+   "n": 82,
+   "n_with_v_conformer": 82,
+   "n_lower_gt_0_05": 18,
+   "frac_lower": 0.21951219512195122,
+   "n_lower_gt": {
+    "0.05": 18,
+    "0.5": 4,
+    "1": 3,
+    "2": 1
+   },
+   "lowering_of_lower": {
+    "n": 18,
+    "min": 0.053929399136801066,
+    "p10": 0.06973663729030755,
+    "p50": 0.1773566026725745,
+    "p90": 1.288024563688209,
+    "max": 2.277278444454547,
+    "mean": 0.4495199091604484
+   },
+   "v_minus_emin_all": {
+    "n": 82,
+    "min": -2.277278444454547,
+    "p10": -0.18315387704325062,
+    "p50": 0.0075660568268423895,
+    "p90": 0.25815953759997845,
+    "max": 2.8740533014137566,
+    "mean": 0.05623926241996375
+   }
+  },
+  "c": {
+   "n": 20,
+   "n_with_v_conformer": 12,
+   "n_lower_gt_0_05": 0,
+   "frac_lower": 0.0,
+   "n_lower_gt": {
+    "0.05": 0,
+    "0.5": 0,
+    "1": 0,
+    "2": 0
+   },
+   "lowering_of_lower": {},
+   "v_minus_emin_all": {
+    "n": 12,
+    "min": -0.002016679264303283,
+    "p10": 0.0005705838931804388,
+    "p50": 0.019296644513030377,
+    "p90": 91.06187499690719,
+    "max": 102.649343374215,
+    "mean": 17.329542502157317
+   }
+  }
+ },
+ "control": {
+  "n": 20,
+  "n_with_v_conformer": 12,
+  "n_lower_gt_0_05": 0,
+  "frac_lower": 0.0,
+  "n_lower_gt": {
+   "0.05": 0,
+   "0.5": 0,
+   "1": 0,
+   "2": 0
+  },
+  "lowering_of_lower": {},
+  "v_minus_emin_all": {
+   "n": 12,
+   "min": -0.002016679264303283,
+   "p10": 0.0005705838931804388,
+   "p50": 0.019296644513030377,
+   "p90": 91.06187499690719,
+   "max": 102.649343374215,
+   "mean": 17.329542502157317
+  }
+ },
+ "n_keys_replaced": 20,
+ "n_fragments_replaced_by_v": 123,
+ "n_rows_changed_vs_cr": 123,
+ "n_rows_changed_vs_orig": 3131,
+ "cyclooctyne_csv": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_cyclooctyne_conformers.csv",
+ "n_cyclooctyne_rows": 11,
+ "core_h": {
+  "alloc": 835.311781469451,
+  "busy": 796.3964910127719,
+  "by_group": {
+   "a": 439.73568914201525,
+   "b": 711.4572715923521,
+   "c": 38.15127616405488
+  }
+ },
+ "outputs": {
+  "/gpfs/tmp_cpu2/yeseo1ee/d1_ladder/labels_d1_cr2.json": "7e5882bce4d47dcd8164b61320a390530463bfa14731029c122d7f09920b6755",
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/labels_d1_cr2.parquet": "696d2ec6ee1b75b5f33bad91fcf9368c528644eecdde4c3d226be3200cd447df",
+  "/gpfs/tmp_cpu2/yeseo1ee/d1_ladder/F_pairs_cr2.csv": "f2fe5cab1c61f082b7cf929ca1146d96f8e451d37ed7d4ee2b5b127b4a7fa6ce",
+  "/gpfs/tmp_cpu2/yeseo1ee/d1_ladder/refs_cr2.parquet": "4890ec9b54967f25baa8daf4dc18498287c08578f377b8fe10fb958b4bef550e",
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_molecules.csv": "90fc8ae1c3560c906cf0d425ad210bff3770e5a64d4f8c27e15399b5c1571f99",
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_conformers.csv": "4644403a8283a6956736672da1fcc309b955d6b55e9407ab14c17cce1608b08c",
+  "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1ladder/analysis/d1_ladder/results/V_cyclooctyne_conformers.csv": "4df128e661646e898554c046d4891037d01787f82740e7b59d176bbc1285b6c9"
+ },
+ "finished": "2026-10-23 15:48:36",
+ "wall_s": 8.7
+}
