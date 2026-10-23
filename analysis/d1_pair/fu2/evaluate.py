@@ -1437,7 +1437,7 @@ def cmd_figures():
     for f in ("E_metrics.csv", "E_bend_rates.json", "E_epochs.csv"):
         need(RES / f)
     require_fresh("E_metrics.csv", "E_bend_rates.json", "E_epochs.csv")          # D14: from this run, not stale
-    Mt = pd.read_csv(RES / "E_metrics.csv")
+    Mt = pd.read_csv(RES / "E_metrics.csv", keep_default_na=False, na_values=[""])   # model 'null' must stay a string
     BR = read_json(RES / "E_bend_rates.json")["rates"]
     Ep = pd.read_csv(RES / "E_epochs.csv")
     figF2_1(plt, DF, Mt)
