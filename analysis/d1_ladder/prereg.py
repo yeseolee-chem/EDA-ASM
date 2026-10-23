@@ -10,11 +10,27 @@ nothing written), 3 = refused (a STOP condition, or the result of `check` failed
                            files are already tracked by git and unchanged since HEAD, nothing is rewritten (a committed
                            pre-registration is frozen, spec 9 / 15): `write` then runs `check` and returns its exit code.
                            A tracked ADD3 file that was modified (or one of the two missing) -> exit 3, nothing written.
-  python prereg.py check   the train_atoms.py / train_xgb.py gate_add3 conditions for stage 1, mirrored (the trainers
-                           cannot be imported in reactot: torch / xgboost): both files tracked and unchanged since HEAD,
-                           sha256(md) = json md_sha256, json inputs_sha256 lists the stage-1 'need' paths, every listed
-                           file still has its sha256 (files of the g2 column only would be skipped, MA-15; none listed).
+  python prereg.py check [--stage 1|2]
+                           the train_atoms.py / train_xgb.py gate_add3 conditions for a stage-<stage> process, mirrored
+                           (the trainers cannot be imported in reactot: torch / xgboost): both files tracked and unchanged
+                           since HEAD, sha256(md) = json md_sha256, json inputs_sha256 lists the 'need' paths of the stage
+                           (stage 1: label file + dft / g1 tables; stage 2: label file + g2 table), every listed file that
+                           is not of another rung's column only (MA-15) still has its sha256. --stage 2 also: json
+                           'supplement' present, results/PREREG_D1PAIR_ADD3_G2.md committed, unchanged, sha256 = the
+                           recorded one, and the trainers' MA-16 (P_report) / MA-17 (C_tests g2_verified) conditions.
                            Also prints whether HEAD is contained in origin/d1-ladder (information only).
+  python prereg.py supplement
+                           stage 2 (ADD3 md section 10, PR-5 / PR-10): preconditions below -> the new md
+                           results/PREREG_D1PAIR_ADD3_G2.md (Korean, written first) and the committed json extended by the
+                           8 listed inputs_sha256 / inputs_roles entries + a new top-level key 'supplement' (written last,
+                           atomically; every existing entry and key byte-identical, verified). Nothing is committed: the
+                           exact git commands are printed and must be run at once (window: until that commit the json differs
+                           from HEAD, so every train_atoms.py / train_xgb.py run and evaluate.py e1 that STARTS exits 3 at its
+                           ADD3 gate; running processes are not affected; a task that hit the gate wrote nothing; refused
+                           while a lad_m1 / lad_xgb / lad_e1 task is pending, PS-11). If the self-check after the json write
+                           fails or raises, the committed json bytes are written back and the new md removed (exit 3; the
+                           files are then = HEAD again). A committed supplement is frozen (supplement = check --stage 2); an
+                           uncommitted one from an earlier run is regenerated from the committed json.
 
 Preconditions of `write` (all must hold; exit 2 = not ready, 3 = STOP; the reasons are printed, no file is written)
   V   results/V_report.json: all_pass is True, stop falsy; outputs contains str($LAD/F_pairs_cr2.csv) and
@@ -62,7 +78,7 @@ Decisions (user 2026-10-22: every judgment = the recommended option; also in the
   PR-4  the Phase C state must be committed first (spec 8); code_commit = HEAD at write time.
   PR-5  a committed ADD3 is never rewritten by `write`; write on a committed ADD3 = check. The md is frozen for good; the
         only later edit of the json is the stage-2 supplement of md section 10 (new inputs_sha256 / inputs_roles entries
-        for the g2 files + a new 'supplement' key, every existing entry byte-identical; command not written yet).
+        for the g2 files + a new 'supplement' key, every existing entry byte-identical; command `supplement`, below).
   PR-6  grids read from the code by ast (fu2/models.py GRID evaluated with only `dict`; train_ml_single.GRIDS["XGB"] as a
         literal, cells = d1_train.grid_cells rule: sorted keys, itertools.product) and cross-checked with the ADD2 json /
         rev 9 prereg json; a mismatch = refused. Training constants from fu2_common / d1pair_common (importable here).
@@ -91,6 +107,44 @@ Decisions (user 2026-10-22: every judgment = the recommended option; also in the
         rate (zero DFT denominator) = criterion not met; hidden_V / hidden_bend rates descriptive only.
   PR-16 md text: result numbers only from files; rule values are quotes of the spec; reviewer numbers are quotes of
         spec 0-1 / 9 (constants below, source named in place).
+
+Stage 2: `supplement` (spec 12; ADD3 md section 10). Written 2026-10-23 on the login node, never run here: untested until
+  it runs inside a job (sbatch -p cpu1,cpu2 -J lad_A2 --time=48:00:00 --cpus-per-task=2 --mem=16G
+  --export=ALL,LADENV=reactot jobs/lad.slurm prereg.py supplement, from analysis/d1_ladder).
+  Preconditions (exit 2 = not ready, 3 = refused; nothing written in either case):
+    ADD3   PREREG_D1PAIR_ADD3.md tracked, = HEAD, sha256 = ADD3_MD_SHA256 (3 otherwise); the HEAD json = the stage-1 json
+           (sha256 ADD3_JSON_SHA256, no 'supplement'); json on disk = HEAD, or = an uncommitted earlier supplement of it
+           (regenerated); its stage2_plan.supplement_entries = stage2_supplement_paths() (paths, roles, order) and none
+           of them listed yet; the trainers' gate literals (GATE_LITERALS + STAGE2_LITERALS) present.
+    build  results/P_build_g2.json all_pass and current (inputs._build_ok: fingerprint recomputed = recorded, table
+           sha256 = outputs) with g2_q_keys == 'own' in the report, its fingerprint and references.g2_mode (P20 option
+           (c), inputs.py build g2 --g2-cons-own), references.n_constrained_replaced == 0; while the D1-G2 F_report has
+           stop true: fingerprint accept_f0_stop true and g2_gates.F_stop_accepted.decision_sha256 = F_DECISION.md now
+           (inputs.py build g2 --accept-g2f-stop, commit 11aeef90; both flags: jobs/p_stage2.sh, cdbaa3ec).
+    queue  (PS-11) no pending (PD / CF) task named lad_m1 / lad_xgb / lad_e1 of this user (squeue on the compute node,
+           checked again right before the md write): such a task could start inside the commit window and exit 3 at its
+           ADD3 gate (exit 2 while one is pending; a failed squeue only warns and is recorded).
+    same TS the D1-G2 C_summary.json same_ts_downstream.column (C-13) = SAME_TS_COLS[0] (PS-7; 3 otherwise).
+    P      results/P_report.json not running, all_pass, stop falsy, rungs_built has g2; rungs dft / g1 / g2 table_sha256
+           = the tables now; rungs.g2.build_report_sha256 = P_build_g2.json now; sets P_dft, P_g1, P_01, P_g2, P_012 at
+           inputs.set_path with sha256 = the files now; P_dft / P_g1 / P_01 sha256 = the ADD3 json entries; labels[
+           F_pairs_cr2.csv] ids_ok and sha256 now; fu2_check.ok, dft_vs_g1.ok.
+    C      results/C_tests.json failed == [] (else 3); all_pass, status pass, stage_verified == 2, g2_verified,
+           all_pass_scope "rungs dft, g1, g2", labels_final, errors == [], not_final == [], every check pass, current.ok,
+           consistency.ok (tests/run_tests.py merge keys); labels = F_pairs_cr2.csv now; rungs dft / g1 / g2 ready with
+           the tables now; p_report ready with P_report.json now; code_sha256 = C_CODE now; every per-rung check result
+           that has a g2 entry: g2 status pass; C_tests.json and the C_CODE files tracked and = HEAD (spec 8 / PR-4).
+    D1-G2  = inputs._g2_ready (F_report / H_report present and complete, H_report stop false, its output of
+           labels_d1_hf_g2.parquet matched by the repo-relative path with that file's sha256, the D1-G2 files committed:
+           G2_COMMITTED), except the F_report stop, accepted only when F_DECISION.md is committed and quotes the
+           F_report gate_failure numbers (n, n_g2_ok, rate %) and every stop reason is the F gate rate (PS-6);
+           origin/d1-g2 (as last fetched) contained in HEAD (spec 12 'origin/d1-g2를 merge한다'; 2 otherwise).
+    units  no L__g2__* entry in $LAD/units (spec 16 A: no stage-2 training before the supplement commit).
+    gate   the 8 entries exist (else 2) with the columns 'g2' (P_012: 'dft+g1+g2'); the extended json passes the
+           gate_add3 content conditions for a stage-1 process (rungs dft, g1) and a g2 process (need = label file + g2
+           table) on the files now (3 otherwise).
+  Decisions (user 2026-10-22 / 23: every judgment = the recommended option; json supplement.decisions = SUPP_DECISIONS)
+  PS-1 .. PS-12 below.
 """
 from __future__ import annotations
 
@@ -780,13 +834,13 @@ def pair_changes():
                 unchanged_targets_max_abs=other, tol=TOL_PAIR)
 
 
-def pair_sets(p):
+def pair_sets(p, names=("P_dft", "P_g1", "P_01")):
     fold_ids = set()
     for k in range(NF):
         rec = json.loads((IN.FU2_SPLITS / f"T1__f{k}.json").read_text(encoding="utf-8"))
         fold_ids |= set(map(str, rec["train"])) | set(map(str, rec["test"]))
     out = {}
-    for name in ("P_dft", "P_g1", "P_01"):
+    for name in names:
         s = (p.get("sets") or {})[name]
         ids = set(pd.read_csv(s["file"], usecols=["pair_id"], dtype={"pair_id": str}).pair_id)
         pl = sorted(ids & fold_ids)
@@ -1828,8 +1882,40 @@ def collect_content(v, p, c, checked):
     return D
 
 
-def cmd_check():
-    """the stage-1 gate_add3 conditions (train_atoms.py 796-832 / train_xgb.py 851-886), mirrored; exit 0 / 3."""
+def _foreign_to(path, rungs):
+    """= train_atoms._foreign_to (line 790-793) = train_xgb._foreign_to (845-848), MA-15."""
+    return bool(rungs) and all(IN.check_paths(r, [path])["foreign"] for r in rungs)
+
+
+def gate_mirror(rec, rungs, need):
+    """the content conditions of train_atoms.gate_add3 (lines 812-826) = train_xgb.gate_add3 (866-880) for a process that
+    trains `rungs` with `need` (cmd_run: label file + the rungs' input tables), on json record `rec` and the files now;
+    the git conditions (both ADD3 files tracked and = HEAD) are the callers'. A stage-1 process of one rung verifies a
+    subset of what rungs (dft, g1) together verify (its need and its non-foreign paths are subsets)."""
+    bad = []
+    if L.sha256(ADD3_MD) != rec.get("md_sha256"):
+        bad.append(f"{ADD3_MD.name} sha256 differs from {ADD3_JSON.name} md_sha256")
+    ins = rec.get("inputs_sha256") or {}
+    lack = sorted(set(need) - set(ins))
+    if lack:
+        bad.append(f"{ADD3_JSON.name} inputs_sha256 lacks {lack}")
+    verified, skipped = [], []
+    for path, s in ins.items():
+        if path not in need and _foreign_to(path, rungs):
+            skipped.append(path)
+            continue
+        verified.append(path)
+        if not Path(path).is_file() or L.sha256(path) != s:
+            bad.append(f"input {path} changed or missing")
+    return dict(ok=not bad, rungs=list(rungs), need=sorted(need), bad=bad, n_verified=len(verified),
+                n_skipped=len(skipped), verified=verified, skipped=skipped)
+
+
+def cmd_check(stage=1):
+    """the gate_add3 conditions of a stage-<stage> process (train_atoms.py 796-832 / train_xgb.py 851-886), mirrored;
+    stage 2 also the supplement md and the trainers' MA-16 / MA-17 run gates; exit 0 / 3."""
+    stage = int(stage)
+    rungs = STAGE_RUNGS if stage == 1 else STAGE2_RUNGS
     bad = []
     for p in (ADD3_MD, ADD3_JSON):
         if not p.is_file():
@@ -1841,27 +1927,21 @@ def cmd_check():
     n_listed = 0
     if not bad:
         rec = json.loads(ADD3_JSON.read_text(encoding="utf-8"))
-        if L.sha256(ADD3_MD) != rec.get("md_sha256"):
-            bad.append(f"{ADD3_MD.name} sha256 differs from {ADD3_JSON.name} md_sha256")
-        ins = rec.get("inputs_sha256") or {}
-        need = need_paths()
-        lack = sorted(need - set(ins))
-        if lack:
-            bad.append(f"{ADD3_JSON.name} inputs_sha256 lacks {lack}")
-        for path, s in ins.items():
-            if path not in need and all(IN.check_paths(r, [path])["foreign"] for r in STAGE_RUNGS):
-                continue
-            n_listed += 1
-            if not Path(path).is_file() or L.sha256(path) != s:
-                bad.append(f"input {path} changed or missing")
+        m = gate_mirror(rec, rungs, need_paths(rungs))
+        bad += m["bad"]
+        n_listed = m["n_verified"]
+        if stage == 2:
+            bad += supplement_md_problems(rec)
+            bad += stage2_run_gates()
     head = _git_out("rev-parse", "HEAD")
     pushed = _git_rc("merge-base", "--is-ancestor", "HEAD", "origin/d1-ladder") == 0
     if bad:
-        print("PREREG ADD3 check FAILED (the trainers' gate_add3 would exit 3):\n  " + "\n  ".join(bad), file=sys.stderr,
-              flush=True)
+        print(f"PREREG ADD3 check FAILED for stage {stage} (the trainers' gates would exit 3):\n  " + "\n  ".join(bad),
+              file=sys.stderr, flush=True)
         return 3
-    print(f"[check] ADD3 gate conditions pass for stage 1 (HEAD {head}; {n_listed} listed files verified; HEAD in "
-          f"origin/d1-ladder: {pushed}; md sha256 {L.sha256(ADD3_MD)})", flush=True)
+    print(f"[check] ADD3 gate conditions pass for stage {stage} (rungs {', '.join(rungs)}; HEAD {head}; {n_listed} listed "
+          f"files verified; HEAD in origin/d1-ladder: {pushed}; md sha256 {L.sha256(ADD3_MD)}"
+          + (f"; supplement md sha256 {L.sha256(SUPP_MD)}" if stage == 2 else "") + ")", flush=True)
     return 0
 
 
@@ -1909,11 +1989,1125 @@ def cmd_write():
     return 0
 
 
+# ================================================================ stage 2: the ADD3 supplement (md section 10)
+SUPP_VERSION = "d1-ladder-a2"
+SUPP_MD = L.RES / "PREREG_D1PAIR_ADD3_G2.md"
+STAGE2_RUNGS = ("g2",)
+# the committed stage-1 ADD3 (cae9922b): the md never changes (unit fingerprints carry its sha256); the json is extended
+# exactly once, from this state
+ADD3_MD_SHA256 = "daa82585c0ab06653b582524d9fbb35a99dddff9f5c0380e3f8e6b4514cd5667"
+ADD3_JSON_SHA256 = "a8258d7376d301a7b4e4d614957791af87a4d50e7abc4a1cdf755d101fc89a13"
+G2_RES = IN.G2_RES                                        # analysis/d1_g2/results (merged from origin/d1-g2)
+G2_FU2 = Path(IN.RUNGS["g2"]["fu2_res"])
+H_PARQUET_G2 = Path(IN.RUNGS["g2"]["h_parquet"])
+F_REPORT_G2 = G2_RES / "F_report.json"
+H_REPORT_G2 = G2_RES / "H_report.json"
+F_DECISION_G2 = G2_RES / "F_DECISION.md"
+C_SUMMARY_G2 = G2_RES / "C_summary.json"
+C_COMPARE_G2 = G2_RES / "C_compare.csv"
+# inputs._g2_ready's committed files + the other D1-G2 files this supplement reads
+G2_COMMITTED = (F_REPORT_G2, H_REPORT_G2, H_PARQUET_G2, G2_FU2 / "T_report.json", G2_FU2 / "T_manifest.csv",
+                G2_FU2 / "Q_report.json", G2_FU2 / "S_splits.json", F_DECISION_G2, C_SUMMARY_G2, C_COMPARE_G2)
+SETS2 = ("P_dft", "P_g1", "P_01", "P_g2", "P_012")
+# primary = D1-G2 Phase C's downstream same-TS judgment (spec 12 defers to it; C_summary same_ts_downstream.column, C-13,
+# consumer 'D1LADDER 12 E2'); second = the literal G2-vs-DFT column (named in the stage-2 task text), descriptive too
+SAME_TS_COLS = ("same_ts_g1", "same_ts_dft")
+SAME_TS_KO = {"same_ts_g1": "G2 TS 대 G1 TS(라벨 TS를 xTB 표면으로 옮긴 구조; 둘 다 xTB)",
+              "same_ts_dft": "G2 TS 대 라벨(DFT) TS"}
+WINDOW_JOBS = ("lad_m1", "lad_xgb", "lad_e1")             # job names whose tasks run an ADD3 gate at start (PS-11)
+SAME_TS_CLASSES = ("same", "mixed", "different", "unclassified")
+DROP_CATS = ("g2_not_ok", "not_target", "no_tokens_or_182", "no_h", "both_usable")
+DROP_KO = {"g2_not_ok": "G2 TS 없음(D1-G2 G 실패)", "not_target": "대상 반응 아님", "no_tokens_or_182":
+           "토큰·182 없음(D1-G2 F gate 실패, 3절)", "no_h": "HF 9값 없음(D1-G2 H)", "both_usable": "두 반응 모두 사용 가능(불일치)"}
+# stage-2 run gate literals of both trainers (their sha256 is gated too; quoted in md 6-2)
+STAGE2_LITERALS = ('STAGE_RUNGS = {1: ("dft", "g1"), 2: ("g2",)}', 'rs = sorted({u["rung"] for u in us})',
+                   'add3 = gate_add3(need, rs)', 'if int(stage) == 2:', 'gate_c_stage2()',
+                   'if not (c.get("all_pass") and c.get("g2_verified")):')
+GATE_QUOTE = ('rs = sorted({u["rung"] for u in us})',
+              'need = {str(_abs(labels))} | {str(_abs(inputs_path(r))) for r in rs}',
+              'add3 = gate_add3(need, rs)', 'gp = gate_p(rs, labels)', 'if int(stage) == 2:', '    gate_c_stage2()',
+              '# gate_add3:', 'ins = rec.get("inputs_sha256") or {}', 'lack = sorted(set(need) - set(ins))',
+              'for path, s in ins.items():', '    if path not in need and _foreign_to(path, rungs):',
+              '        skipped.append(path)', '        continue',
+              '    if not Path(path).is_file() or L.sha256(path) != s:',
+              '        bad.append(f"input {path} changed or missing")',
+              '# _foreign_to:', 'return bool(rungs) and all(IN.check_paths(r, [path])["foreign"] for r in rungs)',
+              '# gate_c_stage2 (MA-17):', 'if not (c.get("all_pass") and c.get("g2_verified")):')
+STAGE1_RESULTS = tuple(L.RES / n for n in ("L_predictions.parquet", "L_report.json", "L_val.csv", "L_xgb_report.json",
+                                            "E1_report.json", "E1_metrics.csv", "E1_goal.csv"))
+SUPP_DECISIONS = {
+    "PS-1": "one run writes the supplement md first, then the extended json atomically (os.replace); nothing is committed: "
+            "the exact git commands are printed; until that commit every starting trainer run / evaluate e1 exits 3 at "
+            "the ADD3 gate (window risk printed; running processes unaffected; a gated-out task wrote nothing); a failed "
+            "or raising self-check after the json write puts the committed json bytes back and removes the new md",
+    "PS-2": "base = the committed stage-1 json (git show HEAD, sha256 ADD3_JSON_SHA256); it must re-serialise byte for "
+            "byte (json.dumps indent 1); new entries appended in the md section 10 order, 'supplement' appended last; "
+            "removing the additions must give the committed bytes (checked before and after writing)",
+    "PS-3": "refusal = docstring 'Stage 2' preconditions (P_build_g2 'own', P_report with g2 / P_g2 / P_012, C_tests "
+            "g2_verified + every check + g2 sub-results pass + committed, D1-G2 files committed, F stop only as the "
+            "F_DECISION.md deviation, no L__g2__ unit, both gate mirrors pass on the extended json)",
+    "PS-4": "supplement.commit = HEAD at write time (the code and committed inputs the supplement was made from); the commit "
+            "that adds the md + json comes after (git log -1 -- results/PREREG_D1PAIR_ADD3_G2.md)",
+    "PS-5": "P20 = option (c) (decision 2026-10-23, inputs.py P20): g2 rows of constrained-dipole keys keep their own G2 "
+            "reference, so the DFT-derived '|fixed:' state never enters a g2 value; other keys per-key minimum (spec 4-1); "
+            "g2_q_keys = 'own'. Limitation (recorded deviation): the kept rows are chosen by the Q_keys 'constrained' "
+            "flag = the D1 label ref_port.constrained (D1 / DFT pipeline), not by G2's own port result",
+    "PS-6": "D1-G2 Phase F STOP (gate 1.36 % > 1 %) accepted as a deviation (analysis/d1_g2/results/F_DECISION.md, "
+            "committed; its quoted numbers must equal F_report gate_failure; the g2 build accepted it with "
+            "--accept-g2f-stop and recorded the decision sha256 = the file now); the failed reactions are not usable in g2",
+    "PS-7": "same-TS split for E2 (descriptive only): reaction = D1-G2 C_compare.csv same_ts_g1 (spec 12: 'D1-G2 Phase C의 "
+            "같은 TS 판정' = its decision C-13, which names D1LADDER 12 E2 as a consumer: G2 vs G1, both xTB); pair = same "
+            "(both ends) / mixed / different / unclassified (an end without a judgment); the literal G2-vs-DFT column "
+            "same_ts_dft (named in the stage-2 task text) is reported the same way as a second descriptive split",
+    "PS-8": "coverage = P_main pairs of the T1 test lists (folds 0-4) that are in the rung's set; pairs outside P_g2 count "
+            "as not predictable (not filled in); reasons per pair = first failing end category (DROP_CATS order)",
+    "PS-9": "Phase C (g2) committed first (spec 8 / PR-4 analogue): C_tests.json + the 5 C_CODE files tracked and = HEAD",
+    "PS-10": "a committed supplement is frozen (supplement = check --stage 2); an uncommitted earlier supplement on disk is "
+             "regenerated from the committed json; any other modification of the json -> refused",
+    "PS-11": "commit window guard: not ready (exit 2) while this user has a pending (PD / CF) task named lad_m1, lad_xgb "
+             "or lad_e1 (the jobs whose start runs an ADD3 gate: train_atoms / train_xgb run, evaluate e1); other names "
+             "are not detected; a failed squeue only warns (recorded)",
+    "PS-12": "origin/d1-g2 as last fetched must be contained in HEAD (spec 12 start condition; not ready otherwise)",
+}
+
+
+def _head_bytes(p):
+    """the HEAD version of a tracked file (bytes), None if absent."""
+    rel = Path(p).resolve().relative_to(L.REPO.resolve()).as_posix()
+    r = subprocess.run(["git", "-C", str(L.HERE), "show", f"HEAD:{rel}"], capture_output=True)
+    return r.stdout if r.returncode == 0 else None
+
+
+def _without_supplement(obj, paths):
+    """a copy of a (supplemented) json record without 'supplement' and without the inputs entries of `paths`."""
+    o = json.loads(json.dumps(obj))
+    o.pop("supplement", None)
+    for k in ("inputs_sha256", "inputs_roles"):
+        d = o.get(k)
+        if isinstance(d, dict):
+            for q in paths:
+                d.pop(q, None)
+    return o
+
+
+def supplement_md_problems(rec):
+    """stage-2 check: json 'supplement' present, its md committed, unchanged and with the recorded sha256."""
+    s = rec.get("supplement")
+    if not isinstance(s, dict):
+        return [f"{ADD3_JSON.name} has no 'supplement' key (prereg.py supplement, then commit its two files)"]
+    bad = []
+    if s.get("md") != _disp(SUPP_MD):
+        bad.append(f"supplement.md {s.get('md')} != {_disp(SUPP_MD)}")
+    if not SUPP_MD.is_file():
+        bad.append(f"{SUPP_MD.name} missing")
+    elif not _tracked(SUPP_MD):
+        bad.append(f"{SUPP_MD.name} not committed")
+    elif not _clean(SUPP_MD):
+        bad.append(f"{SUPP_MD.name} modified since its commit")
+    elif L.sha256(SUPP_MD) != s.get("md_sha256"):
+        bad.append(f"{SUPP_MD.name} sha256 != {ADD3_JSON.name} supplement.md_sha256")
+    return bad
+
+
+def stage2_run_gates(labels=CR2):
+    """the other run gates of a stage-2 process: train_atoms.gate_p / gate_c_stage2 (MA-16 / MA-17) for rung g2."""
+    bad = []
+    p = _json(P_REPORT) or {}
+    if p.get("running") or not p.get("all_pass") or p.get("stop"):
+        bad.append(f"P_report.json running {p.get('running')}, all_pass {p.get('all_pass')}, stop {p.get('stop')} (MA-16)")
+    for r in STAGE2_RUNGS:
+        want = ((p.get("rungs") or {}).get(r) or {}).get("table_sha256")
+        if want is None or _sha(IN.table_path(r)) != want:
+            bad.append(f"{IN.table_path(r)} sha256 != P_report rungs.{r}.table_sha256 ({want}) (MA-16)")
+    lab = (p.get("labels") or {}).get(_ab(labels)) or {}
+    if not lab.get("ids_ok") or _sha(labels) != lab.get("sha256"):
+        bad.append(f"label file {labels}: sha256 / ids differ from P_report labels (MA-16)")
+    c = _json(C_TESTS) or {}
+    if not (c.get("all_pass") and c.get("g2_verified")):
+        bad.append(f"C_tests.json all_pass {c.get('all_pass')}, g2_verified {c.get('g2_verified')} (MA-17)")
+    return bad
+
+
+def window_tasks():
+    """PS-11: this user's pending (PD / CF) tasks named in WINDOW_JOBS (squeue, run inside the job) -> (hits | None when
+    the query failed, record)."""
+    import getpass
+    try:
+        user = getpass.getuser()
+    except Exception:                                              # noqa: BLE001
+        user = ""
+    cmd = ["squeue", "-h", "-r", "-u", user, "-t", "PD,CF", "-o", "%i %j"]
+    rec = dict(command=" ".join(cmd), job_names=list(WINDOW_JOBS), checked=_now())
+    if not user:
+        return None, dict(rec, ok=False, error="no user name")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, dict(rec, ok=False, error=f"{type(e).__name__}: {e}")
+    if r.returncode != 0:
+        return None, dict(rec, ok=False, error=(r.stderr or "").strip()[:300], rc=r.returncode)
+    hit = []
+    for line in r.stdout.splitlines():
+        part = line.split(None, 1)
+        if len(part) == 2 and part[1].strip() in WINDOW_JOBS:
+            hit.append(f"{part[0]} {part[1].strip()}")
+    return hit, dict(rec, ok=True, n_pending=len(hit), pending=hit[:20])
+
+
+def supplement_base():
+    """-> (mode, HEAD json bytes, json bytes on disk): 'fresh' (disk = HEAD = the stage-1 json), 'pending' (an earlier
+    supplement run wrote md + json, not committed: regenerated from HEAD) or 'frozen' (HEAD json has the supplement)."""
+    for p in (ADD3_MD, ADD3_JSON):
+        if not p.is_file():
+            raise Refuse(2, [f"{p.name} missing (stage 1: prereg.py write, then commit)"])
+        if not _tracked(p):
+            raise Refuse(2, [f"{p.name} not committed (commit the stage-1 ADD3 first)"])
+    if not _clean(ADD3_MD) or L.sha256(ADD3_MD) != ADD3_MD_SHA256:
+        raise Refuse(3, [f"{ADD3_MD.name} differs from HEAD or from its stage-1 sha256 {ADD3_MD_SHA256[:16]}: it must never "
+                         f"change (unit fingerprints carry it); restore it with git checkout HEAD -- {_disp(ADD3_MD)}"])
+    head, disk = _head_bytes(ADD3_JSON), ADD3_JSON.read_bytes()
+    if head is None:
+        raise Refuse(3, [f"git show HEAD:{_disp(ADD3_JSON)} failed"])
+    hobj = json.loads(head.decode("utf-8"))
+    if "supplement" in hobj:
+        if disk != head or not _clean(ADD3_JSON):
+            raise Refuse(3, [f"the committed {ADD3_JSON.name} carries a supplement and was modified since: a committed "
+                             f"supplement is never rewritten (restore it with git checkout HEAD -- {_disp(ADD3_JSON)})"])
+        return "frozen", head, disk
+    if hashlib.sha256(head).hexdigest() != ADD3_JSON_SHA256 or hobj.get("md_sha256") != ADD3_MD_SHA256:
+        raise Refuse(3, [f"HEAD {ADD3_JSON.name} is not the stage-1 ADD3 json (sha256 {ADD3_JSON_SHA256[:16]}, md_sha256 "
+                         f"{ADD3_MD_SHA256[:16]}): the only allowed edit is this supplement (PR-5)"])
+    if _head_bytes(SUPP_MD) is not None:                 # only staged (git add, no commit) = still pending
+        raise Refuse(3, [f"{SUPP_MD.name} is in HEAD but HEAD {ADD3_JSON.name} has no 'supplement' key "
+                         "(inconsistent; resolve by hand)"])
+    if disk == head and _clean(ADD3_JSON):
+        return "fresh", head, disk
+    plan = list(((hobj.get("stage2_plan") or {}).get("supplement_entries") or {}))
+    try:
+        dobj = json.loads(disk.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        dobj = None
+    if not (isinstance(dobj, dict) and "supplement" in dobj
+            and json.dumps(_without_supplement(dobj, plan), indent=1).encode("utf-8") == head):
+        raise Refuse(3, [f"{ADD3_JSON.name} modified since its commit by something other than a supplement run: restore it "
+                         f"(git checkout HEAD -- {_disp(ADD3_JSON)}) and rerun"])
+    return "pending", head, disk
+
+
+def check_d1g2(b2, b3, ok):
+    """D1-G2 readiness = inputs._g2_ready (with --accept-g2f-stop: the F_report STOP passes when its reasons are the F
+    gate rate only and F_DECISION.md is committed), here also requiring that F_DECISION.md quotes the F_report numbers
+    (PS-6), plus origin/d1-g2 in HEAD (PS-12). -> info dict."""
+    n0 = len(b2) + len(b3)
+    info, reps = {}, {}
+    for p in (F_REPORT_G2, H_REPORT_G2):
+        r = _json(p)
+        if r is None:
+            b2.append(f"{_disp(p)} missing (D1-G2 Phase F / H)")
+            continue
+        reps[p.name] = r
+        info[p.name] = dict(sha256=_sha(p), complete=r.get("complete"), stop=r.get("stop"),
+                            stop_reasons=r.get("stop_reasons"))
+        if not r.get("complete"):
+            b2.append(f"D1-G2 {p.name}: complete {r.get('complete')}")
+    h = reps.get("H_report.json") or {}
+    if h.get("stop"):
+        b3.append(f"D1-G2 H_report.json stop {h.get('stop_reasons')} (spec 16 '2단계': wait for D1-G2)")
+    if h:
+        outs = h.get("outputs") or {}
+        rel = str(H_PARQUET_G2.relative_to(L.REPO))
+        hit = [k for k in outs if k == str(H_PARQUET_G2) or k.endswith(os.sep + rel)]
+        info["H_report_output_key"] = hit
+        if len(hit) != 1 or outs.get(hit[0]) != _sha(H_PARQUET_G2):
+            b3.append(f"D1-G2 H_report outputs: {len(hit)} entries end with {rel} (need exactly one with the sha256 of "
+                      f"{_disp(H_PARQUET_G2)} now)")
+    f = reps.get("F_report.json") or {}
+    fdev = None
+    if f.get("stop"):
+        gf = f.get("gate_failure") or {}
+        txt = F_DECISION_G2.read_text(encoding="utf-8") if F_DECISION_G2.is_file() else ""
+        try:
+            nums = [f"{int(gf['n']):,}", f"{int(gf['n_g2_ok']):,}", f"{100 * float(gf['rate']):.2f} %"]
+        except (KeyError, TypeError, ValueError):
+            nums = []
+        reasons = [str(x) for x in (f.get("stop_reasons") or [])]
+        covered = bool(txt and nums and all(x in txt for x in nums) and reasons
+                       and all(x.startswith("F gate failure") for x in reasons))
+        fdev = dict(accepted=covered, decision=_disp(F_DECISION_G2), decision_sha256=_sha(F_DECISION_G2),
+                    decision_commit=_last_commit(F_DECISION_G2), numbers_quoted_in_decision=nums, stop_reasons=reasons,
+                    gate_failure=gf, threshold=f.get("threshold"), counts=f.get("counts"), n_g2_ok=f.get("n_g2_ok"),
+                    n_targets=f.get("n_targets"), versions=f.get("versions"), decision_text=txt)
+        if not covered:
+            b3.append(f"D1-G2 F_report.json stop {reasons}: not the STOP that F_DECISION.md accepted (numbers {nums} quoted "
+                      f"there: {[x in txt for x in nums]}; spec 16 '2단계': wait for D1-G2)")
+    info["f_deviation"] = fdev
+    unc = [_disp(p) for p in G2_COMMITTED if not _committed(p)]
+    info["not_committed"] = unc
+    if unc:
+        b2.append(f"D1-G2 files not committed or modified since HEAD (spec 12; inputs._g2_ready): {unc}")
+    info["last_commit"] = {_disp(p): _last_commit(p) for p in G2_COMMITTED}
+    info["origin_d1g2_in_head"] = _git_rc("merge-base", "--is-ancestor", "origin/d1-g2", "HEAD") == 0
+    info["origin_d1g2"] = _git_out("rev-parse", "--short", "origin/d1-g2")
+    if not info["origin_d1g2_in_head"]:
+        b2.append(f"origin/d1-g2 ({info['origin_d1g2']}, as last fetched) is not contained in HEAD: merge it first "
+                  "(spec 12 start condition, PS-12)")
+    if len(b2) + len(b3) == n0:
+        ok.append("D1-G2 F_report / H_report complete (F stop = the F_DECISION.md deviation), H output = "
+                  "labels_d1_hf_g2.parquet, D1-G2 files committed, origin/d1-g2 in HEAD")
+    return info
+
+
+def check_build_g2(b2, b3, ok):
+    """P_build_g2.json passed, current (inputs._build_ok) and built with the P20 option (c) mode 'own'; a D1-G2 F_report
+    STOP accepted by that build (--accept-g2f-stop) with the F_DECISION.md that is committed now."""
+    good, br, code = IN._build_ok("g2")
+    redo = ("rebuild: sbatch -p cpu1,cpu2 jobs/p_stage2.sh from analysis/d1_ladder (dft / g1 --force byte-identical, "
+            "then inputs.py build g2 --accept-g2f-stop --g2-cons-own, then inputs.py pairs), then Phase C with g2")
+    if not good:
+        (b3 if code == 3 else b2).append(f"g2 build: {br} ({redo})")
+        return None
+    ref = br.get("references") or {}
+    modes = dict(report=br.get("g2_q_keys"), fingerprint=(br.get("fingerprint") or {}).get("g2_q_keys"),
+                 references=ref.get("g2_mode"))
+    n0 = len(b3)
+    if any(v != "own" for v in modes.values()):
+        b3.append(f"P_build_g2.json g2_q_keys {modes} != 'own' (P20 decision 2026-10-23 = option (c); {redo})")
+    if ref.get("n_constrained_replaced") not in (0, None):
+        b3.append(f"P_build_g2.json references.n_constrained_replaced {ref.get('n_constrained_replaced')} != 0 with mode "
+                  "'own'")
+    n2 = len(b2)
+    if (_json(F_REPORT_G2) or {}).get("stop"):
+        # F_DECISION.md is not in inputs._fingerprint: an edit after the build is caught here (PS-6)
+        acc = (br.get("g2_gates") or {}).get("F_stop_accepted") or {}
+        if (br.get("fingerprint") or {}).get("accept_f0_stop") is not True or not acc:
+            b2.append("P_build_g2.json was not built with --accept-g2f-stop although the D1-G2 F_report has stop true "
+                      f"({redo})")
+        elif acc.get("decision_sha256") != _sha(F_DECISION_G2):
+            b2.append(f"P_build_g2.json g2_gates.F_stop_accepted.decision_sha256 {str(acc.get('decision_sha256'))[:12]} != "
+                      f"{_disp(F_DECISION_G2)} now ({str(_sha(F_DECISION_G2))[:12]}; {redo})")
+    if len(b3) == n0 and len(b2) == n2:
+        ok.append("P_build_g2.json all_pass, current (fingerprint), g2_q_keys 'own' (P20 option (c)); a D1-G2 F stop "
+                  "only as accepted by the build with the F_DECISION.md of now")
+    return br
+
+
+def check_p2(b2, b3, ok, hobj):
+    """P_report.json with the g2 rung and the sets P_g2 / P_012; stage-1 sets = the ADD3 json entries."""
+    p = _json(P_REPORT)
+    if p is None:
+        b2.append("results/P_report.json missing (inputs.py pairs)")
+        return None
+    if p.get("running"):
+        b2.append("results/P_report.json is being written (inputs.py pairs running)")
+        return None
+    if p.get("stop"):
+        b3.append(f"P_report.json stop: {p.get('stop_reasons') or p.get('stop_reason')}")
+        return None
+    if p.get("all_pass") is not True:
+        b2.append(f"P_report.json all_pass {p.get('all_pass')}")
+        return None
+    if "g2" not in (p.get("rungs_built") or []):
+        b2.append(f"P_report.json rungs_built {p.get('rungs_built')} has no g2 ({(p.get('rungs_not_built') or {}).get('g2')}; "
+                  "sbatch -p cpu1,cpu2 jobs/p_stage2.sh: build g2 --accept-g2f-stop --g2-cons-own, then pairs)")
+        return None
+    n0 = len(b2) + len(b3)
+    for r in IN.RUNG_ORDER:
+        rr = (p.get("rungs") or {}).get(r) or {}
+        now = _sha(IN.table_path(r))
+        if rr.get("table_sha256") is None or rr.get("table_sha256") != now:
+            b3.append(f"P_report rungs.{r}.table_sha256 {rr.get('table_sha256')} != {IN.table_path(r)} now ({now})")
+    if ((p.get("rungs") or {}).get("g2") or {}).get("build_report_sha256") != _sha(IN.build_report_path("g2")):
+        b2.append("P_report.json was made from another P_build_g2.json (rerun inputs.py pairs)")
+    ins = hobj.get("inputs_sha256") or {}
+    for name in SETS2:
+        s = (p.get("sets") or {}).get(name) or {}
+        if not s.get("file") or _sha(s["file"]) != s.get("sha256") or _ab(s["file"]) != _ab(IN.set_path(name)):
+            b3.append(f"P_report sets.{name} missing, not at {IN.set_path(name)} or its file changed")
+        elif name in ("P_dft", "P_g1", "P_01") and ins.get(_ab(s["file"])) != s.get("sha256"):
+            b3.append(f"{name}: P_report sha256 != the ADD3 json entry (stage-1 set changed: the stage-1 gate would exit 3)")
+    lab = (p.get("labels") or {}).get(str(CR2)) or {}
+    if not lab.get("ids_ok") or lab.get("sha256") != _sha(CR2):
+        b3.append(f"P_report labels[{CR2}]: ids_ok {lab.get('ids_ok')}, sha256 != the file now")
+    if not (p.get("fu2_check") or {}).get("ok"):
+        b3.append("P_report fu2_check.ok is not true (spec 16 P)")
+    if not (p.get("dft_vs_g1") or {}).get("ok"):
+        b3.append("P_report dft_vs_g1.ok is not true (spec 16 P)")
+    if len(b2) + len(b3) == n0:
+        ok.append("P_report all_pass with rungs dft, g1, g2 and sets P_dft, P_g1, P_01, P_g2, P_012 (= the files now; "
+                  "stage-1 sets = the ADD3 json)")
+    return p
+
+
+def check_c2(b2, b3, ok):
+    """C_tests.json passed with the g2 rung (tests/run_tests.py merge keys) and committed. -> (c, g2 sub-statuses)."""
+    c = _json(C_TESTS)
+    if c is None:
+        b2.append("results/C_tests.json missing (Phase C)")
+        return None, {}
+    if c.get("failed"):
+        b3.append(f"C_tests.json failed checks {c.get('failed')} (spec 16 C STOP)")
+        return c, {}
+    keys = dict(all_pass=c.get("all_pass") is True, status_pass=c.get("status") == "pass",
+                stage_verified_2=c.get("stage_verified") == 2, g2_verified=c.get("g2_verified") is True,
+                scope_g2=c.get("all_pass_scope") == "rungs dft, g1, g2", labels_final=c.get("labels_final") is True,
+                no_errors=not c.get("errors"), none_not_final=not c.get("not_final"),
+                every_check_pass=all((((c.get("checks") or {}).get(k)) or {}).get("status") == "pass" for k in CHECKS),
+                current_ok=(c.get("current") or {}).get("ok") is True,
+                consistency_ok=(c.get("consistency") or {}).get("ok") is True)
+    n0 = len(b2)
+    if not all(keys.values()):
+        b2.append(f"C_tests.json not passed with g2: {[k for k, v in keys.items() if not v]} (status {c.get('status')}, "
+                  f"scope {c.get('all_pass_scope')}; rerun Phase C with the g2 table: tests gpu + cpu + merge)")
+    lab = c.get("labels") or {}
+    if lab.get("path") != str(CR2) or lab.get("sha256") != _sha(CR2):
+        b2.append("C_tests.json labels != F_pairs_cr2.csv now (rerun Phase C)")
+    for r in IN.RUNG_ORDER:
+        rr = (c.get("rungs") or {}).get(r) or {}
+        if rr.get("status") != "ready" or rr.get("table_sha256") != _sha(IN.table_path(r)):
+            b2.append(f"C_tests.json rungs.{r}: status {rr.get('status')}, table_sha256 != the table now (rerun Phase C)")
+    pr = c.get("p_report") or {}
+    if not pr.get("ready") or pr.get("sha256") != _sha(P_REPORT):
+        b2.append("C_tests.json p_report not ready or its sha256 != results/P_report.json now (rerun Phase C)")
+    code_now = {k: _sha(q) for k, q in C_CODE.items()}
+    diff = sorted(k for k in set(code_now) | set(c.get("code_sha256") or {})
+                  if (c.get("code_sha256") or {}).get(k) != code_now.get(k))
+    if diff:
+        b2.append(f"C_tests.json code_sha256 differs from the code now: {diff} (rerun Phase C)")
+    g2sub = {}
+    for k in CHECKS:
+        for part, res in ((((c.get("checks") or {}).get(k)) or {}).get("parts") or {}).items():
+            rr = res.get("rungs") if isinstance(res, dict) else None
+            if isinstance(rr, dict) and "g2" in rr:
+                g2sub[f"{k}/{part}"] = (rr.get("g2") or {}).get("status")
+    if not g2sub or any(v != "pass" for v in g2sub.values()):
+        b2.append(f"C_tests.json per-rung g2 results not all pass: {g2sub or 'none'}")
+    unc = [n for n, q in {**C_CODE, "results/C_tests.json": C_TESTS}.items() if not _committed(q)]
+    if unc:
+        b2.append(f"not committed or modified since HEAD (commit the Phase C (g2) state first, spec 8 / PS-9): {unc}")
+    if len(b2) == n0:
+        ok.append("C_tests.json all_pass, stage_verified 2, g2_verified, every check pass (g2 sub-results pass), labels / "
+                  "tables / P_report / code = the files now, committed")
+    return c, g2sub
+
+
+def supplement_preconditions(hobj):
+    b2, b3, ok = [], [], []
+    plan = (hobj.get("stage2_plan") or {}).get("supplement_entries") or {}
+    want = [(_ab(pth), role) for pth, role in stage2_supplement_paths()]
+    if list(plan.items()) != want:
+        b3.append(f"stage2_supplement_paths() {want} != the committed json stage2_plan.supplement_entries {list(plan.items())} "
+                  "(md section 10 list; paths, roles and order must be equal)")
+    dup = [q for q, _ in want if q in (hobj.get("inputs_sha256") or {}) or q in (hobj.get("inputs_roles") or {})]
+    if dup:
+        b3.append(f"already in the committed json inputs: {dup} (existing entries are never changed)")
+    for f in (HERE / "train_atoms.py", HERE / "train_xgb.py"):
+        txt = f.read_text(encoding="utf-8")
+        lines = {x.strip() for x in txt.splitlines()}
+        miss = [s for s in GATE_LITERALS + STAGE2_LITERALS if s not in txt]
+        miss += [s for s in GATE_QUOTE if not s.startswith("#") and s.strip() not in lines]
+        if miss:
+            b3.append(f"{f.name}: gate literals not found (the gate changed; regenerate this contract): {miss}")
+    if UNITS.is_dir():
+        g2u = sorted(e.name for e in os.scandir(UNITS) if e.name.startswith("L__g2__"))
+        if g2u:
+            b3.append(f"{len(g2u)} stage-2 unit files in $LAD/units before the supplement commit (spec 16 A): {g2u[:5]}")
+    hit, queue = window_tasks()
+    if hit:
+        b2.append(f"{len(hit)} pending task(s) named {list(WINDOW_JOBS)} would start inside the commit window and exit 3 "
+                  f"at their ADD3 gate: {hit[:5]} (submit the supplement when none is pending, PS-11)")
+    elif hit is None:
+        print(f"[supplement] warning: queue check failed ({queue.get('error')}): pending lad_m1 / lad_xgb / lad_e1 tasks "
+              "not checked (PS-11)", flush=True)
+    else:
+        ok.append(f"no pending {'/'.join(WINDOW_JOBS)} task (commit window, PS-11)")
+    g2 = check_d1g2(b2, b3, ok)
+    br = check_build_g2(b2, b3, ok)
+    p = check_p2(b2, b3, ok, hobj)
+    c, g2sub = check_c2(b2, b3, ok)
+    entries = []
+    p012 = _ab(IN.set_path("P_012"))
+    for pth, role in stage2_supplement_paths():
+        q = _ab(pth)
+        s = _sha(pth)
+        col = _column(pth)
+        if s is None:
+            b2.append(f"{_disp(pth)} missing ({role})")
+        exp = "dft+g1+g2" if q == p012 else "g2"
+        if col != exp:
+            b3.append(f"{_disp(pth)}: column {col} != {exp} (inputs.rung_roots changed; the stage-1 skip rule depends on it)")
+        entries.append(dict(path=q, disp=_disp(pth), role=role, column=col, sha256=s))
+    if b3:
+        raise Refuse(3, b3 + b2)
+    if b2:
+        raise Refuse(2, b2)
+    return dict(g2=g2, br=br, p=p, c=c, g2sub=g2sub, entries=entries, ok=ok, queue=queue)
+
+
+def _tri(v):
+    s = str(v).strip().lower()
+    return True if s == "true" else (False if s == "false" else None)
+
+
+def coverage_same_ts(p):
+    """PS-7 / PS-8: coverage of the P_main test pairs per set, reasons for P_g2, same-TS classes of the P_g2 ones."""
+    S = pd.read_csv(IN.S_FOLDS, usecols=["pair_id", "a_rxn", "b_rxn", "pos", "in_P_main"], dtype={"pair_id": str})
+    test = {}
+    for k in range(NF):
+        rec = json.loads((IN.FU2_SPLITS / f"T1__f{k}.json").read_text(encoding="utf-8"))
+        for q in map(str, rec["test"]):
+            test[q] = k
+    pm = S.in_P_main.astype(str).str.lower().eq("true")
+    B = S[pm & S.pair_id.isin(set(test))].copy()
+    B["fold"] = B.pair_id.map(test).astype(int)
+    para = B.pos.fillna("").astype(str).eq("p")
+    ids = {n: set(pd.read_csv((p.get("sets") or {})[n]["file"], usecols=["pair_id"], dtype={"pair_id": str}).pair_id)
+           for n in SETS2}
+
+    def frac(a, b):
+        return float(a / b) if b else None
+    cov = dict(rule=SUPP_DECISIONS["PS-8"], n_P_main_test=int(len(B)), n_P_main_test_para=int(para.sum()), sets={})
+    for n, s in ids.items():
+        m = B.pair_id.isin(s)
+        cov["sets"][n] = dict(n=int(m.sum()), frac=frac(int(m.sum()), len(B)), n_para=int((m & para).sum()),
+                              frac_para=frac(int((m & para).sum()), int(para.sum())),
+                              by_fold={str(k): dict(n=int((m & (B.fold == k)).sum()), of=int((B.fold == k).sum()))
+                                       for k in range(NF)})
+    T = pd.read_parquet(IN.table_path("g2"), columns=["rxn_id", "has_tok", "has_x182", "has_h", "usable"])
+    Cc = pd.read_csv(C_COMPARE_G2, usecols=["rxn_id", "g2_status"] + list(SAME_TS_COLS), dtype=str)
+    st = dict(zip(Cc.rxn_id.astype(int), Cc.g2_status.fillna("").astype(str)))
+    tt = {int(r): (bool(a), bool(b), bool(h)) for r, a, b, h in zip(T.rxn_id, T.has_tok, T.has_x182, T.has_h)}
+
+    def cat(r):
+        r = int(r)
+        if st.get(r, "") != "ok":
+            return "g2_not_ok"
+        t = tt.get(r)
+        if t is None:
+            return "not_target"
+        if not (t[0] and t[1]):
+            return "no_tokens_or_182"
+        return "ok" if t[2] else "no_h"
+    out = B[~B.pair_id.isin(ids["P_g2"])]
+    reasons = {}
+    for a_, b_ in zip(out.a_rxn, out.b_rxn):
+        ca, cb = cat(a_), cat(b_)
+        r = next((x for x in DROP_CATS[:-1] if x in (ca, cb)), "both_usable")
+        reasons[r] = reasons.get(r, 0) + 1
+    cov["P_g2_missing_by_reason"] = {x: reasons.get(x, 0) for x in DROP_CATS}
+    cov["P_g2_missing_para"] = int((~B.pair_id.isin(ids["P_g2"]) & para).sum())
+    same = {col: {int(r): _tri(v) for r, v in zip(Cc.rxn_id, Cc[col])} for col in SAME_TS_COLS}
+    G = B[B.pair_id.isin(ids["P_g2"])]
+    gpara = G.pos.fillna("").astype(str).eq("p").to_numpy()
+    usable = set(T.rxn_id[T.usable.astype(bool)].astype(int))
+    sts = dict(rule=SUPP_DECISIONS["PS-7"], source=_disp(C_COMPARE_G2), source_sha256=_sha(C_COMPARE_G2),
+               columns=list(SAME_TS_COLS), primary=SAME_TS_COLS[0], population="P_g2 pairs among the P_main test pairs",
+               n_pairs=int(len(G)), n_pairs_para=int(gpara.sum()), classes={}, reactions_usable={})
+    for col in SAME_TS_COLS:
+        cls = []
+        for a_, b_ in zip(G.a_rxn, G.b_rxn):
+            x, y = same[col].get(int(a_)), same[col].get(int(b_))
+            cls.append("unclassified" if x is None or y is None else
+                       ("same" if (x and y) else ("different" if not (x or y) else "mixed")))
+        cls = np.asarray(cls, dtype=object)
+        sts["classes"][col] = dict(all={k: int((cls == k).sum()) for k in SAME_TS_CLASSES},
+                                   para={k: int(((cls == k) & gpara).sum()) for k in SAME_TS_CLASSES})
+        vals = [same[col].get(r) for r in usable]
+        sts["reactions_usable"][col] = dict(n=len(vals), same=sum(1 for v in vals if v is True),
+                                            different=sum(1 for v in vals if v is False),
+                                            unclassified=sum(1 for v in vals if v is None))
+    return cov, sts
+
+
+def build_summary(br):
+    ref, tok, tab = br.get("references") or {}, br.get("tokens") or {}, br.get("table") or {}
+    return dict(
+        file=_disp(IN.build_report_path("g2")), sha256=_sha(IN.build_report_path("g2")),
+        git_state=_git_state_at(IN.build_report_path("g2")), finished=br.get("finished"), git_head=br.get("git_head"),
+        code_version=br.get("code_version"), g2_q_keys=br.get("g2_q_keys"),
+        fingerprint_g2_q_keys=(br.get("fingerprint") or {}).get("g2_q_keys"),
+        table={k: tab.get(k) for k in ("n_targets", "n_tok", "n_x182", "n_h", "n_usable", "n_tok_without_h",
+                                       "n_tok_without_x182", "channels_unchanged")},
+        h_changed=tab.get("h_changed"),
+        references={k: ref.get(k) for k in ("g2_mode", "n_constrained_kept_own", "dev_kcal_kept_own",
+                                            "n_rows_constrained_keys", "n_constrained_replaced", "n_fragments_with_energy",
+                                            "n_keys",
+                                            "n_keys_multi_row", "n_fragments_replaced", "n_jobs_replaced",
+                                            "n_fragments_dev_gt_0_05", "n_fragments_dev_gt_1", "by_kind", "dev_kcal",
+                                            "source", "sha256", "rule")},
+        reference_graphs={k: (br.get("reference_graphs") or {}).get(k) for k in ("ok", "n_checked", "n_vs_key_fail")},
+        p_a={k: (br.get("P-a") or {}).get(k) for k in ("ok", "max_abs_gated", "n_rows")},
+        tokens={k: tok.get(k) for k in ("token_version", "atom_version", "n_tokens", "n_x182_rows", "elements_same_as_g1",
+                                        "t_report_sha256", "manifest_sha256", "q_report_sha256", "s_splits_sha256",
+                                        "x182_sha256")},
+        h_source=br.get("h_source"), g2_gates=br.get("g2_gates"), outputs=br.get("outputs"))
+
+
+def d1g2_summary(info):
+    cs = _json(C_SUMMARY_G2) or {}
+    ov, dn = cs.get("overall") or {}, cs.get("same_ts_downstream") or {}
+    c13 = [str(x) for x in (cs.get("decisions") or []) if str(x).startswith("C-13")]
+    rule = cs.get("rule") or {}
+    return dict(info, c_summary=dict(
+        file=_disp(C_SUMMARY_G2), sha256=_sha(C_SUMMARY_G2),
+        overall={k: ov.get(k) for k in ("g2_ok", "g2_eq_dft", "g2_eq_g1", "g1_ok_of_g2_ok")},
+        downstream={k: dn.get(k) for k in ("column", "literal_column", "decision", "consumers", "classified",
+                                           "literal_rule_for_reference", "level_shift_baseline_g1_vs_dft")},
+        rule=dict(rmsd_A=rule.get("rmsd_A"), dform_A=rule.get("dform_A"), section=rule.get("section")),
+        decision_c13=c13[0] if c13 else None))
+
+
+def stage1_state():
+    names = sorted(e.name for e in os.scandir(UNITS)) if UNITS.is_dir() else []
+    s1 = [n for n in names if n.endswith(".json") and n.startswith(("L__dft__", "L__g1__"))]
+    return dict(n_stage1_unit_json=len(s1), n_stage1_units=len(unit_names()),
+                results={_disp(f): _sha(f) for f in STAGE1_RESULTS})
+
+
+def supplement_content(hobj, pre):
+    D = dict(date=time.strftime("%Y-%m-%d"), written=_now(), git_head=L.git("rev-parse", "HEAD").strip(),
+             branch=_git_out("rev-parse", "--abbrev-ref", "HEAD"), add3_md_sha256=ADD3_MD_SHA256,
+             add3_md_commit=_last_commit(ADD3_MD), base_json_sha256=ADD3_JSON_SHA256,
+             base_json_commit=_last_commit(ADD3_JSON), generator_sha256=_sha(Path(__file__).resolve()),
+             generator_git=_git_state_at(Path(__file__).resolve()), entries=pre["entries"], checked=pre["ok"],
+             queue=pre.get("queue"))
+    # PR-12 / PS-3: the extended json's gate content, in memory, for a stage-1 and a g2 process
+    rec = dict(md_sha256=hobj.get("md_sha256"), inputs_sha256=dict(hobj.get("inputs_sha256") or {}))
+    rec["inputs_sha256"].update({e["path"]: e["sha256"] for e in pre["entries"]})
+    D["mirror"] = {"stage1": gate_mirror(rec, STAGE_RUNGS, need_paths()),
+                   "stage2": gate_mirror(rec, STAGE2_RUNGS, need_paths(STAGE2_RUNGS))}
+    bad = [f"{s}: {x}" for s, m in D["mirror"].items() for x in m["bad"]]
+    if bad:
+        raise Refuse(3, ["the extended json would not pass the trainers' gate_add3: " + "; ".join(bad[:10])])
+    p = pre["p"]
+    D["build"] = build_summary(pre["br"])
+    D["pair_sets"] = pair_sets(p, SETS2)
+    D["p_report"] = dict(file=_disp(P_REPORT), sha256=_sha(P_REPORT), git_state=_git_state_at(P_REPORT),
+                         finished=p.get("finished"), git_head=p.get("git_head"), rungs_built=p.get("rungs_built"),
+                         fu2_check_ok=(p.get("fu2_check") or {}).get("ok"), dft_vs_g1=p.get("dft_vs_g1"))
+    D["h_changed_g2"] = (p.get("h_changed_by_rereferencing") or {}).get("g2")
+    D["coverage"], D["same_ts"] = coverage_same_ts(p)
+    D["c_tests"] = c_summary(pre["c"])
+    D["c_g2_sub"] = pre["g2sub"]
+    D["d1g2"] = d1g2_summary(pre["g2"])
+    col = ((D["d1g2"].get("c_summary") or {}).get("downstream") or {}).get("column")
+    if col != SAME_TS_COLS[0]:
+        raise Refuse(3, [f"D1-G2 C_summary.json same_ts_downstream.column {col!r} != the primary split column "
+                         f"{SAME_TS_COLS[0]!r} (PS-7 follows D1-G2 C-13; regenerate this rule)"])
+    D["units"] = unit_names(STAGE2_RUNGS)
+    D["unit_counts"] = ((hobj.get("ladder") or {}).get("units") or {}).get("counts") or {}
+    D["stage1_state"] = stage1_state()
+    recs = [H_PARQUET_G2, F_REPORT_G2, H_REPORT_G2, F_DECISION_G2, C_SUMMARY_G2, C_COMPARE_G2, G2_FU2 / "Q_manifest.csv",
+            IN.build_report_path("g2"), P_REPORT, C_TESTS, L.RES / "C_tests_gpu.json", L.RES / "C_tests_cpu.json",
+            HERE / "inputs.py", HERE / "tests" / "run_tests.py", HERE / "evaluate.py", Path(__file__).resolve()]
+    D["records"] = {_disp(f): dict(sha256=_sha(f), git=_git_state_at(f) if Path(f).is_file() else "missing")
+                    for f in recs}
+    return D
+
+
+def _decision_quote(txt):
+    """the '- 결정:' bullet of F_DECISION.md (with its continuation lines), else the whole text."""
+    out, on = [], False
+    for line in (txt or "").splitlines():
+        if line.startswith("- 결정"):
+            on = True
+            out.append(line[2:].strip())
+            continue
+        if on:
+            if line.startswith("  ") and line.strip():
+                out.append(line.strip())
+                continue
+            break
+    return " ".join(out) if out else " ".join(x.strip() for x in (txt or "").splitlines() if x.strip())
+
+
+def make_supp_md(D):
+    E, B, PS, COV, ST, C, G = (D["entries"], D["build"], D["pair_sets"], D["coverage"], D["same_ts"], D["c_tests"],
+                               D["d1g2"])
+    uc, M1, M2 = D["unit_counts"], D["mirror"]["stage1"], D["mirror"]["stage2"]
+    md = []
+    a = md.append
+    a(f"# PREREG ADD3 보완판 — D1PAIR 사전 등록 추가본 (D1-REF·LADDER 2단계: g2, {D['date']})")
+    a("")
+    a(f"이 문서는 `PREREG_D1PAIR_ADD3.md`(commit {D['add3_md_commit']}, sha256 `{D['add3_md_sha256']}`) 10절의 2단계 보완 "
+      "규칙에 따라 새 파일로 쓴 보완판이다. ADD3 md는 한 바이트도 바꾸지 않았다(sha256과 git 상태를 다시 확인했다).")
+    a(f"`prereg_d1pair_add3.json`(commit {D['base_json_commit']}, 보완 전 sha256 `{D['base_json_sha256']}`)에는 10절이 허용한 "
+      f"것만 더했다: `inputs_sha256`·`inputs_roles`의 새 항목 {len(E)}개(10절 목록, 같은 순서)와 새 최상위 키 `supplement`(이 md의 "
+      "경로·sha256·commit). 이미 있는 항목과 키는 그대로다(더한 것을 빼고 다시 쓰면 commit된 json과 바이트 단위로 같음을 쓰기 "
+      "전과 쓴 뒤에 확인했다).")
+    a(f"이 문서와 json 추가분은 `analysis/d1_ladder/prereg.py supplement`가 결과 파일만 읽어 만들었다(코드 commit "
+      f"`{D['git_head']}`, 생성 코드 sha256 `{D['generator_sha256']}`, git 상태 {GIT_KO.get(D['generator_git'], D['generator_git'])}). "
+      "결과 수치는 모두 결과 파일에서 옮겼고, 규칙은 명령서와 ADD3를 인용했다.")
+    a("범위: **2단계(rung `g2`, 명령서 12절)**. 1단계 규칙은 바꾸지 않는다(7절).")
+    a("")
+    a("M2 학습(`train_atoms.py run --stage 2`, `train_xgb.py run --stage 2`)은 이 문서와 json 추가분이 commit된 뒤에만 돈다. "
+      "두 학습 코드가 매 실행 전에 확인하는 것은 ADD3 md·json(`gate_add3`), `P_report.json`(MA-16), `C_tests.json`의 "
+      "`g2_verified`(MA-17)다(6-2절). 학습 코드는 이 보완판을 읽지 않으므로, 이 보완판의 commit·sha256은 "
+      "`prereg.py check --stage 2`와 E2가 확인한다.")
+    a("")
+    s1 = D["stage1_state"]
+    have = {k: v for k, v in (s1.get("results") or {}).items() if v}
+    a(f"**지금까지 본 것** (작성 {D['written']}):")
+    a("- 2단계 학습은 한 번도 돌지 않았다(`$LAD/units`의 `L__g2__` 파일 0개).")
+    a(f"- 1단계 학습: unit json {_n(s1.get('n_stage1_unit_json'))}/{_n(s1.get('n_stage1_units'))}개. "
+      + ("1단계 예측·평가 파일(`L_predictions.parquet`, `L_report.json`, `E1_*`)은 아직 없다."
+         if not have else "있는 1단계 결과 파일: " + ", ".join(f"`{k}`" for k in have)
+         + ". 이 보완판이 새로 정한 것(2·3·4·5절)은 g2 구조·입력에 관한 결정이고 1단계 점수에 따라 고른 것이 아니다."))
+    a("- g2에서 지금까지 계산한 것은 구조와 입력뿐이다: D1-G2 Phase G(TS), C(구조 비교, 같은 TS 판정), F(feature·토큰), "
+      "H(HF), LADDER Phase P(g2 입력표, P_g2, P_012), Phase C 검사의 g2 항목(" + ", ".join(sorted(D["c_g2_sub"])) + "). "
+      "명령서 8절의 smoke는 rung dft·g1이다. 이 명령은 g2 예측 파일을 열지 않으며 g2 시험 짝 점수는 이 문서에 없다.")
+    a("")
+
+    # 1
+    a("## 1. 2단계가 더하는 입력 (g2 열)")
+    a("")
+    a("**gate에 더한 항목** (json `inputs_sha256`·`inputs_roles`; 열 = 명령서 4-1의 rung 열, `inputs.check_paths`):")
+    a("")
+    md.extend(_tab(["파일", "역할", "열", "sha256"], [[f"`{e['disp']}`", e["role"], e["column"], f"`{e['sha256']}`"]
+                                                    for e in E]))
+    a("")
+    a("- g2 process의 `need`(학습 코드 `cmd_run`: 정답 파일 + 학습하는 rung의 입력표): "
+      + ", ".join(f"`{_disp(x)}`" for x in M2["need"]) + ".")
+    a(f"- 보완된 json으로 학습 코드 gate의 내용 조건을 지금 파일에 그대로 적용한 결과: g2 process는 {_n(M2['n_verified'])}개를 "
+      f"확인하고(정답·공유 파일·코드·`P_012.csv`·g2 열) dft·g1 열에만 속한 {_n(M2['n_skipped'])}개는 열지 않는다(MA-15, L-4). "
+      f"1단계 process(dft·g1)는 {_n(M1['n_verified'])}개를 확인하고 g2 열에만 속한 {_n(M1['n_skipped'])}개는 열지 않는다. "
+      "`P_012.csv`는 세 rung에 걸친 파일이라 1단계 process도 확인한다(바뀌면 1단계 학습도 exit 3). 둘 다 통과. git 조건(두 "
+      "파일이 commit되어 HEAD와 같음)은 commit 뒤에 참이 된다.")
+    a("- 토큰 npz(반응별)의 sha256은 g2 `T_manifest.csv`에 있고 학습 코드가 읽을 때마다 확인한다(1단계와 같음).")
+    a(f"- 코드: commit `{D['git_head']}`. 학습 코드·FU2 코드(두 학습 코드의 지문 `code_sha256`)는 ADD3 json 항목 그대로이고 g2 "
+      "process의 gate도 그 sha256을 확인한다(위 결과에 포함).")
+    a("")
+    a("**기록만 하는 g2 관련 파일** (gate 밖; json `supplement.records`):")
+    a("")
+    md.extend(_tab(["파일", "sha256", "git"], [[f"`{k}`", f"`{v['sha256']}`", GIT_KO.get(v["git"], v["git"])]
+                                             for k, v in D["records"].items()]))
+    a("")
+    t, pa, tk = B["table"], B["p_a"], B["tokens"]
+    a(f"**g2 입력표** `$LAD/inputs/g2.parquet` (`P_build_g2.json` sha256 `{B['sha256']}`, 작성 {B.get('finished')}, git "
+      f"{str(B.get('git_head'))[:10]}): 대상 {_n(t.get('n_targets'))}반응 중 토큰 {_n(t.get('n_tok'))}, 182 "
+      f"{_n(t.get('n_x182'))}, H 9값 {_n(t.get('n_h'))}, 사용 가능 {_n(t.get('n_usable'))}. gate P-a(원래 기준으로 "
+      f"`labels_d1_hf_g2.parquet` 재현): {'통과' if pa.get('ok') else '실패'}, 최대 차이 {pa.get('max_abs_gated')} "
+      f"({_n(pa.get('n_rows'))}행). 토큰 `{tk.get('token_version')}` / `{tk.get('atom_version')}`, 원소 목록이 g1과 같음: "
+      f"{tk.get('elements_same_as_g1')}. EDA 6채널은 재조립으로 바뀌지 않았다: {t.get('channels_unchanged')}.")
+    hc = (B.get("h_changed") or {})
+    bv = hc.get("by_value") or {}
+    a(f"- H 재조립으로 바뀐 값(g2): 반응 {_n(hc.get('n_reactions'))}개(사용 가능 {_n(hc.get('n_reactions_usable'))}); "
+      + ", ".join(f"{x} {_n((bv.get(x) or {}).get('n_changed'))}개(> 0.05: {_n((bv.get(x) or {}).get('n_gt_0_05'))})"
+                  for x in CHANGED) + ".")
+    a("")
+
+    # 2
+    r = B["references"]
+    a("## 2. g2 H 재조립의 constrained dipole 기준 (P20, 확정)")
+    a("- ADD3 10절은 명령서 Q-2 그대로(고정 이면각 상태를 키에 붙여 같은 상태끼리만 묶음, `--g2-q-keys`)를 적고, 그 상태가 "
+      "D1(DFT) 기준 구조에서 정해지므로 g2 H에 DFT 정보가 일부 들어간다는 점(P20)을 이 보완판에서 확정·기록한다고 했다.")
+    a("- **결정 (2026-10-23, 사용자 규칙 '모든 판단 = 추천안'; `inputs.py` P20, commit 04c9f7e9): 선택지 (c), `inputs.py "
+      "build g2 --g2-cons-own`.** constrained dipole 키에 속한 g2 행은 기준을 바꾸지 않는다(반응마다 자기 G2 기준 구조의 HF "
+      "에너지). 나머지 키는 명령서 4-1대로 키마다 g2 기준 구조 HF 에너지의 최저값을 쓴다(문턱 없음, 동점은 job_id가 작은 것).")
+    a("- **이유:** Q-2 키의 `|fixed:` 접미사(고정 이면각 상태)는 D1(DFT) 기준 구조에서 계산된다. 이것으로 g2 기준을 묶으면 "
+      "DFT에서만 얻는 정보가 g2 H에 들어간다(명령서 4-1: g2가 DFT 파일을 하나라도 읽으면 DFT 정보가 새는 것). 배포 때(SMILES → "
+      "xTB)는 이 상태를 알 수 없으므로 반응마다 자기 G2 기준을 쓰는 것이 배포와 같다. 쓰지 않은 선택지: (a) 명령서 Q-2 키 "
+      "그대로(DFT 유래 상태 사용), (b) g2만 SMILES 수준 키로 묶기(명령서에 없는 새 키).")
+    a("- **한계 (이탈로 기록):** constrained 키에는 constrained 행만 들어 있으므로 `|fixed:` 상태 자체는 g2 값에 들어가지 "
+      "않는다. 그러나 어느 g2 행을 그대로 둘지는 `$LAD/Q_keys.parquet`의 행별 `constrained` 표시로 고르고, 이 표시는 D1 라벨의 "
+      "`ref_port.constrained`(D1, 곧 DFT 흐름의 기준 구조 결과)다. G2 자신의 기준 구조 결과(G2 job의 `ref_result.json` "
+      "`port.constrained`)는 commit된 입력이 아니어서 읽지 않았다. 따라서 'constrained인가'라는 DFT 유래 정보 한 가지가 행 "
+      "선택에 남는다: D1에서는 자유인데 G2에서는 constrained인 행은 자유 키의 최저값으로 바뀌고, 반대 경우는 자기 기준을 "
+      "유지한다. 두 표시가 다른 g2 행의 수는 세지 않았다(G2 job 폴더를 읽어야 함).")
+    dv = r.get("dev_kcal") or {}
+    dk = r.get("dev_kcal_kept_own") or {}
+    a(f"- 기록(`P_build_g2.json`): `g2_q_keys` = `{B.get('g2_q_keys')}`, 지문 `g2_q_keys` = `{B.get('fingerprint_g2_q_keys')}`, "
+      f"`references.g2_mode` = `{r.get('g2_mode')}`. constrained 키의 기준 행 {_n(r.get('n_rows_constrained_keys'))}개 중 키 "
+      f"최저값이 더 낮았지만 자기 기준을 유지한 조각 {_n(r.get('n_constrained_kept_own'))}개(키 최저값과의 차 중앙값 "
+      f"{_f(dk.get('p50'))}, 최대 {_f(dk.get('max'), 2)} kcal/mol), constrained 조각 교체 "
+      f"{_n(r.get('n_constrained_replaced'))}개. 바뀐 조각 {_n(r.get('n_fragments_replaced'))}개(반응 "
+      f"{_n(r.get('n_jobs_replaced'))}개; " + ", ".join(f"{x} {_n(y)}" for x, y in (r.get("by_kind") or {}).items())
+      + f"), 바뀐 양 중앙값 {_f(dv.get('p50'))}, 최대 {_f(dv.get('max'), 2)} kcal/mol; 분자 키 {_n(r.get('n_keys'))}개. "
+      f"기준 구조 그래프 검사(P6b): {(B.get('reference_graphs') or {}).get('ok')}.")
+    a("- 이 결정은 g2 입력표를 만들기 전에 정했다(g2 학습·평가 결과 없음).")
+    a("")
+
+    # 3
+    fd = G.get("f_deviation") or {}
+    gf, cn = fd.get("gate_failure") or {}, fd.get("counts") or {}
+    comp = gf.get("components") or {}
+    a("## 3. D1-G2 Phase F 멈춤의 수용 (이탈)")
+    a(f"- `analysis/d1_g2/results/F_report.json`(sha256 `{(G.get('F_report.json') or {}).get('sha256')}`): G2 ok "
+      f"{_n(cn.get('g2_ok'))}반응 중 전역 182 {_n(cn.get('features_ok'))}, Q 사용 {_n(cn.get('q_use'))}, 토큰 "
+      f"{_n(cn.get('tokens_ok'))}. gate 실패 {_n(gf.get('n'))}/{_n(gf.get('n_g2_ok'))} = {_pct(gf.get('rate'), 2)} > "
+      f"{_pct(gf.get('threshold'), 0)} → stop (D1-G2 명령서 14절 F; 구성 feature {_n(comp.get('features'))}, Q 제외 "
+      f"{_n(comp.get('Q_excluded'))}, T 실패 {_n(comp.get('T_bad'))}).")
+    a(f"- 결정 `{fd.get('decision')}`(sha256 `{fd.get('decision_sha256')}`, commit {fd.get('decision_commit')}) 원문: "
+      f"“{_decision_quote(fd.get('decision_text'))}”")
+    a("- 명령서 16절 '2단계: D1-G2 F·H gate 실패 → 그쪽 해결까지 대기'에서 벗어난다. D1-G2의 결정으로 해결된 것으로 보고 "
+      "진행하며 이탈로 기록한다. 실패 반응은 g2에서 토큰·182가 없어 사용 가능 반응이 아니다(명령서 7절). 그 반응이 들어간 짝은 "
+      "P_g2에서 빠지고, 4절 적용 범위에서 따로 센다(`no_tokens_or_182`).")
+    fa = ((B.get("g2_gates") or {}).get("F_stop_accepted") or {})
+    a("- g2 입력표는 `inputs.py build g2 --accept-g2f-stop --g2-cons-own`(commit 11aeef90·04c9f7e9; `jobs/p_stage2.sh`, "
+      "cdbaa3ec)으로 만들었다. `--accept-g2f-stop`은 멈춤 이유가 F gate 비율뿐이고 `F_DECISION.md`가 commit되어 있을 때만 "
+      f"이 멈춤을 통과시키고 `P_build_g2.json` `g2_gates.F_stop_accepted`에 그 파일의 sha256(`{fa.get('decision_sha256')}`)을 "
+      "남긴다. 이 명령은 그 값이 지금 파일의 sha256과 같음을 확인했다(`F_DECISION.md`는 build 지문에 들어 있지 않음).")
+    hi = G.get("H_report.json") or {}
+    a(f"- D1-G2 `H_report.json`: complete {hi.get('complete')}, stop {hi.get('stop')}; `labels_d1_hf_g2.parquet` sha256 = "
+      f"H_report outputs의 값(경로 키 `{(G.get('H_report_output_key') or ['–'])[0]}`, 저장소 상대 경로로 맞춤, inputs.py P21). "
+      f"D1-G2 파일 {len(G2_COMMITTED)}개 commit됨(HEAD와 같음). `origin/d1-g2`가 HEAD에 들어 있음: "
+      f"{G.get('origin_d1g2_in_head')}.")
+    a(f"- `inputs.py build g2`의 D1-G2 확인 기록(`P_build_g2.json` `g2_gates`): "
+      f"`{json.dumps(_jsonable(B.get('g2_gates')), ensure_ascii=False)[:600]}`.")
+    a("")
+
+    # 4
+    a("## 4. 짝 집합과 적용 범위")
+    rows = []
+    for name, s in PS.items():
+        f = s.get("folds_T1") or {}
+        rows.append([name, _n(s["n"]), _n((s.get("by_ref_kind") or {}).get("reference")),
+                     _n((s.get("by_ref_kind") or {}).get("anchor")), _n(s.get("para")), _n(s.get("in_P_main")),
+                     _n(s.get("in_P_main_para")),
+                     " / ".join(_n((f.get(str(i)) or {}).get("test")) for i in range(NF)),
+                     f"{_n((s.get('dropped') or {}).get('n'))} ({_n((s.get('dropped') or {}).get('n_used_in_T1'))})",
+                     f"`{s['sha256']}`"])
+    md.extend(_tab(["집합", "짝", "기준", "anchor", "para", "P_main", "P_main para", "시험 짝 fold 0–4", "빠진 짝 (T1에 쓰인 것)",
+                    "sha256"], rows))
+    a("")
+    a("- 판정(13-2)은 g2 자기 집합 `P_g2`, rung 사이 비교(13-4)는 `P_012` = P_01 ∩ P_g2에서 한다(ADD3 4절·5-4).")
+    a("- 학습 코드 규칙의 짝 목록 sha256(지문 `pair_list`와 비교할 값): "
+      + ", ".join(f"{n} `{PS[n]['pair_list_sha256_trainer_rule'][:16]}…` ({_n(PS[n]['n_in_T1_lists'])}짝)"
+                  for n in ("P_g2",)) + ".")
+    a(f"- **적용 범위 (명령서 12절, 정의 학습 전 고정):** T1 fold 0–4 시험 목록(FU2 split 파일 `test`)의 짝 중 P_main 짝"
+      f"(`S_folds.csv` `in_P_main`) {_n(COV['n_P_main_test'])}짝(para {_n(COV['n_P_main_test_para'])}) 가운데 그 집합에 "
+      "든 비율. g2에서 실패한 반응은 배포 때도 예측할 수 없으므로 P_g2 밖의 짝은 '예측 불가'로 세고, g2 성적(13-2)에는 "
+      "넣지 않는다(빈 예측을 null 등으로 채우지 않음).")
+    a("")
+    rows = []
+    for n, x in COV["sets"].items():
+        rows.append([n, _n(x["n"]), _pct(x["frac"]), _n(x["n_para"]), _pct(x["frac_para"]),
+                     " / ".join(f"{_n(v['n'])}/{_n(v['of'])}" for v in x["by_fold"].values())])
+    md.extend(_tab(["집합", "P_main 시험 짝", "비율", "para", "para 비율", "fold 0–4"], rows))
+    a("")
+    mr = COV["P_g2_missing_by_reason"]
+    a(f"- P_g2에 없는 P_main 시험 짝 {_n(sum(mr.values()))}개(para {_n(COV['P_g2_missing_para'])})의 이유(두 반응 중 먼저 걸리는 "
+      "것): " + ", ".join(f"{DROP_KO[x]} {_n(mr.get(x))}" for x in DROP_CATS) + ".")
+    a("")
+
+    # 5
+    sc = (G.get("c_summary") or {})
+    ov, dn, ru = sc.get("overall") or {}, sc.get("downstream") or {}, sc.get("rule") or {}
+
+    def kn(x):
+        x = x or {}
+        return f"{_n(x.get('k'))}/{_n(x.get('n'))} ({_pct(x.get('frac'), 2)})"
+    a("## 5. 같은 TS에 따른 나눔 (E2, 설명용)")
+    a("- 명령서 12절: g2는 G2가 라벨과 다른 TS를 찾은 짝도 그대로 학습·평가한다(배포 때 구별할 수 없다). 나눔은 설명용이고 "
+      "13-2 판정, 13-3 해석, REP 고르기에 쓰지 않는다.")
+    a(f"- **나눔 규칙 (학습 전 고정):** 반응별 판정 = D1-G2 Phase C `{ST['source']}`(sha256 `{ST['source_sha256']}`)의 "
+      f"`{ST['primary']}`: {SAME_TS_KO[ST['primary']]}, {ru.get('section') or 'VALIDATION_SPEC 6.4'} 규칙(무거운 원자 RMSD ≤ "
+      f"{ru.get('rmsd_A')} Å, 형성 결합 거리 차 ≤ {ru.get('dform_A')} Å). 짝 (a, b)는 두 반응이 모두 같은 TS면 `same`, "
+      "하나만 같으면 `mixed`, 둘 다 다르면 `different`, 한쪽이라도 판정이 비면 `unclassified`.")
+    a(f"- **이 열을 쓰는 이유:** 명령서 12절은 'D1-G2 Phase C의 \"같은 TS\" 판정'을 따르라고 한다. D1-G2 Phase C는 결정 "
+      f"C-13으로 그 판정(쓰는 곳에 'D1LADDER 12 E2 (same TS split)'가 적혀 있음)을 `{dn.get('column')}`로 정했다. "
+      f"`same_ts_dft`는 xTB·DFT 수준 차이를 넘어 비교하므로 같은 TS도 대부분 '다름'으로 판정한다(같은 TS를 xTB로 옮긴 G1 "
+      f"대 DFT 기준선 {kn(dn.get('level_shift_baseline_g1_vs_dft'))}, G2 = DFT TS {kn(ov.get('g2_eq_dft'))}).")
+    a("- **E2 보고:** P_g2 시험 짝(fold 0–4 합) 중 P_main 짝을 이 네 부류로 나눠, 부류마다 REP·ENS4·4 모델·LINE·null의 MAE"
+      "(9 주 타깃; 전체 위치와 para)를 적는다. 부류 사이 검정이나 기준 판정은 하지 않는다.")
+    a(f"- **두 번째 나눔:** `{SAME_TS_COLS[1]}`({SAME_TS_KO[SAME_TS_COLS[1]]}; 2단계 작업 지시 문구에 적힌 열)도 같은 방식으로 "
+      "네 부류로 나눠 함께 보고한다. 둘 다 설명용이고 어느 것도 판정에 쓰지 않는다.")
+    a(f"- D1-G2 Phase C 비율(`C_summary.json` `overall`): G2 = DFT TS {kn(ov.get('g2_eq_dft'))}, G2 = G1 "
+      f"{kn(ov.get('g2_eq_g1'))}.")
+    a("")
+    rows = []
+    for col in SAME_TS_COLS:
+        cl = ST["classes"][col]
+        rows.append([f"`{col}`"] + [f"{_n(cl['all'][k])} ({_n(cl['para'][k])})" for k in SAME_TS_CLASSES])
+    md.extend(_tab(["반응 판정 열", "same", "mixed", "different", "unclassified"], rows))
+    a("")
+    ru2 = ST["reactions_usable"]
+    a(f"(P_g2의 P_main 시험 짝 {_n(ST['n_pairs'])}개, 괄호 = para {_n(ST['n_pairs_para'])}개. g2 사용 가능 반응의 판정: "
+      + "; ".join(f"`{c}` 같음 {_n(v['same'])} / 다름 {_n(v['different'])} / 없음 {_n(v['unclassified'])}"
+                  for c, v in ru2.items()) + ". 부류 크기는 구조만으로 정해지는 수이고 점수가 아니다.)")
+    a("")
+
+    # 6
+    a("## 6. M2 학습 단위와 gate")
+    a(f"- 단위 `L__g2__<arm>__<model>__f<k>` = g2 × S·SH × AW·GNN·TF·XGB × fold 0–4 = **{len(D['units'])} unit**(원자 "
+      f"{sum(1 for u in D['units'] if u.split('__')[3] in ATOM_MODELS)} + XGB "
+      f"{sum(1 for u in D['units'] if u.split('__')[3] == 'XGB')}; ADD3 json `ladder.units.counts.stage2` = "
+      f"{uc.get('stage2')}), GPU 학습 {uc.get('gpu_stage2')}회(원자 unit마다 튜닝 칸 수 + 최종 seed "
+      f"{uc.get('n_final_seeds')}개).")
+    a("- 명령: `train_xgb.py run <i> <n> --stage 2` → `train_xgb.py check --stage 2` → `train_atoms.py run <i> <n> --stage 2` → "
+      "`train_atoms.py collect --stage 2 --with-xgb`(1단계 unit까지 모아 `L_predictions.parquet`).")
+    a("")
+    a("### 6-1. 학습 규칙 — ADD3 3절 그대로")
+    a("- arm·모델·grid·β 규칙·SH 학습 규칙·학습 상수·분할(T1 fold 0–4)·검증 짝(`inner_val`, L-9)·gate M-1′·캐시 지문은 ADD3 "
+      "3절과 같다. unit 지문 `add3`는 ADD3 md의 sha256(바뀌지 않음)이고, 이 보완판의 sha256은 지문에 들어가지 않는다.")
+    a("")
+    a("### 6-2. 매 실행 전 gate (학습 코드 원문, `train_atoms.py` = `train_xgb.py`; 두 파일의 sha256도 gate가 확인)")
+    a("")
+    a("```python")
+    for x in GATE_QUOTE:
+        a(x)
+    a("```")
+    a("")
+    a("- 2단계 process: `rs` = [`g2`], `need` = 정답 파일 + `$LAD/inputs/g2.parquet`. 보완 전 json에는 g2 입력표가 없어 "
+      "`lack`이 생기므로 2단계 학습은 이 보완 commit 전에는 exit 3이다(명령서 16절 A).")
+    a("")
+
+    # 7
+    a("## 7. 1단계 규칙은 모두 그대로 적용한다")
+    r2 = STAGE2_RULE
+    a("- ADD3의 1단계 규칙이 g2에 바뀌지 않고 적용된다: 3절(rung 열 분리 L-4, arm S·SH, β 규칙, SH 학습 규칙, 모델 네 개와 "
+      f"grid, 학습 상수, 짝·분할·검증 짝, 캐시 지문), 5절(REP·ENS4, 13-2 기준 {'·'.join(r2['targets'])} 모두 para MAE ≤ "
+      f"{r2['para_mae_max']}·민감도 ≥ {r2['bend_sensitivity_min']}·위양성률 ≤ {r2['false_positive_rate_max']}, 꺾임 모집단, "
+      "단계 0·1 설명용), 6절(지표), 11절(멈춤 규칙). 결과를 본 뒤 이 규칙을 바꾸지 않는다.")
+    a("- g2에 맞춰 읽는 곳(ADD3가 이미 적은 것): 13-2 판정 집합 = P_g2(json `decision_rules.stage2.set`); 13-3 해석 표 전체"
+      "(a·b·c)를 1단계 dft 판정과 함께 적용; 13-4 rung 사이 비교 = P_012; E2 = 명령서 11절 지표 + P_012 비교(명령서 12절) + "
+      "적용 범위(4절) + 같은 TS 나눔(5절).")
+    a("- 이 보완판이 새로 정한 것은 2절(P20), 3절(F 이탈 수용), 4절의 적용 범위 정의, 5절의 나눔 규칙뿐이다. 모두 g2 학습 전, "
+      "g2 점수 없이 정했다.")
+    a("- E2는 시작할 때 이 보완판이 commit되어 있고 sha256이 json `supplement.md_sha256`과 같은지 확인해야 한다"
+      "(`prereg.py check --stage 2`가 같은 확인과 학습 코드 gate의 내용 조건을 확인한다).")
+    a("")
+
+    # 8
+    a("## 8. Phase C 결과 (g2 포함)")
+    a(f"`{C['file']}` sha256 `{C['sha256']}` (commit {C.get('last_commit')}), tests `{C.get('tests_version')}`, merge "
+      f"{C.get('merged')}: all_pass {C.get('all_pass')}, 범위 \"{C.get('all_pass_scope')}\", stage_verified "
+      f"{C.get('stage_verified')}, g2_verified {C.get('g2_verified')}, 정답 `{_disp((C.get('labels') or {}).get('path') or '')}`.")
+    a("")
+    md.extend(_tab(CHECKS, [[C["checks"].get(x) for x in CHECKS]]))
+    a("")
+    a("- g2 하위 결과: " + ", ".join(f"{k} {v}" for k, v in D["c_g2_sub"].items()) + ".")
+    parts = C.get("parts") or {}
+    a("- 검사 job: " + "; ".join(f"{q} job {(v or {}).get('slurm_job')} ({(v or {}).get('host')}, git "
+                                 f"{str((v or {}).get('git_head'))[:8]})" for q, v in parts.items()) + ".")
+    a("")
+
+    # 9
+    a("## 9. 계획과 다르게 한 점·해석 (2단계)")
+    a("1. **P20:** ADD3 10절은 명령서 Q-2 그대로(`--g2-q-keys`)를 적었고 확정을 이 보완판에 미뤘다. 선택지 (c)로 확정했다(2절). "
+      "한계: 그대로 둘 행은 D1 라벨의 `ref_port.constrained`(DFT 흐름) 표시로 고른다(2절 '한계').")
+    a("2. **D1-G2 Phase F 멈춤 수용:** 명령서 16절 '2단계 대기'에서 벗어난다(3절, D1-G2 `F_DECISION.md`).")
+    a(f"3. **같은 TS 판정 열:** 명령서 12절이 따르라고 한 D1-G2 Phase C 판정(C-13)대로 `{SAME_TS_COLS[0]}`을 나눔 규칙으로 "
+      f"두었다. 2단계 작업 지시 문구는 `{SAME_TS_COLS[1]}`였으나 이 열은 수준 차이 때문에 같은 TS도 거의 모두 '다름'으로 "
+      "판정하므로 두 번째 설명용 나눔으로 함께 보고한다(5절).")
+    a("4. **Phase C 먼저 commit:** 1단계(명령서 8절, ADD3 PR-4)와 같이 g2를 포함한 `C_tests.json`과 Phase C 코드 5개가 commit된 "
+      "상태에서만 이 보완판을 썼다.")
+    a("")
+
+    # 10
+    a("## 10. 멈춤 규칙 (명령서 16절, 2단계)")
+    a("- **A:** 이 보완판·json 추가분 commit 전 2단계 학습 시도(`gate_add3`가 exit 3: json에 g2 입력표가 없거나 json이 HEAD와 "
+      "다름).")
+    a(f"- **2단계:** D1-G2 F·H gate 실패 → 그쪽 해결까지 대기(F의 {_pct(gf.get('rate'), 2)} 멈춤은 3절의 이탈로 수용; 다른 "
+      "F·H 멈춤은 대기).")
+    a("- **M·E·원칙:** ADD3 11절 그대로(gate M-1′, 캐시 지문, 시험 짝 목록, 결과를 본 뒤 규칙 변경 금지).")
+    a("")
+    return "\n".join(md) + "\n"
+
+
+def supp_record(D, md_sha):
+    """the json 'supplement' value (new top-level key; PR-5)."""
+    C = D["c_tests"]
+    return dict(
+        md=_disp(SUPP_MD), md_sha256=md_sha, commit=D["git_head"],
+        commit_meaning="HEAD when the supplement was written (the code and committed inputs it was generated from); the "
+                       "md and this json are committed together right after: git log -1 --format=%H -- "
+                       + _disp(SUPP_MD),
+        written=D["written"], date=D["date"], code_version=SUPP_VERSION, stage=2, rungs=list(STAGE2_RUNGS),
+        generator=dict(path=_disp(Path(__file__).resolve()), sha256=D["generator_sha256"], git_state=D["generator_git"]),
+        add3_md_sha256=D["add3_md_sha256"], add3_md_commit=D["add3_md_commit"], base_json_sha256=D["base_json_sha256"],
+        base_json_commit=D["base_json_commit"],
+        entries_added={e["path"]: dict(role=e["role"], column=e["column"], sha256=e["sha256"]) for e in D["entries"]},
+        gate=dict(code=["analysis/d1_ladder/train_atoms.py gate_add3 (lines 796-832), cmd_run 1057-1062, "
+                        "gate_c_stage2 859-865", "analysis/d1_ladder/train_xgb.py gate_add3 (lines 851-886), cmd_run "
+                        "1115-1120, gate_c_stage2 911-917"],
+                  keys_read=["md_sha256", "inputs_sha256"], need_stage2=D["mirror"]["stage2"]["need"],
+                  mirror={s: {k: m[k] for k in ("ok", "rungs", "need", "n_verified", "n_skipped", "skipped")}
+                          for s, m in D["mirror"].items()},
+                  rule="stage-2 process: rs = ['g2'], need = label file + $LAD/inputs/g2.parquet; files of the dft / g1 "
+                       "columns only are not opened (MA-15); MA-16 P_report; MA-17 C_tests all_pass + g2_verified"),
+        g2_q_keys="own", p20=dict(option="c", flag="inputs.py build g2 --g2-cons-own", decision_commit="04c9f7e9",
+                                  references=D["build"]["references"],
+                                  limitation="kept rows chosen by Q_keys 'constrained' = D1 label ref_port.constrained "
+                                             "(D1 / DFT pipeline), not G2's own port result; the '|fixed:' state itself "
+                                             "never enters a g2 value; rows where the two flags differ not counted"),
+        f_stop_build=dict(flag="inputs.py build g2 --accept-g2f-stop", commit="11aeef90",
+                          job="jobs/p_stage2.sh (cdbaa3ec)",
+                          accepted=(D["build"].get("g2_gates") or {}).get("F_stop_accepted")),
+        queue_check=D.get("queue"),
+        f_deviation={k: v for k, v in (D["d1g2"].get("f_deviation") or {}).items() if k != "decision_text"},
+        d1g2={k: v for k, v in D["d1g2"].items() if k != "f_deviation"},
+        coverage=D["coverage"], same_ts_split=D["same_ts"],
+        units_stage2=D["units"], unit_counts={k: D["unit_counts"].get(k) for k in ("stage2", "gpu_stage2")},
+        pair_sets={n: {k: s.get(k) for k in ("path", "sha256", "n", "in_P_main", "in_P_main_para", "n_in_T1_lists",
+                                             "pair_list_sha256_trainer_rule")} for n, s in D["pair_sets"].items()},
+        build={k: v for k, v in D["build"].items() if k not in ("references",)}, p_report=D["p_report"],
+        h_changed_g2=D["h_changed_g2"],
+        c_tests=dict(file=C.get("file"), sha256=C.get("sha256"), committed=C.get("committed"),
+                     last_commit=C.get("last_commit"), all_pass=C.get("all_pass"), status=C.get("status"),
+                     stage_verified=C.get("stage_verified"), g2_verified=C.get("g2_verified"),
+                     all_pass_scope=C.get("all_pass_scope"), checks=C.get("checks"), g2_sub=D["c_g2_sub"],
+                     code_sha256=C.get("code_sha256")),
+        stage1_state=D["stage1_state"], records=D["records"],
+        decision_rules_stage2=dict(set="P_g2 (13-2, own set)", interpretation="13-3 a / b / c with the stage-1 dft verdict",
+                                   comparisons="13-4 on P_012", e2="spec 11 metrics + P_012 comparison (spec 12) + "
+                                   "coverage + same-TS split (descriptive)", stage1_rules="ADD3 sections 3, 5, 6, 11 unchanged"),
+        requirements_checked=D["checked"], decisions=SUPP_DECISIONS,
+        env=dict(python=platform.python_version(), numpy=np.__version__, pandas=pd.__version__, host=platform.node(),
+                 slurm_job=os.environ.get("SLURM_JOB_ID"), prefix=sys.prefix))
+
+
+def make_supp_json(head, D, md_sha):
+    """the committed json + the 8 entries + 'supplement' -> (text, record); PS-2 invariants checked in memory."""
+    base_txt = head.decode("utf-8")
+    base = json.loads(base_txt)
+    if json.dumps(base, indent=1) != base_txt:
+        raise Refuse(3, [f"the committed {ADD3_JSON.name} does not re-serialise byte for byte (json.dumps indent 1): it "
+                         "cannot be extended without rewriting existing entries"])
+    obj = json.loads(base_txt)
+    paths = [e["path"] for e in D["entries"]]
+    for e in D["entries"]:
+        obj["inputs_sha256"][e["path"]] = e["sha256"]
+        obj["inputs_roles"][e["path"]] = dict(role=e["role"], column=e["column"])
+    obj["supplement"] = _jsonable(supp_record(D, md_sha))
+    txt = json.dumps(obj, indent=1)
+    back = json.loads(txt)
+    bad = []
+    if json.dumps(_without_supplement(back, paths), indent=1) != base_txt:
+        bad.append("removing the additions does not give the committed json byte for byte")
+    if list(back)[:len(base)] != list(base) or set(back) - set(base) != {"supplement"}:
+        bad.append("top-level keys changed (only 'supplement' may be added, last)")
+    for k in ("inputs_sha256", "inputs_roles"):
+        if list(back[k])[:len(base[k])] != list(base[k]) or list(back[k])[len(base[k]):] != paths:
+            bad.append(f"{k}: existing entries reordered or the additions differ from md section 10")
+    if any(back[k] != base[k] for k in base if k not in ("inputs_sha256", "inputs_roles")) or \
+            any(back[k][q] != base[k][q] for k in ("inputs_sha256", "inputs_roles") for q in base[k]):
+        bad.append("an existing entry changed")
+    if bad:
+        raise Refuse(3, bad)
+    return txt, back
+
+
+def _supp_selfcheck(txt, head, D):
+    """PR-12 / PS-2: the files read back as the gate reads them -> list of problems."""
+    back = ADD3_JSON.read_bytes()
+    bad = [] if back == txt.encode() else ["the json on disk differs from the text written"]
+    r2 = json.loads(back.decode("utf-8"))
+    if (r2.get("supplement") or {}).get("md_sha256") != L.sha256(SUPP_MD):
+        bad.append("supplement.md_sha256 != sha256(md) after writing")
+    if json.dumps(_without_supplement(r2, [e["path"] for e in D["entries"]]), indent=1).encode("utf-8") != head:
+        bad.append("the json without the additions != the committed json")
+    for s, rungs in (("stage 1", STAGE_RUNGS), ("stage 2", STAGE2_RUNGS)):
+        bad += [f"{s}: {x}" for x in gate_mirror(r2, rungs, need_paths(rungs))["bad"]]
+    return bad
+
+
+def _restore_committed(head):
+    """PS-1: the committed json bytes back on disk (= HEAD) and the new, untracked supplement md removed -> message."""
+    js, md, err = _disp(ADD3_JSON), _disp(SUPP_MD), []
+    ok = False
+    try:
+        if not (ADD3_JSON.is_file() and ADD3_JSON.read_bytes() == head):
+            L.write_atomic(ADD3_JSON, head)
+        ok = ADD3_JSON.read_bytes() == head
+    except Exception as e:                                       # noqa: BLE001
+        err.append(f"json: {type(e).__name__}: {e}")
+    try:
+        if SUPP_MD.is_file() and not _tracked(SUPP_MD):
+            SUPP_MD.unlink()
+    except Exception as e:                                       # noqa: BLE001
+        err.append(f"md: {type(e).__name__}: {e}")
+    if ok and not err:
+        return f"{js} restored to the committed bytes (= HEAD) and {md} removed: nothing to commit, the gates pass again"
+    return (f"RESTORE INCOMPLETE ({'; '.join(err) or 'json != HEAD bytes'}): run at once on the login node: cd {L.REPO} "
+            f"&& git checkout HEAD -- {js} && rm -f {md}")
+
+
+def cmd_supplement():
+    try:
+        mode, head, disk = supplement_base()
+    except Refuse as e:
+        print(f"{'REFUSED' if e.code == 3 else 'NOT READY'} (exit {e.code}), nothing written:\n  " + "\n  ".join(e.reasons),
+              file=sys.stderr, flush=True)
+        return e.code
+    if mode == "frozen":
+        print("[supplement] the committed ADD3 json already carries the supplement: frozen (PS-10), nothing rewritten; "
+              "running check --stage 2", flush=True)
+        return cmd_check(2)
+    if mode == "pending":
+        print(f"[supplement] note: {SUPP_MD.name} / {ADD3_JSON.name} of an earlier supplement run are on disk but not "
+              "committed; both are regenerated from the committed json (PS-10)", flush=True)
+    try:
+        hobj = json.loads(head.decode("utf-8"))
+        pre = supplement_preconditions(hobj)
+        D = supplement_content(hobj, pre)
+        md = make_supp_md(D)
+        md_sha = hashlib.sha256(md.encode()).hexdigest()          # = sha256 of the file write_atomic writes
+        txt, rec = make_supp_json(head, D, md_sha)                # everything computed before the first write
+    except Refuse as e:
+        print(f"{'REFUSED' if e.code == 3 else 'NOT READY'} (exit {e.code}), nothing written:\n  " + "\n  ".join(e.reasons),
+              file=sys.stderr, flush=True)
+        if mode == "pending":
+            print(f"  note: {ADD3_JSON.name} on disk is still the uncommitted supplement of an earlier run (every starting "
+                  f"trainer run exits 3): commit it with its md, or restore: git checkout HEAD -- {_disp(ADD3_JSON)}; "
+                  f"rm -f {_disp(SUPP_MD)}", file=sys.stderr, flush=True)
+        return e.code
+    if ADD3_JSON.read_bytes() != disk or _head_bytes(ADD3_JSON) != head:
+        print(f"STOP: {ADD3_JSON.name} or HEAD changed while the supplement was computed; nothing written (rerun)",
+              file=sys.stderr, flush=True)
+        return 3
+    hit, _ = window_tasks()                                      # PS-11 again, right before the window opens
+    if hit:
+        print(f"NOT READY (exit 2), nothing written: {len(hit)} pending task(s) named {list(WINDOW_JOBS)} appeared while "
+              f"the supplement was computed: {hit[:5]} (PS-11)", file=sys.stderr, flush=True)
+        return 2
+    md_rel, js_rel = _disp(SUPP_MD), _disp(ADD3_JSON)
+    print(f"[supplement] writing {SUPP_MD.name}, then {ADD3_JSON.name}: from the json write until its commit every "
+          "trainer run that starts exits 3 at gate_add3", flush=True)
+    L.write_atomic(SUPP_MD, md)                                  # md first: no gate reads it
+    if L.sha256(SUPP_MD) != md_sha:
+        print(f"STOP: the written md sha256 differs from the sha256 of its text; the json was not written ("
+              f"{_restore_committed(head)})", file=sys.stderr, flush=True)
+        return 3
+    try:
+        L.write_atomic(ADD3_JSON, txt)                           # json last, one os.replace
+        bad = _supp_selfcheck(txt, head, D)
+    except Exception as e:                                       # noqa: BLE001  (PS-1: never leave the json modified)
+        bad = [f"{type(e).__name__}: {e}"]
+    if bad:
+        print("STOP (exit 3): self-check after writing failed: " + "; ".join(bad) + "\n  " + _restore_committed(head),
+              file=sys.stderr, flush=True)
+        return 3
+    branch = D.get("branch") or "d1-ladder"
+    if D.get("generator_git") != "committed":                    # the generator goes into the same commit (stage-1 rule)
+        js_rel += " " + _disp(Path(__file__).resolve())
+    print(f"[supplement] {SUPP_MD.name} ({md_sha[:16]}) + {ADD3_JSON.name}: +{len(D['entries'])} inputs entries, key "
+          f"'supplement'; gate mirror: stage 1 {D['mirror']['stage1']['n_verified']} verified / "
+          f"{D['mirror']['stage1']['n_skipped']} skipped, stage 2 {D['mirror']['stage2']['n_verified']} verified / "
+          f"{D['mirror']['stage2']['n_skipped']} skipped; code commit {D['git_head'][:10]}.", flush=True)
+    print("COMMIT BOTH NOW (login node). Until this commit the json differs from HEAD, so every train_atoms.py / "
+          "train_xgb.py run (any stage) and evaluate.py e1 that STARTS exits 3 at its ADD3 gate ('modified since its "
+          "commit'); running processes are not affected (the gate runs once at start); a task that hit it wrote no unit: "
+          "resubmit it after the commit.\n"
+          f"  cd {L.REPO}\n"
+          f"  git add {md_rel} {js_rel}\n"
+          f"  git commit -m \"D1LADDER Phase A stage 2: PREREG ADD3 supplement (g2; prereg.py supplement, md sha256 "
+          f"{md_sha[:16]})\" -m \"Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\" -- "
+          f"{md_rel} {js_rel}\n"
+          f"  git push origin {branch}\n"
+          f"then: python prereg.py check --stage 2 (sbatch) before M2.", flush=True)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("cmd", choices=("write", "check"))
+    ap.add_argument("cmd", choices=("write", "check", "supplement"))
+    ap.add_argument("--stage", type=int, default=1, choices=(1, 2), help="check: stage 1 (dft, g1) or 2 (g2)")
     a = ap.parse_args(argv)
-    return cmd_write() if a.cmd == "write" else cmd_check()
+    if a.cmd == "write":
+        return cmd_write()
+    if a.cmd == "supplement":
+        return cmd_supplement()
+    return cmd_check(a.stage)
 
 
 if __name__ == "__main__":

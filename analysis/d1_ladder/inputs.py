@@ -140,8 +140,13 @@ Review fixes 2026-10-23 (FIXER; every judgment = the recommended option, user 20
       user chose the spec-literal Q-2 keys (--g2-q-keys, recorded in the fingerprint and the report).
       Decision 2026-10-23 (user: every judgment = the recommended option; ADD3 10 left it to the supplement): option
       (c) --g2-cons-own: g2 rows in constrained keys are never replaced (each reaction keeps its own G2 constrained
-      dipole reference, as at deployment; no DFT-derived state used); non-constrained keys take the per-key minimum.
-      Mode recorded as fingerprint / report g2_q_keys = 'own' (True = spec-literal Q-2 keys).
+      dipole reference, as at deployment); non-constrained keys take the per-key minimum. The DFT-derived '|fixed:'
+      state never enters a g2 value (a constrained key holds constrained rows only, refs_q.molecule_keys). Limitation
+      (review 2026-10-23; recorded, not changed): WHICH g2 rows are kept is the per-row `constrained` flag of
+      Q_keys.parquet = the D1 label ref_port.constrained (D1 / DFT pipeline), not G2's own ref_result.json
+      port.constrained (not a committed input); a G2-constrained / D1-free g2 row still takes its free key's minimum.
+      Mode recorded as fingerprint / report g2_q_keys = 'own' (True = spec-literal Q-2 keys); --g2-q-keys /
+      --g2-cons-own are refused for rungs other than g2.
   P21 g2 H_report output key (review P-1): D1-G2 keys its outputs by its own worktree's absolute path; matched by the
       repo-relative path (exactly one entry).
   P22 build currency (review P-6 / P-8): pairs and the loader accept a build only if its fingerprint (inputs + code,
@@ -262,7 +267,10 @@ DECISIONS = {
     "P18_names": "H_<t> / H0_<t> column names",
     "P6b_graphs": "g rungs: every reference geometry (frag{k}_rel input of its HF single point) = its Q-2 key's "
                   "composition + WL bond-graph hash, isomorphic within the key, else STOP (spec Q-2)",
-    "P20_g2_keys": "g2 rows in constrained (DFT-derived '|fixed:') keys -> STOP for a user decision unless --g2-q-keys",
+    "P20_g2_keys": "g2 rows in constrained (DFT-derived '|fixed:') keys -> STOP for a user decision unless --g2-q-keys "
+                   "(spec-literal keys) or --g2-cons-own (option (c), decision 2026-10-23: rows of constrained keys keep "
+                   "their own G2 reference; kept rows = Q_keys 'constrained' = the D1 label ref_port flag, a recorded "
+                   "limitation)",
     "P21_g2_key_path": "D1-G2 H_report outputs matched by repo-relative path",
     "P22_currency": "build accepted only with an unchanged fingerprint (stale -> exit 2); build STOP -> pairs exit 3",
     "P23_l4_roots": "FU2 T1 fold files / S_splits.json / V_report / Q_report shared; DFT-phase results dft; "
@@ -853,13 +861,18 @@ def refs_min(rung, Hq, rep_out=None, g2_q_keys=False):
         if rep_:
             ov.setdefault(j, {})[k] = float(r.e_min_eh)
     rm = (A.dev_kcal > 0) & ~(A.constrained.astype(bool) & own)
-    rep = dict(source=str(Q_KEYS), sha256=L.sha256(Q_KEYS), rule=DECISIONS["P6_g_refs"], g2_mode=_g2_mode(g2_q_keys),
-               n_constrained_kept_own=int(((A.dev_kcal > 0) & A.constrained.astype(bool)).sum()) if own else 0,
+    kept = (A.dev_kcal > 0) & A.constrained.astype(bool) & own      # P20 (c): above the key minimum, not replaced
+    rule = DECISIONS["P6_g_refs"] + ("; P20 option (c) 'own': rows of constrained keys (Q_keys 'constrained' = D1 "
+                                     "label ref_port flag) keep their own reference" if own else "")
+    # dev_gt counts over the replaced rows (= every row with dev > 0 unless 'own'); kept-own rows counted separately
+    rep = dict(source=str(Q_KEYS), sha256=L.sha256(Q_KEYS), rule=rule, g2_mode=_g2_mode(g2_q_keys),
+               n_constrained_kept_own=int(kept.sum()) if own else 0,
+               dev_kcal_kept_own=_q(A.dev_kcal[kept]) if own else None,
                n_fragments_with_energy=int(len(A)), n_keys=int(A.key.nunique()),
                n_keys_multi_row=int((A.groupby("key").size() >= 2).sum()),
                n_fragments_replaced=int(rm.sum()), n_jobs_replaced=len(ov),
-               n_fragments_dev_gt_0_05=int((A.dev_kcal > 0.05).sum()),
-               n_fragments_dev_gt_1=int((A.dev_kcal > 1.0).sum()),
+               n_fragments_dev_gt_0_05=int((A.dev_kcal[rm] > 0.05).sum()),
+               n_fragments_dev_gt_1=int((A.dev_kcal[rm] > 1.0).sum()),
                by_kind=_vc(A.kind[rm]), n_constrained_replaced=int((rm & A.constrained.astype(bool)).sum()),
                n_rows_constrained_keys=int(A.constrained.astype(bool).sum()),
                dev_kcal=_q(A.dev_kcal[rm]))
@@ -1838,6 +1851,8 @@ def main(argv=None):
     if o.cmd == "build":
         if o.g2_q_keys and o.g2_cons_own:
             ap.error("--g2-q-keys and --g2-cons-own exclude each other")
+        if (o.g2_q_keys or o.g2_cons_own) and o.rung != "g2":
+            ap.error("--g2-q-keys and --g2-cons-own are for g2 only")
         if (o.accept_g2f_stop and o.rung != "g2") or (o.accept_f0_stop and o.rung != "dft"):
             ap.error("--accept-f0-stop is for dft, --accept-g2f-stop for g2")
         return cmd_build(o.rung, o.force, o.accept_f0_stop or o.accept_g2f_stop,
