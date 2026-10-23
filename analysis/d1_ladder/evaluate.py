@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-r"""evaluate.py — D1-REF·LADDER evaluation (docs/specs/D1LADDER.md 4-5, 11, 13, 14-1, 16 E). sbatch only. Nothing in the
-E1 part was run when it was written (login node): every path is untested until it runs inside a job (start with
-`e1-selftest`, which needs no Phase M output).
+r"""evaluate.py — D1-REF·LADDER evaluation (docs/specs/D1LADDER.md 4-5, 11, 12, 13, 14-1, 16 E). sbatch only. Nothing in
+the E1 or E2 part was run when it was written (login node): every path is untested until it runs inside a job (start
+with `e1-selftest` / `e2-selftest`, which need no Phase M output).
 
 LINE (spec 4-5; the unchanged contract of tests/run_tests.py L-10, C-11 / C-18): per target t, beta_t = sum(dH_t * y_t) /
 sum(dH_t^2) on exactly the given pairs, no intercept (antisymmetric; = D1-HF Phase A report.py 'a'), c_ghost beta = 0
@@ -13,13 +13,28 @@ done, 2 = not ready / usage, 3 = STOP)
   python evaluate.py e1 [--stage 1] [--labels P] [--no-figures]
         Phase E1 (spec 11, 13; stage 1 = rungs dft, g1) -> results/E1_metrics.csv, E1_bends.csv, E1_bend_rates.json,
         E1_goal.csv, E1_compare.csv, E1_label_effect.csv, E1_report.json (provenance, REP, gates, verdicts, decisions)
-        and results/figures/figL1_ladder, figL2_targets, figL3_bends (.png, .pdf, .csv). --stage 2 (E2, spec 12): exit 2.
-        Exit 2 also while the FU2 Phase E code is not merged and committed in this worktree (spec 11, E1-2).
+        and results/figures/figL1_ladder, figL2_targets, figL3_bends (.png, .pdf, .csv). --stage 2: exit 2 (E2 = the
+        command e2, E2-1). Exit 2 also while the FU2 Phase E code is not merged and committed in this worktree (spec 11,
+        E1-2).
   python evaluate.py e1-selftest [--no-figures]
         the same pipeline on SYNTHETIC predictions over the real pair universe (S_folds.csv, the FU2 T1 split files,
         F_pairs_cr.csv as 'new' labels, the real FU2 / rev 9 frames for the label effect) -> $LAD/e1_selftest/ (the
         E1_* files, figures/, E1_selftest.json with the checks); exit 3 when a check fails. Never writes results/.
-        The only command that may use the unmerged d1-pair copy of the FU2 Phase E code (E1-2).
+        The selftests are the only commands that may use the unmerged d1-pair copy of the FU2 Phase E code (E1-2).
+  python evaluate.py e2 [--labels P] [--no-figures]
+        Phase E2 (spec 12, 13, 14-1; rungs dft, g1, g2; inputs of `train_atoms.py collect --stage 2 --with-xgb`) ->
+        results/E2_metrics.csv, E2_bends.csv, E2_bend_rates.json, E2_goal.csv (13-2, 6 rung x arm), E2_interpretation.json
+        (13-3 a / b / c), E2_compare.csv (13-4 incl. rung vs rung on P_012), E2_coverage.json, E2_same_ts.csv,
+        E2_report.json (provenance, gates, decisions) and results/figures/figL1_ladder, figL2_targets, figL3_bends,
+        figL4_examples (.png, .pdf, .csv; they replace E1's stage-1 versions, spec 14-1). Exit 2 = an input missing /
+        stale (E2-3), or no results/E1_report.json of `e1 --stage 1` on the same dft unit files (E2-14: 13-3 uses the
+        stage-1 dft verdict; E1 writes the same figure names, so E1 must finish before E2), 3 = STOP (spec 16 E pair
+        lists, pre-registration, unit code_sha256 (ADD3 11 E, E2-15), coverage / class counts, dft verdict or dft REP
+        != E1's).
+  python evaluate.py e2-selftest [--no-figures]
+        E2 on the E1-13 synthetic inputs + a synthetic g2 rung (E2-13) -> $LAD/e2_selftest/ (E2_* files, figures/,
+        E2_selftest.json); the coverage / same-TS class counts are also recomputed on the REAL Phase P sets and compared
+        with the supplement. Needs no Phase M2 output; exit 3 when a check fails. Never writes results/.
 
 Inputs (read only)
   results/L_predictions.parquet + L_report.json + L_val.csv (train_atoms.py collect --stage 1 --with-xgb; columns pair_id,
@@ -125,6 +140,24 @@ LADDER <= 4 jobs while D1-G2 runs) and `sinfo -p cpu1,cpu2 -o "%.9P %.6t %C"`)
          jobs/py.slurm ../d1_ladder/evaluate.py e1 --stage 1
   (--output must be given: py.slurm's default log folder is the read-only d1_pair scratch.) Rerun = the same command
   (every output is recomputed deterministically and written atomically).
+  E2 selftest (now; no Phase M2 output needed): the selftest line with -J lad_e2t and `e2-selftest`.
+  E2 (after `train_atoms.py collect --stage 2 --with-xgb`, and always after E1: e2 exits 2 without a current
+  results/E1_report.json, E2-14). E1 then E2 in one job (py.slurm ' ::: ' runs e2 only if e1 exited 0):
+  sbatch -p cpu1,cpu2 -J lad_e12 --time=48:00:00 --cpus-per-task=4 --mem=32G --output=$L/%x_%j.out \
+         --export=ALL,PYENV=espley --dependency=afterok:<collect job> --kill-on-invalid-dep=yes \
+         jobs/py.slurm ../d1_ladder/evaluate.py e1 --stage 1 ::: ../d1_ladder/evaluate.py e2
+  (E1 already run on the same dft units: the same line with -J lad_e2 and only `../d1_ladder/evaluate.py e2`.) Do not
+  rerun E1 after E2: it rewrites figL1-L3 with the stage-1 versions (then rerun e2).
+
+What E2 computes (spec 12, 13; decisions E2-1 .. E2-15 in DECISIONS2, recorded in E2_report.json)
+  the E1 pipeline (REP, ENS4, LINE, null; val_table, pick_rep, line_frames, derived_frames, metrics_e1, bends_e1, goal_e1
+  reused unchanged) on rungs dft, g1, g2 with pair sets own and P_012; + 13-3 a / b / c (exact sentences, checked
+  verbatim against spec 13-3 and ADD3 5-3), 13-4 on P_012, coverage (supplement 4) and the same-TS split (supplement 5:
+  primary same_ts_g1, second same_ts_dft), both recomputed from the Phase P / D1-G2 files and compared with the counts
+  pre-registered in prereg_d1pair_add3.json 'supplement'. 13-3 is applied with the stage-1 dft verdict (supplement 7):
+  E2's dft REP choices and dft·S / dft·SH REP verdicts must equal results/E1_report.json on the same dft unit files
+  (E2-14). Every unit fingerprint code_sha256 = the ADD3 json code.fingerprint_keys (ADD3 11 E, E2-15). No label
+  effect (E1 only) and no narrative report.
 """
 from __future__ import annotations
 
@@ -657,8 +690,9 @@ def ref_set(tests_r, rung):
     return ref
 
 
-def real_inputs(IN, rep_p, rungs, labels):
-    """S_folds, labels (new + original), pair sets, fold lists and dH (h = cr) from the Phase P files (inputs.py API)."""
+def real_inputs(IN, rep_p, rungs, labels, set_names=("P_dft", "P_g1", "P_01")):
+    """S_folds, labels (new + original), pair sets, fold lists and dH (h = cr) from the Phase P files (inputs.py API).
+    set_names: the pair sets read (E1: the default; E2: E2_SETS, which adds P_g2 and P_012)."""
     if L.sha256(IN.S_FOLDS) != (rep_p.get("inputs") or {}).get(str(IN.S_FOLDS)):
         L.stop(f"{IN.S_FOLDS} sha256 differs from results/P_report.json")
     S = prep_S(pd.read_csv(IN.S_FOLDS, dtype={"pair_id": str}))
@@ -669,7 +703,7 @@ def real_inputs(IN, rep_p, rungs, labels):
     lab = (rep_p.get("labels") or {}).get(str(labels)) or {}
     if not lab.get("ids_ok") or lab.get("sha256") != L.sha256(labels):
         L.stop(f"label file {labels}: sha256 / ids differ from results/P_report.json labels (Phase P state changed)")
-    sets = {n: set(IN.read_set(n, rep_p).pair_id.astype(str)) for n in ("P_dft", "P_g1", "P_01")}
+    sets = {n: set(IN.read_set(n, rep_p).pair_id.astype(str)) for n in set_names}
     tests, trains, dH = {}, {}, {}
     for r in rungs:
         tests[r], trains[r] = {}, {}
@@ -824,8 +858,9 @@ def ps_name(r, ps):
     return f"P_{r}" if ps == "own" else ps
 
 
-def annotate_all(EV, fr, S, p01, rungs):
-    """{(rung, arm, model, pair_set): frame + S_folds columns (FU2 annotate)}; LINE / null once (arm S, E1-4)."""
+def annotate_all(EV, fr, S, p01, rungs, common_name="P_01"):
+    """{(rung, arm, model, pair_set): frame + S_folds columns (FU2 annotate)}; LINE / null once (arm S, E1-4).
+    The common set p01 is stored under common_name (E1: P_01; E2: P_012)."""
     A = {}
     for (r, a, m), f in fr.items():
         if m in ARM_FREE and a != ARMS[0]:
@@ -833,7 +868,7 @@ def annotate_all(EV, fr, S, p01, rungs):
         d = EV.annotate(f, S)
         A[(r, a, m, "own")] = d
         if len(rungs) > 1:
-            A[(r, a, m, "P_01")] = d[d.pair_id.isin(p01)]
+            A[(r, a, m, common_name)] = d[d.pair_id.isin(p01)]
     return A
 
 
@@ -1068,7 +1103,7 @@ def fu2_crosscheck(EV, Lf, names, mpath):
     """FU2 metrics_tab on the FU2 frames (original labels, d1 / d2 / barrier) recomputed here vs FU2 E_metrics.csv."""
     if mpath is None:
         return dict(status="no FU2 E_metrics.csv with a matching E_provenance.json record: not compared")
-    X = pd.read_csv(mpath)
+    X = pd.read_csv(mpath, keep_default_na=False, na_values=[""])   # model "null" must stay a string
     mine = pd.concat([EV.metrics_tab(Lf[n][Lf[n].target.isin(list(CHANGED))].assign(model=n), by=("model", "source"))
                       for n in names], ignore_index=True)
     J = mine.merge(X, on=["model", "source", "target", "set", "pos"], how="inner", suffixes=("", "_fu2"))
@@ -1191,8 +1226,9 @@ def _save(fig, figdir, name, df):
     return [str(figdir / f"{name}.{e}") for e in ("pdf", "png", "csv")]
 
 
-def figL1(plt, DF, C, MI, rungs, figdir):
-    """oi / cpcm para MAE vs rung on P_01 (models: SH solid filled, S dashed open; LINE, null; goal 0.13; 95 % CI)."""
+def figL1(plt, DF, C, MI, rungs, figdir, ps="P_01"):
+    """oi / cpcm para MAE vs rung on the common set ps (E1: P_01, E2: P_012) (models: SH solid filled, S dashed open;
+    LINE, null; goal 0.13; 95 % CI)."""
     from matplotlib.lines import Line2D
     series = [(m, a) for m in ("AW", "GNN", "TF", "XGB", "ENS4", "REP") for a in ("SH", "S")] + \
         [("LINE", "S"), ("null", "S")]
@@ -1203,7 +1239,7 @@ def figL1(plt, DF, C, MI, rungs, figdir):
                             squeeze=False)
     for ax, t in zip(axs[0], GOAL_TARGETS):
         for i, (m, a) in enumerate(series):
-            recs = [MI[(r, a, m, "P_01", t, "P_main", "p")] for r in rungs]
+            recs = [MI[(r, a, m, ps, t, "P_main", "p")] for r in rungs]
             v = np.array([q["mae"] for q in recs], dtype=float)
             lo = np.array([q["mae_ci_lo"] for q in recs], dtype=float)
             hi = np.array([q["mae_ci_hi"] for q in recs], dtype=float)
@@ -1217,7 +1253,7 @@ def figL1(plt, DF, C, MI, rungs, figdir):
             ax.errorbar(x, v, yerr=err, fmt="none", ecolor=col, elinewidth=0.6, capsize=1.5, zorder=2)
             ax.plot(x, v, color=col, ls=ls, lw=1.0, marker=mk, ms=3.5, mfc=face, mec=col, mew=0.8, zorder=3)
             for r, q in zip(rungs, recs):
-                rows.append(dict(target=t, rung=r, model=m, arm="-" if free else a, source=q["source"], pair_set="P_01",
+                rows.append(dict(target=t, rung=r, model=m, arm="-" if free else a, source=q["source"], pair_set=ps,
                                  n_para=q["n"], n_cores=q["n_cores"], para_mae=q["mae"], ci_lo=q["mae_ci_lo"],
                                  ci_hi=q["mae_ci_hi"], goal=GOAL["mae"]))
         ax.axhline(GOAL["mae"], color=DF.INK2, lw=0.8, ls="-.", zorder=1)
@@ -1237,14 +1273,14 @@ def figL1(plt, DF, C, MI, rungs, figdir):
            Line2D([], [], color=_color(DF, "null"), ls=":", lw=1.0, marker="X", ms=3.5, label="null (ΔΔ = 0)"),
            Line2D([], [], color=DF.INK2, ls="-.", lw=0.8, label="goal 0.13 kcal/mol")]
     axs[0, -1].legend(handles=hs, loc="upper left", bbox_to_anchor=(1.0, 1.0))
-    fig.suptitle("P_01 test pairs, P_main para pairs; bars = 95 % CI (core bootstrap, 2,000)", fontsize=C.FONT_PT)
+    fig.suptitle(f"{ps} test pairs, P_main para pairs; bars = 95 % CI (core bootstrap, 2,000)", fontsize=C.FONT_PT)
     out = _save(fig, figdir, "figL1_ladder", pd.DataFrame(rows))
     plt.close(fig)
     return out
 
 
-def figL2(plt, DF, C, MI, rungs, figdir):
-    """9 targets: para MAE / null para MAE of REP per rung x arm (P_01)."""
+def figL2(plt, DF, C, MI, rungs, figdir, ps="P_01"):
+    """9 targets: para MAE / null para MAE of REP per rung x arm (common set ps; E1: P_01, E2: P_012)."""
     combos = [(r, a) for r in rungs for a in ARMS]
     x = np.arange(len(PRIMARY9), dtype=float)
     w = 0.84 / len(combos)
@@ -1253,10 +1289,10 @@ def figL2(plt, DF, C, MI, rungs, figdir):
     for i, (r, a) in enumerate(combos):
         v = []
         for t in PRIMARY9:
-            q = MI[(r, a, "REP", "P_01", t, "P_main", "p")]
+            q = MI[(r, a, "REP", ps, t, "P_main", "p")]
             rel = q["mae"] / q["mae_null"] if (_fin(q["mae_null"]) and q["mae_null"] > 0) else np.nan
             v.append(rel)
-            rows.append(dict(rung=r, arm=a, target=t, source=q["source"], pair_set="P_01", n_para=q["n"],
+            rows.append(dict(rung=r, arm=a, target=t, source=q["source"], pair_set=ps, n_para=q["n"],
                              para_mae=q["mae"], para_mae_null=q["mae_null"], rel_null=rel))
         col = DF.SLOT[RUNG_SLOT[r]]
         sh = a == "SH"
@@ -1265,7 +1301,7 @@ def figL2(plt, DF, C, MI, rungs, figdir):
     ax.axhline(1.0, color=DF.MUTED, lw=0.6)
     ax.set_xticks(x, [DF.TLAB[t] for t in PRIMARY9])
     ax.set_ylabel("para MAE / null para MAE")
-    ax.set_title("REP, P_01 test pairs, P_main para pairs (1 = null, ΔΔ = 0)")
+    ax.set_title(f"REP, {ps} test pairs, P_main para pairs (1 = null, ΔΔ = 0)")
     ax.grid(axis="x", visible=False)
     ax.legend(loc="upper left", bbox_to_anchor=(1.0, 1.0))
     out = _save(fig, figdir, "figL2_targets", pd.DataFrame(rows))
@@ -1377,7 +1413,8 @@ def run_e1(EV, info, ctx, P, rep, means, out, figures=True):
 
 def cmd_e1(stage, labels, figures=True):
     if stage not in STAGE_RUNGS:
-        print(f"usage: evaluate.py e1 --stage 1 (stage {stage}: E2 = spec 12, not written yet)", file=sys.stderr)
+        print(f"usage: evaluate.py e1 --stage 1 (stage {stage}: E2 = spec 12 is the command 'evaluate.py e2', E2-1)",
+              file=sys.stderr)
         return 2
     t0 = time.time()
     rungs = STAGE_RUNGS[stage]
@@ -1575,9 +1612,1027 @@ def cmd_selftest(figures=True):
     return 0 if ok else 3
 
 
+# ================================================================ Phase E2 (spec 12, 13, 14-1; stage 2): constants
+E2_RUNGS = ("dft", "g1", "g2")                           # spec 12: E2 = spec 11 on every rung + the P_012 comparison
+E2_SETS = ("P_dft", "P_g1", "P_01", "P_g2", "P_012")     # Phase P sets read (P_01 only enters the coverage table)
+COMMON2 = "P_012"                                        # spec 13-4 / 14-1: the stage-2 common set (= P_01 & P_g2)
+RUNG_PAIRS2 = (("dft", "g1", "dft vs g1 (what the xTB geometry loses)"),
+               ("dft", "g2", "dft vs g2 (what the deployable SMILES -> xTB input loses)"),
+               ("g1", "g2", "g1 vs g2 (what the SMILES-built TS loses against the relaxed label TS)"))
+RUNG_LS = {"dft": "-", "g1": "--", "g2": ":"}            # figL4 secondary encoding (colour slot + marker + line style)
+SUPP_MD = L.RES / "PREREG_D1PAIR_ADD3_G2.md"             # the stage-2 supplement (ADD3 10)
+SPEC_MD = L.REPO / "docs" / "specs" / "D1LADDER.md"
+C_COMPARE = L.G2_DIR / "results" / "C_compare.csv"       # D1-G2 Phase C per-reaction same-TS judgments (supplement 5)
+SAME_TS_COLS = ("same_ts_g1", "same_ts_dft")             # supplement 5 / PS-7 order: primary first (D1-G2 C-13)
+SAME_TS_CLASSES = ("same", "mixed", "different", "unclassified")
+DROP_CATS = ("g2_not_ok", "not_target", "no_tokens_or_182", "no_h", "both_usable")   # supplement 4 / PS-8 order
+SPLIT_MODELS = ("REP", "ENS4") + MODELS4 + ARM_FREE      # supplement 5: REP, ENS4, the 4 models, LINE, null
+SELFTEST2 = L.LAD / "e2_selftest"
+E1_REPORT = L.RES / "E1_report.json"                     # the stage-1 dft verdict (E2-14)
+TRAINER = {m: ("train_xgb" if m == "XGB" else "train_atoms") for m in MODELS4}   # ADD3 json code.fingerprint_keys
+RULES_13_3 = (                                           # spec 13-3 = ADD3 5-3, verbatim (checked at run time, E2-2)
+    ("a", "g2·S 또는 g2·SH 통과", "배포 가능한 입력(SMILES → xTB)으로 목표에 도달했다"),
+    ("b", "g2 둘 다 실패, dft·S 또는 dft·SH 통과",
+     "모델은 목표에 닿을 수 있으나 xTB 구조의 정밀도가 병목이다. 구조를 DFT 수준으로 다듬는 경로를 시험할 근거가 있다"),
+    ("c", "dft 둘 다 실패", "이 입력과 이 모델 네 개로는 구조가 정답이어도 목표에 닿지 않는다"))
+G1_NOTE = ("g1 is not part of the 13-3 table (spec 13-3 / ADD3 5-3: 'g1 결과는 이 표에 넣지 않는다'); explanatory only "
+           "(what the xTB geometry loses)")
+COV_RULE = ("supplement 4 / PS-8 (fixed before training): coverage = P_main pairs (S_folds in_P_main) of the T1 test lists "
+            "(FU2 split files 'test', folds 0-4) that are in the rung's set; pairs outside P_g2 count as not predictable "
+            "(not filled in, not in the 13-2 scores); reason per pair = the first failing end category in DROP_CATS order")
+SAME_TS_RULE = ("supplement 5 / PS-7 (fixed before training): reaction = D1-G2 C_compare.csv same_ts_g1 (primary; D1-G2 "
+                "C-13: G2 TS vs G1 TS, both xTB) and same_ts_dft (second; G2 TS vs the label DFT TS); pair (a, b) = same "
+                "(both ends same TS) / mixed (one end) / different (neither) / unclassified (an end without a judgment); "
+                "descriptive only: not used for 13-2, 13-3 or REP; no tests between classes")
+DECISIONS2 = {
+    "E2-1": "new command 'e2' (+ 'e2-selftest'); 'e1 --stage 2' still exits 2 and names 'e2'; e1 --stage 1 unchanged: E2 "
+            "reuses the E1 functions, four of which got a keyword argument whose default is the E1 literal (real_inputs "
+            "set_names, annotate_all common_name, figL1 / figL2 ps); line_beta / line_predict untouched (ADD3 PR-13)",
+    "E2-2": "pre-registration: add3_check (E1-12) + the supplement (json 'supplement' present, md committed and unchanged, "
+            "sha256 = supplement.md_sha256; same_ts_split columns / primary / source as pinned; C_compare.csv committed "
+            "with the pinned sha256) + the P_report pair sets and rung tables = json inputs_sha256 + the 13-3 rows of this "
+            "file verbatim in the spec and ADD3 5-3; STOP otherwise",
+    "E2-3": "inputs = train_atoms.py collect --stage 2 --with-xgb: L_report stage 2, rungs dft g1 g2, XGB, predictions / "
+            "L_val sha256 current and no unit json newer than L_report.json, else exit 2 (missing / stale); then E1-3 "
+            "unchanged (REP from the unit json validation MAE before any prediction file is read; check_l_report STOPs)",
+    "E2-4": "rungs dft, g1, g2; pair sets own (P_<rung>, the 13-2 set) and P_012 (spec 13-4 / 14-1, stage 2); P_01 stays "
+            "E1's; metrics / bends / para CI / NaN rules = E1-6 .. E1-8",
+    "E2-5": "spec 16 E gates: per rung every model / arm (incl. REP, ENS4, LINE, null) has exactly the rung's test pairs "
+            "(FU2 pair_sets_gate); on P_012 the three rungs' lists are identical and every frame has exactly that list; "
+            "LINE = SH baseline (E1-5) on g2 too",
+    "E2-6": "13-2 = goal_e1 on the 6 rung x arm (REP primary, ENS4 secondary, single models descriptive; surely = passed "
+            "and para MAE CI upper <= 0.13); goal_e1's stage-1 '13-3' row is replaced by the stage-2 13-3 row",
+    "E2-7": "13-3 = the first matching row (a, b, c) of spec 13-3 on the REP verdicts of g2·S, g2·SH, dft·S, dft·SH; the "
+            "exact Korean sentence; g1 excluded (explanatory rows); ENS4 and 'surely' versions descriptive",
+    "E2-8": "13-4: SH vs S per rung x model (own); rung vs rung per arm x model on P_012 for dft vs g1, dft vs g2, g1 vs g2 "
+            "(b = the first named; + LINE with arm '-'); REP vs LINE per rung x arm (own); sign E1-9; P_main and para",
+    "E2-9": "coverage = supplement 4 / PS-8 (COV_RULE) on the fold copies (sha256 = P_report) by fold, position and "
+            "dipole, P_g2 missing reasons in DROP_CATS order; the recomputed counts must equal the supplement json and "
+            "the evaluated P_main test pairs of every rung must equal its coverage count, else STOP",
+    "E2-10": "same-TS split = supplement 5 / PS-7 (SAME_TS_RULE): primary same_ts_g1, second same_ts_dft as pre-registered "
+             "(the task text called same_ts_dft primary; the committed supplement and json 'primary' win, both are "
+             "descriptive); g2 test pairs in P_main; REP, ENS4, AW, GNN, TF, XGB, LINE, null; 9 targets; pos all / p; n, "
+             "cores, MAE, RMSE per class and 'all' ('all' = E2_metrics, checked); class counts = supplement json, else STOP",
+    "E2-11": "figL1 / figL2 on P_012 (dft, g1, g2), figL3 on the own sets, figL4 = the first 3 rev 9 fig3 families (FU2 "
+             "fig3_families order) with a >= 12-point para series for oi and cpcm on P_012 in every rung: DFT truth (ink) "
+             "vs REP of arm SH per rung (slots dft 1, g1 2, g2 3 + marker + line style); same file names as E1 in "
+             "results/figures (E2 replaces the stage-1 versions, spec 14-1)",
+    "E2-12": "E1 cross-check (record only): E2's dft / g1 own metrics, verdicts and REP vs results/E1_metrics.csv / "
+             "E1_report.json; the dft REP and the dft verdict are gated by E2-14",
+    "E2-13": "e2-selftest: the E1-13 synthetic inputs + a synthetic g2 rung (P_g2 = P_g1 minus every 13th sorted pair from "
+             "the 4th) with planned REP choices and a tie -> $LAD/e2_selftest; the coverage / class counts of the REAL "
+             "Phase P sets are compared with the supplement there too; E2-14 / E2-15 rules on constructed records, "
+             "E2-15 also on the real unit jsons present",
+    "E2-14": "13-3 with the stage-1 dft verdict (supplement 7 '1단계 dft 판정과 함께'): results/E1_report.json (phase E1, "
+             "stage 1) must exist and list the same dft unit json / parquet sha256 as this run, else exit 2 (run / rerun "
+             "e1 --stage 1 first; this also keeps E1 from replacing E2's figures); E2's dft REP choices (before any "
+             "prediction is read) and dft·S / dft·SH REP passed / surely (after 13-2, before any output is written) must "
+             "equal E1's, else STOP; recorded in E2_interpretation.json 'stage1_dft_e1'",
+    "E2-15": "ADD3 11 E for every unit (supplement 7: unchanged for stage 2): fingerprint code_sha256 = prereg_d1pair_add3"
+             ".json code.fingerprint_keys of its trainer (train_xgb for XGB, train_atoms otherwise), else STOP (val_table, "
+             "reused unchanged from E1, checks add3 / labels / inputs_table / rung / arm only)",
+}
+
+
+def _log2(t0, msg):
+    print(f"[e2 {time.time() - t0:7.0f}s] {msg}", flush=True)
+
+
+def _close(a, b, tol=1e-12):
+    a, b = float(a), float(b)
+    return (np.isnan(a) and np.isnan(b)) or abs(a - b) <= tol
+
+
+# ================================================================ E2 pre-registration and readiness (E2-2, E2-3)
+def rules_verbatim():
+    """E2-2: every RULES_13_3 row is a verbatim table row '| k | condition | sentence |' of spec 13-3 and ADD3 5-3."""
+    out, bad = {}, []
+    for p in (SPEC_MD, ADD3_MD):
+        lines = set(p.read_text(encoding="utf-8").splitlines()) if p.is_file() else set()
+        ok = {k: f"| {k} | {c} | {s} |" in lines for k, c, s in RULES_13_3}
+        out[str(p)] = ok
+        bad += [f"{p.name} row {k}" for k, v in ok.items() if not v]
+    if bad:
+        L.stop("the 13-3 rows of evaluate.py are not verbatim rows of the spec / ADD3: " + ", ".join(bad))
+    return out
+
+
+def stage2_prereg(rep_p, rungs, set_names):
+    """E2-2: the stage-2 supplement (ADD3 10) committed and as recorded, C_compare.csv as pinned, the P_report pair sets
+    and rung tables = ADD3 json inputs_sha256 (the trainers' gate list); STOP otherwise."""
+    rec = json.loads(ADD3_JSON.read_text())
+    s = rec.get("supplement")
+    if not isinstance(s, dict):
+        L.stop(f"{ADD3_JSON.name} has no 'supplement' key: the stage-2 supplement (ADD3 10) is not registered")
+    bad = []
+    if s.get("md") != _repo_rel(SUPP_MD):
+        bad.append(f"supplement.md {s.get('md')} != {_repo_rel(SUPP_MD)}")
+    if not SUPP_MD.is_file():
+        bad.append(f"{SUPP_MD.name} missing")
+    else:
+        st = _git_state(SUPP_MD)
+        if st:
+            bad.append(f"{SUPP_MD.name} {st}")
+        elif L.sha256(SUPP_MD) != s.get("md_sha256"):
+            bad.append(f"{SUPP_MD.name} sha256 != {ADD3_JSON.name} supplement.md_sha256")
+    sts = s.get("same_ts_split") or {}
+    if list(sts.get("columns") or []) != list(SAME_TS_COLS) or sts.get("primary") != SAME_TS_COLS[0]:
+        bad.append(f"supplement same_ts_split columns {sts.get('columns')} / primary {sts.get('primary')} != "
+                   f"{list(SAME_TS_COLS)} / {SAME_TS_COLS[0]}")
+    if sts.get("source") != _repo_rel(C_COMPARE):
+        bad.append(f"supplement same_ts_split source {sts.get('source')} != {_repo_rel(C_COMPARE)}")
+    if not C_COMPARE.is_file():
+        bad.append(f"{C_COMPARE} missing")
+    else:
+        st = _git_state(C_COMPARE)
+        if st:
+            bad.append(f"{C_COMPARE.name} {st}")
+        if L.sha256(C_COMPARE) != sts.get("source_sha256"):
+            bad.append(f"{C_COMPARE.name} sha256 {L.sha256(C_COMPARE)[:12]} != supplement "
+                       f"{str(sts.get('source_sha256'))[:12]}")
+    ins = rec.get("inputs_sha256") or {}
+    pre = {}
+    for n in set_names:
+        e = (rep_p.get("sets") or {}).get(n) or {}
+        f, sha = e.get("file"), e.get("sha256")
+        pre[str(f)] = sha
+        if f is None or ins.get(f) != sha:
+            bad.append(f"pair set {n} ({f}): P_report sha256 {str(sha)[:12]} != ADD3 json inputs_sha256 "
+                       f"{str(ins.get(f))[:12]}")
+    for r in rungs:
+        e = (rep_p.get("rungs") or {}).get(r) or {}
+        f, sha = e.get("table"), e.get("table_sha256")
+        pre[str(f)] = sha
+        if f is None or ins.get(f) != sha:
+            bad.append(f"rung table {r} ({f}): P_report sha256 {str(sha)[:12]} != ADD3 json inputs_sha256 "
+                       f"{str(ins.get(f))[:12]}")
+    if bad:
+        L.stop("stage-2 pre-registration (ADD3 10, supplement 7):\n  " + "\n  ".join(bad))
+    return dict(record=s, md=str(SUPP_MD), md_sha256=L.sha256(SUPP_MD), md_git_state="committed, unchanged",
+                json_sha256=L.sha256(ADD3_JSON), supplement_commit=s.get("commit"),
+                c_compare=dict(path=str(C_COMPARE), sha256=L.sha256(C_COMPARE), git_state="committed, unchanged"),
+                prereg_inputs_equal=pre)
+
+
+def stage2_ready(rungs):
+    """E2-3: `train_atoms.py collect --stage 2 --with-xgb` outputs present and current, else exit 2 (missing / stale)."""
+    for p in (PRED, L_REPORT, L_VAL):
+        if not p.is_file():
+            _not_ready(f"{p} missing (train_atoms.py collect --stage 2 --with-xgb)")
+    rep = json.loads(L_REPORT.read_text())
+    why = []
+    if int(rep.get("stage") or 0) < 2:
+        why.append(f"L_report.json stage {rep.get('stage')} (not a stage-2 collect)")
+    lack = sorted(set(rungs) - set(rep.get("rungs") or []))
+    if lack:
+        why.append(f"L_report.json rungs {rep.get('rungs')} lack {lack}")
+    if "XGB" not in (rep.get("models") or []):
+        why.append("collected without --with-xgb")
+    if rep.get("predictions_sha256") != L.sha256(PRED):
+        why.append("L_predictions.parquet differs from L_report.json (a collect running or interrupted?)")
+    if rep.get("val_csv_sha256") != L.sha256(L_VAL):
+        why.append("L_val.csv differs from L_report.json")
+    t_rep = L_REPORT.stat().st_mtime
+    newer = [x for r in rungs for a in ARMS for m in MODELS4 for k in range(NF) for x in [unit_name(r, a, m, k)]
+             if (UNITS / f"{x}.json").is_file() and (UNITS / f"{x}.json").stat().st_mtime > t_rep]
+    if newer:
+        why.append(f"{len(newer)} unit jsons newer than L_report.json (e.g. {newer[:3]}): rerun the collect")
+    if why:
+        _not_ready("stage-2 collect output missing or stale: " + "; ".join(why))
+    return dict(l_report_stage=rep.get("stage"), l_report_rungs=rep.get("rungs"), l_report_mtime=t_rep,
+                rule="E2-3: exit 2 unless the stage-2 collect outputs are present and current")
+
+
+def _code_fp_problems(fps, keys):
+    """E2-15: problems of {unit: (model, fingerprint code_sha256)} against ADD3 json code.fingerprint_keys."""
+    bad = []
+    for x, (m, got) in sorted(fps.items()):
+        tr = TRAINER[m]
+        want = keys.get(tr)
+        if not isinstance(want, dict) or not want:
+            bad.append(f"{x}: ADD3 json code.fingerprint_keys has no '{tr}' entry")
+        elif got != want:
+            have = got if isinstance(got, dict) else {}
+            diff = sorted(k for k in set(want) | set(have) if have.get(k) != want.get(k))
+            bad.append(f"{x}: fingerprint code_sha256 != ADD3 json code.fingerprint_keys.{tr} (files {diff})")
+    return bad
+
+
+def code_fingerprints(names):
+    """E2-15 (ADD3 11 E): the fingerprint code_sha256 of every unit json in `names` (unit_name strings) = ADD3 json
+    code.fingerprint_keys of its trainer (train_xgb for XGB, train_atoms otherwise); STOP otherwise."""
+    keys = (json.loads(ADD3_JSON.read_text()).get("code") or {}).get("fingerprint_keys") or {}
+    fps = {}
+    for x in names:
+        rec = json.loads((UNITS / f"{x}.json").read_text())
+        fps[x] = (x.split("__")[3], (rec.get("fingerprint") or {}).get("code_sha256"))
+    bad = _code_fp_problems(fps, keys)
+    if bad:
+        L.stop("unit fingerprints: code_sha256 differs from the pre-registered code (ADD3 11 E, E2-15):\n  "
+               + "\n  ".join(bad[:10]))
+    return dict(rule="ADD3 11 E: unit fingerprint code_sha256 = prereg_d1pair_add3.json code.fingerprint_keys of the "
+                     "trainer (train_xgb for XGB, train_atoms otherwise)", n_units=len(fps),
+                n_by_trainer={tr: sum(1 for m, _ in fps.values() if TRAINER[m] == tr)
+                              for tr in sorted(set(TRAINER.values()))},
+                fingerprint_keys=keys, equal=True)
+
+
+def _unit_files(u):
+    return (u or {}).get("json_sha256"), (u or {}).get("parquet_sha256")
+
+
+def _stage1_problems(s1, verdict=None, rep=None):
+    """E2-14: differences between the stage-1 record s1 (e1_representatives {arm: {target: model}}, e1_verdict
+    {'dft|<arm>|REP': {passed, surely_passed}}) and this run's dft REP choices / dft REP verdicts."""
+    bad = []
+    if rep is not None:
+        for a in ARMS:
+            for t in TARGETS:
+                m1 = (s1["e1_representatives"].get(a) or {}).get(t)
+                if m1 != rep[("dft", a, t)]:
+                    bad.append(f"REP dft·{a}·{t}: E1 {m1} != E2 {rep[('dft', a, t)]}")
+    if verdict is not None:
+        for a in ARMS:
+            k = f"dft|{a}|REP"
+            e1 = tuple(bool(s1["e1_verdict"][k][q]) for q in ("passed", "surely_passed"))
+            e2 = tuple(bool(verdict[k][q]) for q in ("passed", "surely_passed"))
+            if e1 != e2:
+                bad.append(f"{k}: E1 passed / surely {e1} != E2 {e2}")
+    return bad
+
+
+def stage1_dft(units, rep):
+    """E2-14 (supplement 7: '13-3 해석 표 전체(a·b·c)를 1단계 dft 판정과 함께 적용'; spec 11 before 12): the stage-1 dft
+    verdict = results/E1_report.json of `e1 --stage 1`. It must exist and list the same dft unit files (unit json and
+    parquet sha256) as this run, else exit 2 (run / rerun E1 first); its dft REP choices must equal this run's (the same
+    validation records), else STOP. The dft·S / dft·SH REP verdicts are compared after 13-2 (check_stage1_dft)."""
+    if not E1_REPORT.is_file():
+        _not_ready(f"{E1_REPORT} missing: run `evaluate.py e1 --stage 1` before e2 (E2-14: 13-3 uses the stage-1 dft "
+                   "verdict, supplement 7; E1 writes the same figure files and must not run after E2)")
+    r1 = json.loads(E1_REPORT.read_text())
+    why = []
+    if r1.get("phase") != "E1" or r1.get("stage") != 1 or "dft" not in (r1.get("rungs") or []):
+        why.append(f"phase {r1.get('phase')} stage {r1.get('stage')} rungs {r1.get('rungs')} (not an e1 --stage 1 report)")
+    u1 = r1.get("units") or {}
+    dft = sorted(x for x, u in units.items() if u["key"][0] == "dft")
+    stale = [x for x in dft if _unit_files(u1.get(x)) != _unit_files(units[x])]
+    if not dft or stale:
+        why.append(f"{len(stale)} of {len(dft)} dft units differ from the ones E1 evaluated (e.g. {stale[:3]})")
+    v1 = r1.get("verdict") or {}
+    lack = [f"dft|{a}|REP" for a in ARMS if not isinstance(v1.get(f"dft|{a}|REP"), dict)]
+    if lack:
+        why.append(f"verdict lacks {lack}")
+    if why:
+        _not_ready(f"{E1_REPORT} is not the current stage-1 dft verdict (rerun `evaluate.py e1 --stage 1`, then e2; "
+                   "E2-14): " + "; ".join(why))
+    rp1 = (r1.get("representatives") or {}).get("dft") or {}
+    s1 = dict(path=str(E1_REPORT), sha256=L.sha256(E1_REPORT), date=r1.get("date"),
+              slurm_job=(r1.get("env") or {}).get("slurm_job"),
+              e1_predictions_sha256=(r1.get("l_report") or {}).get("predictions_sha256"),
+              e1_conclusion_13_3=(r1.get("conclusion_13_3") or {}).get("conclusion_ko"),
+              e1_representatives={a: {t: ((rp1.get(a) or {}).get(t) or {}).get("model") for t in TARGETS} for a in ARMS},
+              e1_verdict={f"dft|{a}|REP": dict(passed=bool(v1[f"dft|{a}|REP"].get("passed")),
+                                                surely_passed=bool(v1[f"dft|{a}|REP"].get("surely_passed")))
+                          for a in ARMS},
+              n_dft_units_equal=len(dft),
+              g1_units_differ_from_e1=sorted(x for x, u in units.items()
+                                             if u["key"][0] == "g1" and _unit_files(u1.get(x)) != _unit_files(u)))
+    bad = _stage1_problems(s1, rep=rep)
+    if bad:
+        L.stop("dft REP differs from E1's on the same dft unit files (E2-14):\n  " + "\n  ".join(bad[:10]))
+    return s1
+
+
+def check_stage1_dft(s1, verdict, rep):
+    """E2-14: this run's dft·S / dft·SH REP verdicts (passed, surely) and dft REP = the stage-1 ones, else STOP."""
+    bad = _stage1_problems(s1, verdict=verdict, rep=rep)
+    if bad:
+        L.stop("the dft verdict / REP differs from the stage-1 one (results/E1_report.json) on the same dft units "
+               "(E2-14: 13-3 is applied with the stage-1 dft verdict, supplement 7):\n  " + "\n  ".join(bad))
+    return dict(s1, status="13-3 uses the stage-1 dft verdict: E2's recomputed dft REP and dft·S / dft·SH REP verdicts "
+                           "equal results/E1_report.json", equal=True)
+
+
+# ================================================================ coverage and same-TS classes (E2-9, E2-10)
+def _tri(v):
+    s = str(v).strip().lower()
+    return True if s == "true" else (False if s == "false" else None)
+
+
+def read_c_compare():
+    """D1-G2 C_compare.csv -> {status: {rxn_id: g2_status}, same: {column: {rxn_id: True / False / None}}}."""
+    Cc = pd.read_csv(C_COMPARE, usecols=["rxn_id", "g2_status"] + list(SAME_TS_COLS), dtype=str)
+    rx = Cc.rxn_id.astype(int).tolist()
+    if len(set(rx)) != len(rx):
+        L.stop(f"{C_COMPARE}: duplicated rxn_id")
+    return dict(status=dict(zip(rx, Cc.g2_status.fillna("").astype(str).tolist())),
+                same={c: dict(zip(rx, [_tri(v) for v in Cc[c].tolist()])) for c in SAME_TS_COLS})
+
+
+def pair_classes(S, cc):
+    """supplement 5: per pair (index = S_folds pair_id) and judgment column: same (both ends' reactions = the same TS),
+    different (neither), mixed (one), unclassified (an end without a judgment)."""
+    a, b = S.a_rxn.astype(int).tolist(), S.b_rxn.astype(int).tolist()
+    out = {}
+    for col in SAME_TS_COLS:
+        j = cc["same"][col]
+        cls = []
+        for x_, y_ in zip(a, b):
+            x, y = j.get(x_), j.get(y_)
+            cls.append("unclassified" if x is None or y is None else
+                       ("same" if (x and y) else ("different" if not (x or y) else "mixed")))
+        out[col] = cls
+    return pd.DataFrame(out, index=S.index)
+
+
+def test_lists_all(IN, rep_p):
+    """the unrestricted T1 test lists of the fold copies ($LAD/inputs/fu2_splits, sha256 = P_report folds) -> {pair: k}."""
+    files = (rep_p.get("folds") or {}).get("files") or {}
+    out = {}
+    for k in range(NF):
+        p = IN.SPLITS_COPY / f"T1__f{k}.json"
+        want = files.get(str(p))
+        if not p.is_file() or want is None or L.sha256(p) != want:
+            L.stop(f"{p}: missing or sha256 != results/P_report.json folds")
+        for q in map(str, json.loads(p.read_text())["test"]):
+            if q in out:
+                L.stop(f"{q} is a test pair of folds {out[q]} and {k}")
+            out[q] = k
+    return out
+
+
+def coverage_e2(S, sets, test_of, g2tab, cc, set_names=E2_SETS):
+    """E2_coverage (spec 12; COV_RULE): P_main test pairs and the share in each set, by fold / position / dipole; P_g2
+    missing reasons -> (coverage, frame of the P_g2 P_main test pairs)."""
+    B = S[S.in_P_main.to_numpy() & S.index.isin(list(test_of))]
+    fold = np.array([test_of[p] for p in B.index], dtype=int)
+    para = (B.pos == "p").to_numpy()
+    pos = B.pos.astype(str).tolist()
+    dip = B.dipole.astype(str).tolist()
+
+    def frac(a, b):
+        return float(a / b) if b else None
+
+    def part(m, sel):
+        sel = np.asarray(sel, dtype=bool)
+        return dict(n=int((m & sel).sum()), of=int(sel.sum()), frac=frac(int((m & sel).sum()), int(sel.sum())))
+    cov = dict(rule=COV_RULE, n_P_main_test=int(len(B)), n_P_main_test_para=int(para.sum()), sets={})
+    for n in set_names:
+        m = np.asarray(B.index.isin(list(sets[n])), dtype=bool)
+        cov["sets"][n] = dict(
+            n=int(m.sum()), frac=frac(int(m.sum()), len(B)), n_para=int((m & para).sum()),
+            frac_para=frac(int((m & para).sum()), int(para.sum())), n_not_predictable=int((~m).sum()),
+            n_not_predictable_para=int((~m & para).sum()),
+            by_fold={str(k): dict(n=int((m & (fold == k)).sum()), of=int((fold == k).sum())) for k in range(NF)},
+            by_pos={(p or "(none)"): part(m, [x == p for x in pos]) for p in sorted(set(pos))},
+            by_dipole={d: dict(all=part(m, [x == d for x in dip]),
+                               para=part(m, np.asarray([x == d for x in dip], dtype=bool) & para))
+                       for d in sorted(set(dip))})
+    st = cc["status"]
+    tt = {int(r): (bool(a), bool(b), bool(h)) for r, a, b, h in
+          zip(g2tab.rxn_id, g2tab.has_tok, g2tab.has_x182, g2tab.has_h)}
+
+    def cat(r):                                          # = prereg.py coverage_same_ts (PS-8)
+        r = int(r)
+        if st.get(r, "") != "ok":
+            return "g2_not_ok"
+        t = tt.get(r)
+        if t is None:
+            return "not_target"
+        if not (t[0] and t[1]):
+            return "no_tokens_or_182"
+        return "ok" if t[2] else "no_h"
+    mg = np.asarray(B.index.isin(list(sets["P_g2"])), dtype=bool)
+    O = B[~mg]
+    reasons = []
+    for a_, b_ in zip(O.a_rxn, O.b_rxn):
+        ca, cb = cat(a_), cat(b_)
+        reasons.append(next((x for x in DROP_CATS[:-1] if x in (ca, cb)), "both_usable"))
+    op = (O.pos == "p").tolist()
+    cov["P_g2_missing_by_reason"] = {x: sum(1 for v in reasons if v == x) for x in DROP_CATS}
+    cov["P_g2_missing_by_reason_para"] = {x: sum(1 for v, q in zip(reasons, op) if v == x and q) for x in DROP_CATS}
+    cov["P_g2_missing_para"] = int(sum(op))
+    return cov, B[mg]
+
+
+def same_ts_counts(G, cls):
+    """class counts (all, para) of the P_g2 P_main test pairs per judgment column (= supplement 5 table)."""
+    gp = (G.pos == "p").tolist()
+    out = {}
+    for col in SAME_TS_COLS:
+        c = cls.loc[G.index, col].tolist()
+        out[col] = dict(all={k: sum(1 for v in c if v == k) for k in SAME_TS_CLASSES},
+                        para={k: sum(1 for v, q in zip(c, gp) if v == k and q) for k in SAME_TS_CLASSES})
+    return out
+
+
+def coverage_vs_prereg(cov, counts, s):
+    """E2-9 / E2-10: recomputed coverage and class counts vs the supplement json (structural, fixed before training)."""
+    pc, ps = s.get("coverage") or {}, s.get("same_ts_split") or {}
+    bad = []
+    for k in ("n_P_main_test", "n_P_main_test_para", "P_g2_missing_by_reason", "P_g2_missing_para"):
+        if _clean(cov.get(k)) != pc.get(k):
+            bad.append(f"coverage {k}: {cov.get(k)} != supplement {pc.get(k)}")
+    if set(cov["sets"]) != set(pc.get("sets") or {}):
+        bad.append(f"coverage sets {sorted(cov['sets'])} != supplement {sorted(pc.get('sets') or {})}")
+    for n, rec in (pc.get("sets") or {}).items():
+        mine = cov["sets"].get(n) or {}
+        for k in ("n", "n_para", "by_fold"):
+            if _clean(mine.get(k)) != rec.get(k):
+                bad.append(f"coverage {n} {k}: {mine.get(k)} != supplement {rec.get(k)}")
+    cl = ps.get("classes") or {}
+    for col in SAME_TS_COLS:
+        if _clean(counts.get(col)) != cl.get(col):
+            bad.append(f"same-TS classes {col}: {counts.get(col)} != supplement {cl.get(col)}")
+    c0 = counts[SAME_TS_COLS[0]]
+    if (ps.get("n_pairs"), ps.get("n_pairs_para")) != (sum(c0["all"].values()), sum(c0["para"].values())):
+        bad.append(f"same-TS population {sum(c0['all'].values())} / {sum(c0['para'].values())} != supplement "
+                   f"{ps.get('n_pairs')} / {ps.get('n_pairs_para')}")
+    return bad
+
+
+def structural_e2(IN, rep_p, S, sets, supp=None):
+    """coverage + same-TS pair classes from the Phase P / D1-G2 files only (no prediction is read) -> (doc, classes,
+    problems); with supp (json 'supplement') the counts are compared with the pre-registered ones."""
+    test_of = test_lists_all(IN, rep_p)
+    g2tab = IN.read_table("g2", rep_p)
+    cc = read_c_compare()
+    cls = pair_classes(S, cc)
+    cov, G = coverage_e2(S, sets, test_of, g2tab, cc)
+    counts = same_ts_counts(G, cls)
+    bad = coverage_vs_prereg(cov, counts, supp) if supp is not None else None
+    doc = dict(
+        definition=COV_RULE,
+        test_lists=dict(dir=str(IN.SPLITS_COPY), n_pairs=len(test_of), check="sha256 = results/P_report.json folds"),
+        coverage=cov,
+        same_ts_classes=dict(rule=SAME_TS_RULE, source=str(C_COMPARE), source_sha256=L.sha256(C_COMPARE),
+                             columns=list(SAME_TS_COLS), primary=SAME_TS_COLS[0],
+                             population="P_g2 pairs among the P_main test pairs", n_pairs=int(len(G)),
+                             n_pairs_para=int((G.pos == "p").sum()), counts=counts),
+        prereg_crosscheck=(dict(status="not compared (synthetic sets)") if bad is None else
+                           dict(status="compared with prereg_d1pair_add3.json supplement.coverage / same_ts_split",
+                                ok=not bad, problems=bad)))
+    return doc, cls, (bad or [])
+
+
+# ================================================================ E2 gates, compare, 13-3, same-TS split
+def common_lists(ref, common, rungs, name=COMMON2):
+    """spec 16 E: the rungs' test-pair lists (fold, pair_id) restricted to the common set are identical, else STOP."""
+    rc = {r: {(k, p) for k, p in ref[r] if p in common} for r in rungs}
+    if len({frozenset(v) for v in rc.values()}) != 1:
+        cnt = {r: len(v) for r, v in rc.items()}
+        L.stop(f"spec 16 E: the {name} test-pair lists differ between rungs ({cnt})")
+    return rc[rungs[0]]
+
+
+def gate_pairs_e2(EV, fr, ref, Y, common, rungs):
+    """E2-5: per rung every model / arm has exactly the rung's test pairs (FU2 pair_sets_gate); on P_012 one list."""
+    out = {r: EV.pair_sets_gate({f"{r}|{a}|{m}": fr[(r, a, m)] for a in ARMS for m in MODELS_E1}, ref[r], Y)
+           for r in rungs}
+    rc = common_lists(ref, common, rungs)
+    frames = {f"{r}|{a}|{m}|{COMMON2}": f[f.pair_id.isin(common)] for (r, a, m), f in fr.items() if r in rungs}
+    out[COMMON2] = EV.pair_sets_gate(frames, rc, Y)
+    return out
+
+
+def _src(rep, r, a, m, t):
+    return rep[(r, a, t)] if m == "REP" else ("0" if m == "null" else m)
+
+
+def _cmp(EV, fr, rep, rows, comp, kb, kx, ps, psn, sets, arm_label=None):
+    """one 13-4 comparison with FU2 compare (E1-9 sign; = compare_e1's add), rows appended."""
+    for evn, pairs in sets.items():
+        R = EV.compare(fr[kx], fr[kb], pairs, targets=TARGETS, n_boot=N_BOOT, seed=SEED)
+        for x in R.itertuples(index=False):
+            rows.append(dict(comparison=comp, rung_b=kb[0], arm_b=arm_label or kb[1], model_b=kb[2],
+                             source_b=_src(rep, kb[0], kb[1], kb[2], x.target), rung_x=kx[0], arm_x=arm_label or kx[1],
+                             model_x=kx[2], source_x=_src(rep, kx[0], kx[1], kx[2], x.target), pair_set=ps,
+                             pair_set_name=psn, eval=evn, target=x.target, n_pairs=int(x.n_pairs),
+                             n_cores=int(x.n_cores), mae_x=x.mae_x, mae_b=x.mae_b, d=x.d, ci_lo=x.ci_lo,
+                             ci_hi=x.ci_hi, p=x.p, folds_b_lower=x.folds_b_lower, n_folds=x.n_folds))
+
+
+def compare_e2(EV, fr, S, ref, common, rep, rungs):
+    """E2_compare (spec 13-4, E2-8): SH vs S, rung vs rung on P_012, REP vs LINE; FU2 compare, d = MAE(x) - MAE(b)."""
+    rows = []
+
+    def evalsets(rf):
+        return {"P_main": EV.eval_pairs(S, rf), "P_main_para": EV.eval_pairs(S, rf, para=True)}
+    own = {r: evalsets(ref[r]) for r in rungs}
+    for r in rungs:
+        for m in CMP_MODELS:
+            _cmp(EV, fr, rep, rows, "SH vs S (what HF adds)", (r, "SH", m), (r, "S", m), "own", f"P_{r}", own[r])
+    com = evalsets(common_lists(ref, common, rungs))
+    for b, x, label in RUNG_PAIRS2:
+        for a in ARMS:
+            for m in CMP_MODELS:
+                _cmp(EV, fr, rep, rows, label, (b, a, m), (x, a, m), COMMON2, COMMON2, com)
+        _cmp(EV, fr, rep, rows, label, (b, "S", "LINE"), (x, "S", "LINE"), COMMON2, COMMON2, com, arm_label="-")
+    for r in rungs:
+        for a in ARMS:
+            _cmp(EV, fr, rep, rows, "REP vs LINE (what the model adds on the calibration line)", (r, a, "REP"),
+                 (r, a, "LINE"), "own", f"P_{r}", own[r])
+    out = pd.DataFrame(rows)
+    out.insert(1, "sign", "d = MAE(x) - MAE(b); d > 0: b better (FU2 D5: b = the first named)")
+    return out
+
+
+def interpret_13_3(verdict, model="REP", key="passed"):
+    """spec 13-3 (= ADD3 5-3): the first matching row from the top on the 13-2 verdicts (key) of `model` for g2·S, g2·SH,
+    dft·S, dft·SH; g1 is not part of the table."""
+    g2 = [a for a in ARMS if verdict[f"g2|{a}|{model}"][key]]
+    dft = [a for a in ARMS if verdict[f"dft|{a}|{model}"][key]]
+    cond = {"a": bool(g2), "b": (not g2) and bool(dft), "c": not dft}
+    k, c, s = next(x for x in RULES_13_3 if cond[x[0]])
+    return dict(model=model, verdict_key=key, rule=k, condition_ko=c, conclusion_ko=s, conditions=cond,
+                passed_arms={"g2": g2, "dft": dft})
+
+
+def _goal_detail(MI, rates, verdict, r, a, m="REP"):
+    v = verdict[f"{r}|{a}|{m}"]
+    out = dict(rung=r, arm=a, model=m, pair_set_name=f"P_{r}", passed=v["passed"], surely_passed=v["surely_passed"])
+    for t in GOAL_TARGETS:
+        pp = MI[(r, a, m, "own", t, "P_main", "p")]
+        br = rates[f"{r}|{a}|{m}|own"]["all"][t]
+        out[t] = dict(source=pp["source"], n_para=pp["n"], para_mae=pp["mae"], para_mae_ci_lo=pp["mae_ci_lo"],
+                      para_mae_ci_hi=pp["mae_ci_hi"], sens=br["sens"], n_bent_dft=br["n_bent_dft"], fpr=br["fpr"],
+                      n_straight_dft=br["n_straight_dft"])
+    return out
+
+
+def interpretation_e2(verdict, MI, rates, concl1, verb):
+    """E2_interpretation (spec 13-3, E2-7)."""
+    main = interpret_13_3(verdict)
+    return dict(
+        rule_source="spec 13-3 = ADD3 5-3: the first matching row from the top; stage 2 applies the whole table with the "
+                    "stage-1 dft verdict (supplement 7): the dft verdict used here is recomputed on the same dft units "
+                    "and must equal results/E1_report.json (E2-14, 'stage1_dft_e1')",
+        rule=main["rule"], condition_ko=main["condition_ko"], conclusion_ko=main["conclusion_ko"],
+        passed_arms=main["passed_arms"],
+        table=[dict(rule=k, condition_ko=c, conclusion_ko=s, condition_met=main["conditions"][k])
+               for k, c, s in RULES_13_3],
+        judged_on="REP (spec 13-1, validation MAE only); spec 13-2 on the own set (P_g2, P_dft): oi and cpcm para MAE <= "
+                  "0.13, sensitivity >= 0.7, FPR <= 0.1, point estimates; NaN sensitivity / FPR = not met (E1-8)",
+        rows=[_goal_detail(MI, rates, verdict, r, a) for r in ("g2", "dft") for a in ARMS],
+        g1_explanatory=dict(note=G1_NOTE, rows=[_goal_detail(MI, rates, verdict, "g1", a) for a in ARMS]),
+        secondary_ens4=dict(note="ENS4 (spec 13-1 / 13-2 secondary): the same table on the ENS4 verdicts; not the "
+                                 "conclusion", **interpret_13_3(verdict, "ENS4")),
+        descriptive_surely=dict(note="the same table on REP 'surely passed' (para MAE CI upper <= 0.13), descriptive",
+                                **interpret_13_3(verdict, "REP", "surely_passed")),
+        stage1_dft=dict(rule=concl1.get("rule"), conclusion_ko=concl1.get("conclusion_ko"),
+                        passed_arms=concl1.get("passed_arms")),
+        verbatim_rows=verb)
+
+
+def goal_row_13_3(interp):
+    pa = interp["passed_arms"]
+    return dict(level="13-3", rung="g2+dft", arm=f"g2: {'+'.join(pa['g2']) or '-'}; dft: {'+'.join(pa['dft']) or '-'}",
+                model="REP", role="primary", target="+".join(GOAL_TARGETS), judged=True, pair_set_name="P_g2 / P_dft",
+                passed=None, surely_passed=None, conclusion=f"13-3 {interp['rule']}: {interp['conclusion_ko']}")
+
+
+def same_ts_split(EV, A, cls, rep, MI, primary, rung="g2"):
+    """E2_same_ts (spec 12, SAME_TS_RULE; descriptive): the rung's P_main test pairs split by pair class per judgment
+    column; per class and 'all': n, cores, MAE, RMSE (9 targets, pos all / p). 'all' must equal E2_metrics."""
+    E9, rows, bad = EV.E9, [], []
+    for a in ARMS:
+        for m in SPLIT_MODELS:
+            free = m in ARM_FREE
+            d = A[(rung, ARMS[0] if free else a, m, "own")]
+            d = d[(EV.set_mask(d, "P_main") & d.target.isin(PRIMARY9)).to_numpy()]
+            miss = sorted(set(d.pair_id) - set(cls.index))
+            if miss:
+                L.stop(f"same-TS split: {len(miss)} pairs without a class (e.g. {miss[:3]})")
+            e_all = (d.yhat - d.y).to_numpy(float)
+            cores = d.core.to_numpy()
+            pa = (d.pos == "p").to_numpy()
+            tm = {t: (d.target == t).to_numpy() for t in PRIMARY9}
+            for col in SAME_TS_COLS:
+                c = cls.loc[d.pair_id.to_numpy(), col].tolist()
+                cm = {k: np.fromiter((v == k for v in c), dtype=bool, count=len(c)) for k in SAME_TS_CLASSES}
+                for t in PRIMARY9:
+                    for pos in ("all", "p"):
+                        mp = (tm[t] & pa) if pos == "p" else tm[t]
+                        n_sum = 0
+                        for k in ("all",) + SAME_TS_CLASSES:
+                            mk = mp if k == "all" else (mp & cm[k])
+                            n_sum += int(mk.sum()) if k != "all" else 0
+                            e = e_all[mk]
+                            rows.append(dict(split_column=col, role="primary" if col == primary else "second",
+                                             ts_class=k, rung=rung, arm=a, model=m, source=_src(rep, rung, a, m, t),
+                                             arm_independent=free, target=t, set="P_main", pos=pos,
+                                             n_pairs=int(mk.sum()), n_cores=int(len(pd.unique(cores[mk]))),
+                                             mae=E9.mae(e), rmse=E9.rmse(e)))
+                        ref_mae = MI[(rung, a, m, "own", t, "P_main", pos)]["mae"]
+                        if n_sum != int(mp.sum()) or not _close(E9.mae(e_all[mp]), ref_mae):
+                            bad.append(f"{col} {a} {m} {t} {pos}: classes {n_sum} / all {int(mp.sum())}, MAE "
+                                       f"{E9.mae(e_all[mp])} vs E2_metrics {ref_mae}")
+    if bad:
+        L.stop("same-TS split inconsistent with E2_metrics:\n  " + "\n  ".join(bad[:8]))
+    return pd.DataFrame(rows)
+
+
+# ================================================================ figure figL4 (spec 14-1)
+def figL4(plt, DF, C, EV, A, rep, rungs, figdir, ps=COMMON2, arm="SH"):
+    """rev 9 fig3 families (FU2 fig3_families order; the first 3 with a para series of >= 12 points incl. H for oi and
+    cpcm on ps in every rung) x oi / cpcm: DFT truth vs REP (arm SH) of every rung; y = -dd / 1.3642, H at the origin."""
+    from matplotlib.lines import Line2D
+    E9, HE = EV.E9, EV.HE
+
+    def para(r, f, t):
+        d = A[(r, arm, "REP", ps)]
+        q = d[(EV.set_mask(d, "P_main") & (d.pos == "p") & d.sigma.notna() & (d.fam == f) & (d.target == t)).to_numpy()]
+        return q.sort_values("pair_id", kind="mergesort")
+
+    def ser(q, col):
+        return HE.family_series(E9.hammett_frame(q, col), q.fam.iloc[0], col, C.MIN_X_FAM) if len(q) else None
+    fams = [f for f in EV.fig3_families()
+            if all(ser(para(r, f, t), "y") is not None for r in rungs for t in GOAL_TARGETS)][:3]
+    cols = ["fam", "target", "pair_set", "arm", "X", "sigma_p", "y_dft"] + [f"y_rep_{r}" for r in rungs] + \
+        [f"rep_{r}" for r in rungs]
+    rows = []
+    fig, axs = plt.subplots(len(GOAL_TARGETS), max(1, len(fams)), figsize=(C.FIG_W, C.FIG_W * 0.5),
+                            constrained_layout=True, squeeze=False)
+    for j, f in enumerate(fams):
+        for i, t in enumerate(GOAL_TARGETS):
+            ax = axs[i, j]
+            x, y, nm = ser(para(rungs[0], f, t), "y")
+            pred = {}
+            for r in rungs:
+                q = para(r, f, t)
+                sy, sp = ser(q, "y"), ser(q, "pred")
+                if sy is None or sp is None or sy[2] != nm or sp[2] != nm or \
+                        not np.allclose(sy[1], y, rtol=0.0, atol=1e-9):
+                    L.stop(f"figL4: {f} / {t}: the para points or the DFT values differ between rungs on {ps}")
+                pred[r] = sp[1]
+            o = np.argsort(x, kind="mergesort")
+            for r in rungs:
+                col = DF.SLOT[RUNG_SLOT[r]]
+                ax.plot(x[o], pred[r][o], color=col, ls=RUNG_LS[r], lw=1.0, marker=RUNG_MARK[r], ms=3.0, mfc=col,
+                        mec="white", mew=0.4, zorder=2)
+            ax.scatter(x, y, s=12, color=DF.INK, linewidths=0, zorder=4)
+            ax.text(0.02, 0.98, "REP " + ", ".join(f"{r} {rep[(r, arm, t)]}" for r in rungs), transform=ax.transAxes,
+                    ha="left", va="top", fontsize=C.FONT_PT - 2, color=DF.INK2)
+            if i == 0:
+                ax.set_title(f, fontsize=C.FONT_PT - 1)
+            if j == 0:
+                ax.set_ylabel(f"{DF.TLAB[t]}: −ΔΔ/1.3642")
+            if i == len(GOAL_TARGETS) - 1:
+                ax.set_xlabel("σp")
+            for k, (n, a_, b_) in enumerate(zip(nm, x, y)):
+                rows.append(dict(fam=f, target=t, pair_set=ps, arm=arm, X=n, sigma_p=float(a_), y_dft=float(b_),
+                                 **{f"y_rep_{r}": float(pred[r][k]) for r in rungs},
+                                 **{f"rep_{r}": rep[(r, arm, t)] for r in rungs}))
+    if not fams:
+        for ax in axs.ravel():
+            ax.set_axis_off()
+        axs[0, 0].text(0.5, 0.5, f"no rev 9 fig3 family with a para series (>= {C.MIN_X_FAM} points incl. H) for oi "
+                                 f"and cpcm on {ps}", ha="center", va="center", transform=axs[0, 0].transAxes,
+                       color=DF.INK2)
+    hs = [Line2D([], [], color=DF.INK, marker="o", ls="none", ms=3.5, label="DFT (truth)")]
+    hs += [Line2D([], [], color=DF.SLOT[RUNG_SLOT[r]], ls=RUNG_LS[r], lw=1.0, marker=RUNG_MARK[r], ms=3.0,
+                  label=f"REP {r}·{arm}") for r in rungs]
+    axs[0, -1].legend(handles=hs, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    fig.suptitle(f"{ps} test pairs (common to {', '.join(rungs)}), P_main para pairs; y = −ΔΔ/1.3642 (log k units), H "
+                 f"at the origin", fontsize=C.FONT_PT)
+    out = _save(fig, figdir, "figL4_examples", pd.DataFrame(rows, columns=cols))
+    plt.close(fig)
+    return out, fams
+
+
+# ================================================================ E1 cross-check (E2-12, record only)
+def e1_crosscheck(Mt, verdict, rep):
+    pm, pr = L.RES / "E1_metrics.csv", L.RES / "E1_report.json"
+    if not (pm.is_file() and pr.is_file()):
+        return dict(status="no E1 output in results/: not compared")
+    X = pd.read_csv(pm, dtype={"pos": str, "set": str, "pair_set": str, "model": str, "source": str},
+                    keep_default_na=False, na_values=[""])           # model 'null' must stay a string
+    X = X[X.pair_set == "own"]
+    mine = Mt[(Mt.pair_set == "own") & Mt.rung.isin(list(STAGE_RUNGS[1]))]
+    J = mine.merge(X, on=MET_KEY, how="inner", suffixes=("", "_e1"))
+    a, b = J.mae.to_numpy(float), J.mae_e1.to_numpy(float)
+    both = np.isfinite(a) & np.isfinite(b)
+    r1 = json.loads(pr.read_text())
+    v1, rp1 = r1.get("verdict") or {}, r1.get("representatives") or {}
+    vd = sorted(k for k, v in v1.items() if k in verdict and (bool(v.get("passed")), bool(v.get("surely_passed")))
+                != (bool(verdict[k]["passed"]), bool(verdict[k]["surely_passed"])))
+    rd = sorted(f"{r}|{a_}|{t}" for (r, a_, t), m in rep.items()
+                if r in rp1 and (((rp1.get(r) or {}).get(a_) or {}).get(t) or {}).get("model") != m)
+    return dict(status="compared (record only)", e1_metrics=str(pm), e1_metrics_sha256=L.sha256(pm),
+                e1_report_sha256=L.sha256(pr), e1_predictions_sha256=(r1.get("l_report") or {}).get("predictions_sha256"),
+                n_rows_e2=int(len(mine)), n_rows_compared=int(len(J)),
+                max_abs_diff_mae=float(np.max(np.abs(a[both] - b[both]))) if both.any() else None,
+                n_nan_pattern_differs=int((np.isfinite(a) != np.isfinite(b)).sum()), verdicts_differ=vd,
+                representatives_differ=rd)
+
+
+# ================================================================ the E2 pipeline
+def run_e2(EV, ctx, P, rep, means, out, cov_doc, cls, verb, figures=True, stage1=None):
+    """gates -> frames -> metrics -> bends -> 13-2 -> (stage-1 dft check) -> 13-3 -> 13-4 -> same-TS split -> files under
+    `out` (+ figures). stage1 = stage1_dft() record (e2; E2-14), None in e2-selftest (no E1 of the synthetic run)."""
+    t0 = time.time()
+    rungs, S, Y, sets = ctx["rungs"], ctx["S"], ctx["Y"], ctx["sets"]
+    common = sets[COMMON2]
+    ref = {r: ref_set(ctx["tests"][r], r) for r in rungs}
+    evc = {}
+    for r in rungs:                                      # E2-9: evaluated P_main test pairs = the coverage count
+        q = S.loc[[p for _, p in ref[r]]]
+        n, n_p = int(q.in_P_main.sum()), int((q.in_P_main & (q.pos == "p")).sum())
+        c = cov_doc["coverage"]["sets"][f"P_{r}"]
+        evc[r] = dict(n_P_main_test=n, n_P_main_test_para=n_p, coverage_n=c["n"], coverage_n_para=c["n_para"])
+        if (n, n_p) != (c["n"], c["n_para"]):
+            L.stop(f"{r}: evaluated P_main test pairs {n} / para {n_p} != coverage {c['n']} / {c['n_para']} (E2-9)")
+    fr = model_frames(P, rungs)
+    gm = {r: EV.pair_sets_gate({f"{r}|{a}|{m}": fr[(r, a, m)] for a in ARMS for m in MODELS4}, ref[r], Y)
+          for r in rungs}
+    check_pair_attrs(P, S)
+    lines = line_frames(ctx)
+    fr = derived_frames(fr, lines, rep, rungs)
+    ga = gate_pairs_e2(EV, fr, ref, Y, common, rungs)
+    lchk = check_line(fr, lines, rungs)
+    _log2(t0, f"gates passed: test-pair lists per rung and on {COMMON2} (spec 16 E), LINE = SH baseline (E1-5)")
+    A = annotate_all(EV, fr, S, common, rungs, common_name=COMMON2)
+    Mt = metrics_e1(EV, A)
+    MI = met_index(Mt)
+    _log2(t0, f"metrics: {len(Mt)} rows")
+    Bd, rates, fams = bends_e1(EV, A, S, rep)
+    _log2(t0, f"bends: {len(Bd)} rows")
+    goal, verdict, concl1 = goal_e1(MI, rates, rungs)
+    s1chk = (check_stage1_dft(stage1, verdict, rep) if stage1 is not None else
+             dict(status="no stage-1 record (e2-selftest: synthetic predictions, no E1 of them)", equal=None))
+    interp = interpretation_e2(verdict, MI, rates, concl1, verb)
+    interp["stage1_dft_e1"] = s1chk
+    goal = pd.concat([goal[goal.level != "13-3"], pd.DataFrame([goal_row_13_3(interp)])], ignore_index=True)
+    Cmp = compare_e2(EV, fr, S, ref, common, rep, rungs)
+    _log2(t0, f"compare: {len(Cmp)} rows")
+    ST = same_ts_split(EV, A, cls, rep, MI, SAME_TS_COLS[0])
+    _log2(t0, f"same-TS split: {len(ST)} rows")
+    outputs = {}
+    for name, df in (("E2_metrics.csv", Mt), ("E2_bends.csv", Bd), ("E2_goal.csv", goal), ("E2_compare.csv", Cmp),
+                     ("E2_same_ts.csv", ST)):
+        p = _write_csv(out / name, df)
+        outputs[str(p)] = L.sha256(p)
+    for name, obj in (
+            ("E2_bend_rates.json", dict(
+                key=f"rung|arm|model|pair_set (pair_set own = P_<rung>, {COMMON2})", rates=rates, families=fams,
+                representatives=rep_json(rep, means),
+                note="d1_eval.bend_rates on FU2 bends_tab rows (as E1_bend_rates.json): sens = DFT-bent families called "
+                     "bent / DFT-bent, fpr = DFT-straight called bent / DFT-straight, V_sens likewise; *_ci = "
+                     "Clopper-Pearson 95 %; null = zero denominator (E1-7); LINE / null arm-independent (E1-4)")),
+            ("E2_interpretation.json", interp),
+            ("E2_coverage.json", dict(cov_doc, evaluated=evc))):
+        p = _write_json(out / name, obj)
+        outputs[str(p)] = L.sha256(p)
+    fams4 = None
+    if figures:
+        plt, DF = _plot()
+        figdir = out / "figures"
+        f4, fams4 = figL4(plt, DF, EV.C, EV, A, rep, rungs, figdir)
+        for f in figL1(plt, DF, EV.C, MI, rungs, figdir, ps=COMMON2) + figL2(plt, DF, EV.C, MI, rungs, figdir,
+                                                                           ps=COMMON2) + \
+                figL3(plt, DF, EV.C, rates, rungs, figdir) + f4:
+            outputs[f] = L.sha256(f)
+        _log2(t0, f"figures written to {figdir} (figL4 families: {fams4})")
+    gates = dict(models=gm, all=ga, n_test_pairs={r: len(ref[r]) for r in rungs},
+                 n_common_test_pairs=len(common_lists(ref, common, rungs)), common_set=COMMON2,
+                 n_pairs_in_sets={n: len(v) for n, v in sets.items()}, evaluated_vs_coverage=evc)
+    return dict(fr=fr, Mt=Mt, MI=MI, Bd=Bd, rates=rates, goal=goal, verdict=verdict, concl1=concl1, interp=interp,
+                Cmp=Cmp, ST=ST, gates=gates, line_check=lchk, line_betas={r: lines[r][1] for r in rungs},
+                outputs=outputs, fams4=fams4, seconds=time.time() - t0, ref=ref, stage1=s1chk)
+
+
+def cmd_e2(labels, figures=True):
+    t0 = time.time()
+    rungs = E2_RUNGS
+    EV, info = fu2_eval()
+    import inputs as IN
+    verb = rules_verbatim()
+    lab = label_info(labels)
+    labels = Path(lab["path"])
+    rep_p = IN.p_report()
+    for r in rungs:
+        IN.p_report(r)                                   # rung build passed and current, table = P_report's
+    tables = {r: rep_p["rungs"][r]["table_sha256"] for r in rungs}
+    add3 = add3_check()
+    supp = stage2_prereg(rep_p, rungs, E2_SETS)
+    ready = stage2_ready(rungs)
+    with no_test_scores([PRED, UNITS]):                  # E1-3: REP from validation records only
+        V, units = val_table(rungs, lab["sha256"], add3["md_sha256"], tables)
+        cfp = code_fingerprints(sorted(units))           # E2-15 (ADD3 11 E)
+        rep, means = pick_rep(V)
+    _log2(t0, "REP: " + ", ".join(f"{r}·{a}·{t}={m}" for (r, a, t), m in rep.items()))
+    lrep = check_l_report(units, rungs, labels)
+    s1 = stage1_dft(units, rep)                          # E2-14: exit 2 without a current E1; REP = E1's, else STOP
+    ctx = real_inputs(IN, rep_p, rungs, labels, set_names=E2_SETS)
+    cov_doc, cls, bad = structural_e2(IN, rep_p, ctx["S"], ctx["sets"], supp["record"])
+    if bad:
+        L.stop("coverage / same-TS class counts differ from the pre-registered supplement (E2-9 / E2-10):\n  "
+               + "\n  ".join(bad[:10]))
+    _log2(t0, f"coverage P_g2 {cov_doc['coverage']['sets']['P_g2']['n']} / {cov_doc['coverage']['n_P_main_test']} "
+              f"P_main test pairs (= supplement)")
+    P = load_predictions(rungs)
+    res = run_e2(EV, ctx, P, rep, means, L.RES, cov_doc, cls, verb, figures, stage1=s1)
+    e1x = e1_crosscheck(res["Mt"], res["verdict"], rep)
+    me = Path(__file__).resolve()
+    ins = [PRED, L_REPORT, L_VAL, labels, ORIG_LABELS, IN.S_FOLDS, IN.P_REPORT, ADD3_MD, ADD3_JSON, SUPP_MD, SPEC_MD,
+           C_COMPARE, E1_REPORT, Path(info["source"]), Path(info["e_tests"])] + \
+        [Path(rep_p["sets"][n]["file"]) for n in E2_SETS] + [IN.table_path(r) for r in rungs]
+    it = res["interp"]
+    doc = dict(
+        phase="E2", stage=2, rungs=list(rungs), command=" ".join(sys.argv[1:]), date=time.strftime("%F %T"),
+        evaluate_py=dict(path=str(me), sha256=L.sha256(me), git_state=_git_state(me) or "committed, unchanged",
+                         line_source_sha256=line_source_sha256()),
+        fu2_evaluate=info, labels=lab, add3=add3, supplement={k: v for k, v in supp.items() if k != "record"},
+        ready=ready, l_report=lrep, units=units, code_fingerprints=cfp, stage1_dft_e1=res["stage1"],
+        inputs_sha256={str(p): L.sha256(p) for p in ins},
+        representatives=rep_json(rep, means),
+        rep_rule="spec 13-1: lowest mean over the 5 outer folds of the unit json val_kcal_mae, ties AW -> GNN -> TF -> "
+                 "XGB; chosen before any prediction file was read (E1-3); train_atoms MA-6n selection asymmetry noted",
+        gates=res["gates"], line_check=res["line_check"], line_betas=res["line_betas"], verdict=res["verdict"],
+        conclusion_13_3=dict(rule=it["rule"], conclusion_ko=it["conclusion_ko"], passed_arms=it["passed_arms"]),
+        coverage_P_g2={k: cov_doc["coverage"]["sets"]["P_g2"][k] for k in ("n", "frac", "n_para", "frac_para")},
+        same_ts=dict(primary=SAME_TS_COLS[0], second=SAME_TS_COLS[1],
+                     counts=cov_doc["same_ts_classes"]["counts"]),
+        figL4_families=res["fams4"], e1_crosscheck=e1x, outputs=res["outputs"],
+        goal_rule=dict(targets=list(GOAL_TARGETS), para_mae_max=GOAL["mae"], sens_min=GOAL["sens"], fpr_max=GOAL["fpr"],
+                       set="own pair set (P_<rung>; g2: P_g2), P_main reference para pairs, point estimate; surely = CI "
+                           "upper <= 0.13; REP primary, ENS4 secondary, single models descriptive",
+                       bend_population="d1_eval.bend_rates 'all' (no family filter; ADD3 5-2 / PR-15)",
+                       stage0_rev9=STAGE0_NOTE, stage1_rev9=f"R2_fam median (P_main, all) >= {STAGE1_R2}, descriptive"),
+        env=_env(), decisions=DECISIONS2, decisions_e1_reused=DECISIONS, seconds=time.time() - t0)
+    _write_json(L.RES / "E2_report.json", doc)
+    for k, v in res["verdict"].items():
+        if v["role"] != "descriptive":
+            print(f"[E2] 13-2 {k}: passed {v['passed']} surely {v['surely_passed']}", flush=True)
+    print(f"[E2] 13-3 {it['rule']}: {it['conclusion_ko']}", flush=True)
+    print(f"[E2] coverage P_g2: {doc['coverage_P_g2']}", flush=True)
+    return 0
+
+
+# ================================================================ e2-selftest (E2-13)
+def selftest_inputs_e2():
+    """the E1-13 synthetic inputs + a synthetic g2 rung: P_g2 = P_g1 minus every 13th sorted pair from the 4th, P_012 =
+    P_01 & P_g2; dH = 0.6 y + N(0, 0.8); noisy predictions (no exact model); validation table: g2·SH -> XGB, g2·S oi ->
+    TF (exact tie TF = XGB), other g2·S targets -> AW."""
+    import fu2_common as F2
+    ctx, P, V, expect, sinfo = selftest_inputs()
+    rng = np.random.default_rng(L.SEED_M + 2)
+    S, Y = ctx["S"], ctx["Y"]
+    g1 = sorted(ctx["sets"]["P_g1"])
+    p_g2 = set(g1) - set(g1[3::13])
+    sets = dict(ctx["sets"], P_g2=p_g2, P_012=ctx["sets"]["P_01"] & p_g2)
+    folds = {k: json.loads((F2.SPLITS / f"T1__f{k}.json").read_text()) for k in range(NF)}
+    te2 = {k: [str(p) for p in folds[k]["test"] if str(p) in p_g2] for k in range(NF)}
+    tr2 = {k: [str(p) for p in folds[k]["train"] if str(p) in p_g2] for k in range(NF)}
+    u = sorted(p_g2)
+    d = 0.6 * Y.loc[u, DD].to_numpy(float) + rng.normal(0.0, 0.8, (len(u), len(TARGETS)))
+    d[:, TARGETS.index("c_ghost")] = 0.0
+    dH = pd.DataFrame(d, index=pd.Index(u, name="pair_id"), columns=TARGETS)
+    noise = {"AW": 0.3, "GNN": 0.35, "TF": 0.4, "XGB": 0.45}
+    parts = []
+    for a in ARMS:
+        for m in MODELS4:
+            for k in range(NF):
+                te, tr = te2[k], tr2[k]
+                if not te:
+                    continue
+                yv = Y.loc[te, DD].to_numpy(float)
+                if a == "SH":
+                    beta = line_beta(dH.loc[tr, TARGETS].to_numpy(float), Y.loc[tr, DD].to_numpy(float))
+                    base = line_predict(beta, dH.loc[te, TARGETS].to_numpy(float))
+                else:
+                    beta, base = np.zeros(len(TARGETS)), np.zeros_like(yv)
+                yh = yv + rng.normal(0.0, noise[m], yv.shape)
+                att = S.loc[te, ["ref_kind", "pos"]]
+                for j, t in enumerate(TARGETS):
+                    parts.append(pd.DataFrame(dict(
+                        pair_id=te, ref_kind=att.ref_kind.to_numpy(), pos=att.pos.to_numpy(), fold=int(k), rung="g2",
+                        arm=a, model=m, target=t, y=yv[:, j], yhat=yh[:, j], base=base[:, j], beta=float(beta[j]),
+                        yhat_seed_sd=0.0)))
+    P2 = pd.concat([P] + parts, ignore_index=True)[PRED_COLS]
+    vrows, expect = [], dict(expect)
+    for a in ARMS:
+        for t in TARGETS:
+            for m in MODELS4:
+                for k in range(NF):
+                    v = 1.0 + 0.1 * MODEL_ORDER[m] + float(rng.uniform(0.0, 0.01))
+                    if a == "SH" and m == "XGB":
+                        v = 0.3
+                    if (a, t) == ("S", "oi") and m in ("TF", "XGB"):
+                        v = 0.6
+                    vrows.append(dict(rung="g2", arm=a, model=m, fold=k, target=t, val_kcal_mae=v))
+            expect[("g2", a, t)] = "XGB" if a == "SH" else ("TF" if t == "oi" else "AW")
+    V2 = pd.concat([V, pd.DataFrame(vrows)], ignore_index=True)
+    ctx2 = dict(ctx, rungs=E2_RUNGS, sets=sets, tests=dict(ctx["tests"], g2=te2), trains=dict(ctx["trains"], g2=tr2),
+                dH=dict(ctx["dH"], g2=dH))
+    return ctx2, P2, V2, expect, dict(sinfo, g2="P_g2 = P_g1 minus every 13th sorted pair from the 4th; dH = 0.6 y + "
+                                                "N(0, 0.8); noise AW 0.3, GNN 0.35, TF 0.4, XGB 0.45")
+
+
+def cmd_selftest_e2(figures=True):
+    t0 = time.time()
+    EV, info = fu2_eval(allow_unmerged=True)
+    import inputs as IN
+    checks = {}
+    verb = rules_verbatim()
+    checks["rules_13_3_verbatim"] = all(all(v.values()) for v in verb.values())
+    ctx, P, V, expect, sinfo = selftest_inputs_e2()
+    with no_test_scores([PRED, UNITS]):
+        rep, means = pick_rep(V)
+    checks["rep_rule_and_ties"] = bool(set(rep) == set(expect) and all(rep[k] == v for k, v in expect.items()))
+
+    def vv(g2s, g2sh, ds, dsh):
+        keys = (("g2", "S"), ("g2", "SH"), ("dft", "S"), ("dft", "SH"))
+        return {f"{r}|{a}|REP": dict(passed=p, surely_passed=p) for (r, a), p in zip(keys, (g2s, g2sh, ds, dsh))}
+    cases = {(True, False, False, False): "a", (False, True, True, True): "a", (False, False, True, False): "b",
+             (False, False, False, True): "b", (False, False, False, False): "c"}
+    checks["rules_13_3_first_match"] = all(interpret_13_3(vv(*k))["rule"] == v for k, v in cases.items())
+    rep_p = IN.p_report()                                # the REAL Phase P sets: structural numbers vs the supplement
+    real_sets = {n: set(IN.read_set(n, rep_p).pair_id.astype(str)) for n in E2_SETS}
+    supp = json.loads(ADD3_JSON.read_text()).get("supplement") or {}
+    cov_real, cls, bad_real = structural_e2(IN, rep_p, ctx["S"], real_sets, supp)
+    checks["coverage_and_classes_equal_prereg"] = not bad_real
+    cov_syn, _, _ = structural_e2(IN, rep_p, ctx["S"], ctx["sets"], None)
+    ref0 = {r: ref_set(ctx["tests"][r], r) for r in E2_RUNGS}
+    common = ctx["sets"][COMMON2]
+    drop = sorted(x for x in ref0["g2"] if x[1] in common)[0]
+    bad_ref = dict(ref0, g2=ref0["g2"] - {drop})
+    checks["common_gate_detects_a_missing_pair"] = _expect_stop(lambda: common_lists(bad_ref, common, E2_RUNGS))
+    res = run_e2(EV, ctx, P, rep, means, SELFTEST2, cov_syn, cls, verb, figures)
+    S, Y, MI, verdict = ctx["S"], ctx["Y"], res["MI"], res["verdict"]
+    vd = verdict.get("dft|SH|REP") or {}
+    checks["goal_passes_for_the_exact_model"] = bool(vd.get("passed") and vd.get("surely_passed"))
+    checks["g2_fails_with_noise"] = not any(verdict[f"g2|{a}|REP"]["passed"] for a in ARMS)
+    checks["interpretation_rule_b"] = res["interp"]["rule"] == "b" and res["interp"]["conclusion_ko"] == RULES_13_3[1][2]
+    Cm = res["Cmp"]
+    c = Cm[(Cm.comparison == RUNG_PAIRS2[1][2]) & (Cm.arm_b == "SH") & (Cm.model_b == "AW") & (Cm["eval"] == "P_main")
+           & (Cm.target == "oi")]
+    checks["rung_compare_sign_P012"] = bool(len(c) == 1 and c.d.iloc[0] > 0 and c.mae_b.iloc[0] == 0.0
+                                            and c.pair_set.iloc[0] == COMMON2)
+    pids = [p for _, p in res["ref"]["g2"] if S.at[p, "in_P_main"] and S.at[p, "pos"] == "p"]
+    want = float(np.mean(np.abs(Y.loc[pids, "dd_cpcm"].to_numpy(float))))
+    got = MI[("g2", "SH", "null", "own", "cpcm", "P_main", "p")]["mae"]
+    checks["null_para_mae_is_mean_abs_y_g2"] = bool(abs(got - want) <= 1e-12)
+    n_rows = len(ARMS) * len(SPLIT_MODELS) * len(SAME_TS_COLS) * len(PRIMARY9) * 2 * (1 + len(SAME_TS_CLASSES))
+    checks["same_ts_rows_complete"] = bool(len(res["ST"]) == n_rows)
+    checks["line_equals_sh_baseline"] = bool(all(v["sh_base_max_abs"] <= 1e-12 and v["s_rows_with_baseline"] == 0
+                                                 for v in res["line_check"].values()))
+    g = res["goal"]
+    checks["goal_rows_6_rung_arm"] = bool(len(g[(g.level == "rung_arm") & (g.model == "REP")]) == 6
+                                          and (g.level == "13-3").sum() == 1)
+    # E2-14 on constructed stage-1 records: equal -> no problem; a flipped dft verdict or dft REP -> problem / STOP
+    s1 = dict(e1_verdict={f"dft|{a}|REP": dict(passed=bool(verdict[f"dft|{a}|REP"]["passed"]),
+                                                surely_passed=bool(verdict[f"dft|{a}|REP"]["surely_passed"]))
+                          for a in ARMS},
+              e1_representatives={a: {t: rep[("dft", a, t)] for t in TARGETS} for a in ARMS})
+    flip_v = dict(s1, e1_verdict=dict(s1["e1_verdict"], **{"dft|S|REP": dict(
+        passed=not s1["e1_verdict"]["dft|S|REP"]["passed"],
+        surely_passed=s1["e1_verdict"]["dft|S|REP"]["surely_passed"])}))
+    other = "GNN" if rep[("dft", "SH", "oi")] != "GNN" else "AW"
+    flip_r = dict(s1, e1_representatives=dict(s1["e1_representatives"],
+                                              SH=dict(s1["e1_representatives"]["SH"], oi=other)))
+    checks["stage1_dft_rule"] = bool(not _stage1_problems(s1, verdict, rep) and _stage1_problems(flip_v, verdict, rep)
+                                     and _stage1_problems(flip_r, verdict, rep)
+                                     and _stage1_problems(flip_r, rep=rep) and not _stage1_problems(flip_r, verdict))
+    checks["stage1_dft_stop_on_difference"] = bool(_expect_stop(lambda: check_stage1_dft(flip_v, verdict, rep))
+                                                   and check_stage1_dft(s1, verdict, rep)["equal"] is True)
+    # E2-15 on constructed fingerprints, then on the REAL unit jsons present now (no false STOP before the real run)
+    fkeys = (json.loads(ADD3_JSON.read_text()).get("code") or {}).get("fingerprint_keys") or {}
+    ka = dict(fkeys.get("train_atoms") or {})
+    checks["code_fp_rule"] = bool(ka and not _code_fp_problems({"a": ("AW", dict(ka))}, fkeys)
+                                  and _code_fp_problems({"b": ("TF", {**ka, "train_atoms.py": "0" * 64})}, fkeys)
+                                  and _code_fp_problems({"c": ("XGB", dict(ka))}, fkeys)
+                                  and _code_fp_problems({"d": ("GNN", None)}, fkeys))
+    present = [x for x in (unit_name(r, a, m, k) for r in E2_RUNGS for a in ARMS for m in MODELS4 for k in range(NF))
+               if (UNITS / f"{x}.json").is_file()]
+    cfp = {}
+    checks["code_fp_real_units_match"] = bool(present) and not _expect_stop(
+        lambda: cfp.update(code_fingerprints(present)))
+    if figures:
+        figs = [k for k in res["outputs"] if "/figures/" in k]
+        checks["figures_written"] = bool(len(figs) == 12 and all(Path(k).is_file() for k in figs))
+        checks["figL4_has_families"] = bool(res["fams4"])
+    ok = all(checks.values())
+    doc = dict(ok=ok, checks=checks, coverage_prereg_problems=bad_real, synthetic=sinfo,
+               code_fingerprints_real_units=dict(cfp, n_present=len(present)),
+               representatives=rep_json(rep, means), expected_rep={"|".join(k): v for k, v in expect.items()},
+               verdict=verdict, interpretation=res["interp"], gates=res["gates"], line_check=res["line_check"],
+               coverage_real=cov_real, fu2_evaluate=info, outputs=res["outputs"], figL4_families=res["fams4"],
+               env=_env(), evaluate_py_sha256=L.sha256(Path(__file__).resolve()),
+               line_source_sha256=line_source_sha256(), seconds=time.time() - t0,
+               note="synthetic predictions: numbers are not results; checks only (E2-13)")
+    _write_json(SELFTEST2 / "E2_selftest.json", doc)
+    for k, v in checks.items():
+        print(f"[e2-selftest] {k}: {'ok' if v else 'FAIL'}", flush=True)
+    print(f"[e2-selftest] {'all checks passed' if ok else 'FAILED'} ({time.time() - t0:.0f} s) -> {SELFTEST2}",
+          flush=True)
+    return 0 if ok else 3
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="D1-LADDER evaluation (docs/specs/D1LADDER.md 11): e1 | e1-selftest")
-    ap.add_argument("cmd", choices=("e1", "e1-selftest"))
+    ap = argparse.ArgumentParser(description="D1-LADDER evaluation (docs/specs/D1LADDER.md 11, 12): e1 | e1-selftest | "
+                                             "e2 | e2-selftest")
+    ap.add_argument("cmd", choices=("e1", "e1-selftest", "e2", "e2-selftest"))
     ap.add_argument("--stage", type=int, default=1)
     ap.add_argument("--labels", default=str(DEFAULT_LABELS))
     ap.add_argument("--no-figures", action="store_true")
@@ -1585,6 +2640,10 @@ def main(argv=None):
     _need_pandas()
     if a.cmd == "e1":
         return cmd_e1(a.stage, a.labels, figures=not a.no_figures)
+    if a.cmd == "e2":
+        return cmd_e2(a.labels, figures=not a.no_figures)
+    if a.cmd == "e2-selftest":
+        return cmd_selftest_e2(figures=not a.no_figures)
     return cmd_selftest(figures=not a.no_figures)
 
 
