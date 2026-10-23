@@ -920,11 +920,22 @@ def _l5_refs(Tb, Hs, r):
                                       e=sub[f"e_ref{k}_hf_orig_eh"].to_numpy(float))))
     if r != "dft":
         emin = pd.concat(long).groupby("key").e.min()
+        # g2 built with P20 option (c) (inputs.py --g2-cons-own, P_build_g2.json g2_q_keys == 'own', decision
+        # 2026-10-23): rows of constrained keys ('|fixed:' suffix, constrained rows only) keep their own reference
+        own_mode = r == "g2" and (read_json(L.RES / "P_build_g2.json") or {}).get("g2_q_keys") == "own"
+        out["g2_cons_own"] = bool(own_mode)
         for k in (1, 2):
             sub = Tb[np.isfinite(Tb[f"e_ref{k}_hf_orig_eh"].to_numpy(float))]
-            d = maxdiff(sub[f"e_ref{k}_hf_eh"].to_numpy(float), emin.loc[sub[f"ref{k}_key"].astype(str)].to_numpy(float))
+            keys = sub[f"ref{k}_key"].astype(str)
+            cons = keys.str.contains("|fixed:", regex=False).to_numpy() if own_mode else np.zeros(len(sub), bool)
+            new = sub[f"e_ref{k}_hf_eh"].to_numpy(float)
+            d = maxdiff(new[~cons], emin.loc[keys[~cons]].to_numpy(float))
             out[f"new{k}_vs_key_min"] = d
             ok &= d == 0.0
+            if own_mode:
+                dc = maxdiff(new[cons], sub[f"e_ref{k}_hf_orig_eh"].to_numpy(float)[cons])
+                out[f"new{k}_constrained_own_vs_orig"] = dict(n=int(cons.sum()), max_abs=dc)
+                ok &= dc == 0.0
     else:
         for k in (1, 2):
             sub = Tb[np.isfinite(Tb[f"e_ref{k}_hf_orig_eh"].to_numpy(float))]
