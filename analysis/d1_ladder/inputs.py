@@ -138,6 +138,10 @@ Review fixes 2026-10-23 (FIXER; every judgment = the recommended option, user 20
       reference geometry; using it for g2 puts DFT-only information into the g2 H values. That is a method question
       not settled by the spec (spec 16 '언제든'): build g2 STOPs while any g2 row sits in a constrained key, unless the
       user chose the spec-literal Q-2 keys (--g2-q-keys, recorded in the fingerprint and the report).
+      Decision 2026-10-23 (user: every judgment = the recommended option; ADD3 10 left it to the supplement): option
+      (c) --g2-cons-own: g2 rows in constrained keys are never replaced (each reaction keeps its own G2 constrained
+      dipole reference, as at deployment; no DFT-derived state used); non-constrained keys take the per-key minimum.
+      Mode recorded as fingerprint / report g2_q_keys = 'own' (True = spec-literal Q-2 keys).
   P21 g2 H_report output key (review P-1): D1-G2 keys its outputs by its own worktree's absolute path; matched by the
       repo-relative path (exactly one entry).
   P22 build currency (review P-6 / P-8): pairs and the loader accept a build only if its fingerprint (inputs + code,
@@ -803,8 +807,15 @@ def ref_graphs(rung, A):
     return rep
 
 
+def _g2_mode(g2_q_keys):
+    """P20 mode: False (none chosen), True (spec-literal Q-2 keys) or 'own' (option (c): constrained rows kept)."""
+    return "own" if g2_q_keys == "own" else bool(g2_q_keys)
+
+
 def refs_min(rung, Hq, rep_out=None, g2_q_keys=False):
-    """P6: replacements of a g rung: per Q-2 key the lowest rung HF reference energy -> (override, prov, report)."""
+    """P6: replacements of a g rung: per Q-2 key the lowest rung HF reference energy -> (override, prov, report).
+    g2 with g2_q_keys == 'own' (P20 option (c)): rows in constrained keys are never replaced."""
+    own = rung == "g2" and g2_q_keys == "own"
     Q = _Q()
     if Path(Q.LAD_KEYS) != Q_KEYS:
         raise _Stop(f"refs_q.LAD_KEYS {Q.LAD_KEYS} != {Q_KEYS}")
@@ -835,14 +846,15 @@ def refs_min(rung, Hq, rep_out=None, g2_q_keys=False):
     ov, prov = {}, {}
     for r in A.itertuples(index=False):
         j, k = r.job_id, int(r.frag)
-        rep_ = r.dev_kcal > 0
+        rep_ = r.dev_kcal > 0 and not (own and bool(r.constrained))
         prov[(j, k)] = dict(src="min" if rep_ else "own", src_job=r.src_job if rep_ else j,
                             src_frag=int(r.src_frag) if rep_ else k, key=r.key, e_orig=float(r.e_eh),
                             e_new=float(r.e_min_eh) if rep_ else float(r.e_eh))
         if rep_:
             ov.setdefault(j, {})[k] = float(r.e_min_eh)
-    rm = A.dev_kcal > 0
-    rep = dict(source=str(Q_KEYS), sha256=L.sha256(Q_KEYS), rule=DECISIONS["P6_g_refs"],
+    rm = (A.dev_kcal > 0) & ~(A.constrained.astype(bool) & own)
+    rep = dict(source=str(Q_KEYS), sha256=L.sha256(Q_KEYS), rule=DECISIONS["P6_g_refs"], g2_mode=_g2_mode(g2_q_keys),
+               n_constrained_kept_own=int(((A.dev_kcal > 0) & A.constrained.astype(bool)).sum()) if own else 0,
                n_fragments_with_energy=int(len(A)), n_keys=int(A.key.nunique()),
                n_keys_multi_row=int((A.groupby("key").size() >= 2).sum()),
                n_fragments_replaced=int(rm.sum()), n_jobs_replaced=len(ov),
@@ -1016,7 +1028,7 @@ def _fingerprint(rung, accept, g2_q_keys=False):
         files += [G2_RES / "F_report.json", G2_RES / "H_report.json"]
     fp = {str(p): _sha(p) for p in files}
     fp["accept_f0_stop"] = bool(accept) if rung == "dft" else None
-    fp["g2_q_keys"] = bool(g2_q_keys) if rung == "g2" else None
+    fp["g2_q_keys"] = _g2_mode(g2_q_keys) if rung == "g2" else None
     fp["code_version"] = CODE_VERSION
     return fp
 
@@ -1138,7 +1150,7 @@ def cmd_build(rung, force=False, accept_f0_stop=False, g2_q_keys=False):
         if code == 3:
             return _stop_report(rp, rep, why, 3)
         return 2
-    rep["g2_q_keys"] = bool(g2_q_keys) if rung == "g2" else None
+    rep["g2_q_keys"] = _g2_mode(g2_q_keys) if rung == "g2" else None
     if not force and rp.is_file():
         try:
             o = json.loads(rp.read_text())
@@ -1803,12 +1815,16 @@ def main(argv=None):
     b.add_argument("--force", action="store_true")
     b.add_argument("--accept-f0-stop", action="store_true", help="only after a user decision on the F0 STOP (P16)")
     b.add_argument("--g2-q-keys", action="store_true", help="g2 only, after a user decision on P20 (spec-literal Q-2 keys)")
+    b.add_argument("--g2-cons-own", action="store_true",
+                   help="g2 only, P20 option (c): constrained-key rows keep their own G2 reference (decision 2026-10-23)")
     a = sub.add_parser("pa")
     a.add_argument("rung", choices=RUNG_ORDER)
     sub.add_parser("pairs")
     o = ap.parse_args(argv)
     if o.cmd == "build":
-        return cmd_build(o.rung, o.force, o.accept_f0_stop, o.g2_q_keys)
+        if o.g2_q_keys and o.g2_cons_own:
+            ap.error("--g2-q-keys and --g2-cons-own exclude each other")
+        return cmd_build(o.rung, o.force, o.accept_f0_stop, "own" if o.g2_cons_own else o.g2_q_keys)
     if o.cmd == "pa":
         return cmd_pa(o.rung)
     if o.cmd == "pairs":
