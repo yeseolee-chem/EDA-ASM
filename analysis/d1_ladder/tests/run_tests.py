@@ -229,7 +229,8 @@ DECISIONS = {
     "C-21": "SH non-vacuity on the model part alone too",
     "C-22": "L-4 child imports the trainer first; inputs.check_paths roots corrected",
     "C-23": "L-7 SH through fit_sh (epoch_batches / loss_sh spies)",
-    "C-24": "L-5 reference energies vs labels_d1_hf / key minimum / Q source",
+    "C-24": "L-5 reference energies vs labels_d1_hf / key minimum / Q source (g2 P20 own: constrained rows = orig)",
+    "C-25": "smoke guard = this process writes nothing under $LAD/units (audit hook); dir diff = concurrent training (info)",
 }
 RANK = {"skipped": 0, "pass": 1, "waiting": 2, "pending": 3, "error": 4, "fail": 5}
 
@@ -418,6 +419,69 @@ def _units_snapshot():
     if not u.is_dir():
         return None
     return sorted((e.name, e.stat().st_size, e.stat().st_mtime_ns) for e in os.scandir(u))
+
+
+class _UnitWrites:
+    """C-25 (2026-10-23): the smoke guard 'smoke never writes $LAD/units' judged on THIS process's own writes (audit
+    hook: open with a write mode / O_CREAT, rename / replace / remove / mkdir under $LAD/units), not on the whole
+    directory, because stage-1 training writes units there at the same time (the old before == after snapshot test
+    failed on those concurrent writes; it is still recorded as units_dir_unchanged, information only)."""
+    WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+    def __init__(self):
+        self.on, self.hits, self.installed = False, [], False
+        self.root = os.path.realpath(str(L.LAD / "units"))
+
+    def _under(self, p):
+        try:
+            return os.path.realpath(os.fsdecode(p)).startswith(self.root + os.sep) or \
+                os.path.realpath(os.fsdecode(p)) == self.root
+        except (TypeError, ValueError):
+            return False
+
+    def hook(self, ev, args):
+        if not self.on:
+            return
+        try:
+            if ev == "open" and len(args) >= 3:
+                p, mode, flags = args[0], args[1], args[2]
+                w = (isinstance(mode, str) and any(c in mode for c in "wax+")) or \
+                    (isinstance(flags, int) and bool(flags & self.WRITE_FLAGS))
+                if w and isinstance(p, (str, bytes, os.PathLike)) and self._under(p):
+                    self.hits.append(("open", os.fsdecode(p)))
+            elif ev in ("os.rename", "os.replace", "os.remove", "os.rmdir", "os.mkdir", "shutil.rmtree", "shutil.move"):
+                for p in args[:2]:
+                    if isinstance(p, (str, bytes, os.PathLike)) and self._under(p):
+                        self.hits.append((ev, os.fsdecode(p)))
+        except Exception:                                              # noqa: BLE001 (never break the test run)
+            pass
+
+    def start(self):
+        if not self.installed:
+            sys.addaudithook(self.hook)
+            self.installed = True
+        self.hits, self.on = [], True
+
+    def stop(self):
+        self.on = False
+        return list(self.hits)
+
+
+UNIT_WRITES = _UnitWrites()
+
+
+def _smoke_units_verdict(res, before, after):
+    """C-25: fail only on writes by this process under $LAD/units; the directory diff is information."""
+    hits = UNIT_WRITES.stop()
+    res["units_dir_unchanged"] = before == after
+    if before != after and before is not None and after is not None:
+        b, a = {x[0]: x for x in before}, {x[0]: x for x in after}
+        res["units_dir_changed_by_others"] = sorted(n for n in set(a) | set(b) if a.get(n) != b.get(n))[:40]
+    res["units_written_by_smoke"] = hits[:40]
+    res["units_guard"] = "C-25: this process's writes under $LAD/units (audit hook); directory diff = concurrent training"
+    if hits:
+        res["status"] = "fail"
+    return res
 
 
 def _rmtree(p):
@@ -1947,6 +2011,7 @@ def l11_xgb(ctx):
 def smoke_atoms(ctx):
     TA, F, Mo, torch = ctx.TA, ctx.F, ctx.Mo, ctx.torch
     before = _units_snapshot()
+    UNIT_WRITES.start()                                    # C-25
     ready = [r for r in STAGE1 if ctx.state["rungs"][r]["status"] == "ready"]
     if len(ready) == len(STAGE1):
         rc = TA.cmd_smoke(1, str(ctx.labels))
@@ -1980,15 +2045,13 @@ def smoke_atoms(ctx):
         res = dict(status="fail" if not ok else "waiting", mode="partial (same run_unit settings as cmd_smoke) on the "
                    "ready rungs", ready=ready, waiting_for=waits, configs=cf)
     after = _units_snapshot()
-    res["units_dir_unchanged"] = before == after
-    if not res["units_dir_unchanged"]:
-        res["status"] = "fail"
-    return res
+    return _smoke_units_verdict(res, before, after)        # C-25
 
 
 def smoke_xgb(ctx):
     TX = ctx.TX
     before = _units_snapshot()
+    UNIT_WRITES.start()                                    # C-25
     ready = [r for r in STAGE1 if ctx.state["rungs"][r]["status"] == "ready"]
     if len(ready) == len(STAGE1):
         rc = TX.cmd_smoke(1, str(ctx.labels))
@@ -2017,10 +2080,7 @@ def smoke_xgb(ctx):
         res = dict(status="fail" if not ok else "waiting", mode="partial (cells first + last, = cmd_smoke) on the ready "
                    "rungs", ready=ready, waiting_for=waits, configs=cf)
     after = _units_snapshot()
-    res["units_dir_unchanged"] = before == after
-    if not res["units_dir_unchanged"]:
-        res["status"] = "fail"
-    return res
+    return _smoke_units_verdict(res, before, after)        # C-25
 
 
 # ================================================================ parts and merge
