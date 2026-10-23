@@ -972,7 +972,12 @@ def _f0_ready(rep, accept):
     return 0, ""
 
 
-def _g2_ready(rep):
+G2_F_DECISION = G2_RES / "F_DECISION.md"            # D1-G2 F gate STOP accepted as a deviation (2026-10-23)
+
+
+def _g2_ready(rep, accept=False):
+    """accept (--accept-g2f-stop, decision 2026-10-23: every judgment = the recommended option): a D1-G2 F_report STOP
+    whose only reason is the F gate failure rate passes when G2_F_DECISION is committed; recorded in g2_gates."""
     fr, hr = G2_RES / "F_report.json", G2_RES / "H_report.json"
     info = {}
     for p in (fr, hr):
@@ -980,6 +985,13 @@ def _g2_ready(rep):
             return 2, f"{p} missing (D1-G2 Phase F / H not finished)"
         r = json.loads(p.read_text())
         info[p.name] = dict(complete=r.get("complete"), stop=r.get("stop"), sha256=L.sha256(p))
+        reasons = [str(x) for x in (r.get("stop_reasons") or [])]
+        if p == fr and r.get("complete") and r.get("stop") and accept and reasons and \
+                all(x.startswith("F gate failure rate") for x in reasons) and G2_F_DECISION.is_file() and \
+                _committed(G2_F_DECISION):
+            info["F_stop_accepted"] = dict(stop_reasons=reasons, decision=str(G2_F_DECISION),
+                                           decision_sha256=L.sha256(G2_F_DECISION))
+            continue
         if not r.get("complete") or r.get("stop"):
             return (3 if r.get("stop") else 2), f"{p.name}: complete {r.get('complete')}, stop {r.get('stop')}"
         if p == hr:
@@ -1027,7 +1039,7 @@ def _fingerprint(rung, accept, g2_q_keys=False):
     if rung == "g2":
         files += [G2_RES / "F_report.json", G2_RES / "H_report.json"]
     fp = {str(p): _sha(p) for p in files}
-    fp["accept_f0_stop"] = bool(accept) if rung == "dft" else None
+    fp["accept_f0_stop"] = bool(accept) if rung in ("dft", "g2") else None    # g2: --accept-g2f-stop
     fp["g2_q_keys"] = _g2_mode(g2_q_keys) if rung == "g2" else None
     fp["code_version"] = CODE_VERSION
     return fp
@@ -1043,7 +1055,7 @@ def _ready(rung, rep, accept):
         if c:
             return c, why
         if rung == "g2":
-            return _g2_ready(rep)
+            return _g2_ready(rep, accept)
     return 0, ""
 
 
@@ -1815,6 +1827,8 @@ def main(argv=None):
     b.add_argument("--force", action="store_true")
     b.add_argument("--accept-f0-stop", action="store_true", help="only after a user decision on the F0 STOP (P16)")
     b.add_argument("--g2-q-keys", action="store_true", help="g2 only, after a user decision on P20 (spec-literal Q-2 keys)")
+    b.add_argument("--accept-g2f-stop", action="store_true",
+                   help="g2 only: accept the D1-G2 F gate STOP recorded in analysis/d1_g2/results/F_DECISION.md")
     b.add_argument("--g2-cons-own", action="store_true",
                    help="g2 only, P20 option (c): constrained-key rows keep their own G2 reference (decision 2026-10-23)")
     a = sub.add_parser("pa")
@@ -1824,7 +1838,10 @@ def main(argv=None):
     if o.cmd == "build":
         if o.g2_q_keys and o.g2_cons_own:
             ap.error("--g2-q-keys and --g2-cons-own exclude each other")
-        return cmd_build(o.rung, o.force, o.accept_f0_stop, "own" if o.g2_cons_own else o.g2_q_keys)
+        if (o.accept_g2f_stop and o.rung != "g2") or (o.accept_f0_stop and o.rung != "dft"):
+            ap.error("--accept-f0-stop is for dft, --accept-g2f-stop for g2")
+        return cmd_build(o.rung, o.force, o.accept_f0_stop or o.accept_g2f_stop,
+                         "own" if o.g2_cons_own else o.g2_q_keys)
     if o.cmd == "pa":
         return cmd_pa(o.rung)
     if o.cmd == "pairs":
