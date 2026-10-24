@@ -38,6 +38,17 @@ T-2  $G3/t2/root/<rxn_id> = byte copies of ts.xyz / rel1.xyz / rel2.xyz of 3 $LA
      (<= 1e-8; D1-G2 T-1 precedent) and token sha256 vs analysis/d1_ladder/results/F0_tokens_manifest.csv -> results/T_2.json
 T-3  the D1-HF g2 path with D1HF_G2_ROOT = $LAD/dft_final (read only) for T00003, T00019, T00614: parse_rxn(T, 'g2') vs
      analysis/d1_hf/results/labels_d1_hf.parquet geom=dft (<= 1e-6 kcal/mol) -> results/T_3.json
+U-1  (user 2026-10-25; decisions U-2f-1 .. U-2f-6) new ts.g3h / ts.g3r units were stopped; opt.py select /
+     assemble write results/U1_selection.json (the complete P_012 para pairs = ts.g3r ok for a and b), an
+     O_report.json 'u1' block and the marker .fail_stopped_user (O_status 'stopped_user', reason U-1) for every
+     (method, rxn) outside the selection (all of g3h). Phase F then runs for g3r only, on the .done reactions of
+     $G3/g3r_final (= selected and assembled ok); a method without selected reactions (g3h) is skipped by g / f / h / p
+     with exit 0 and the record 'stopped_user (U-1)' in its F_steps json (no folder, table or P_build of it is
+     written). The scope test comes after the environment check and the Phase O / U-1 preconditions (their exit 2 / 3
+     still apply) and before the T check, so a g3h step exits 0 whatever the T-2 / T-3 state; 'A' / 'all' / array
+     indices keep working (the g3h element exits 0 under those conditions). The spec 12 F rule (> 5 %) is
+     counted on the g3r base (~15 reactions: one failure = 6.7 % = STOP; U-2f-3). F / E results of this subset are
+     explanatory (설명용). Without a 'u1' block in O_report.json everything here is the spec as written.
 
 CLI (exit 0 = done, 2 = not ready / incomplete (resubmit later), 3 = STOP (spec 12) or hard error; every command except
 the T checks writes results/F_steps/<step>.json; a rerun overwrites its own record):
@@ -55,7 +66,13 @@ the T checks writes results/F_steps/<step>.json; a rerun overwrites its own reco
 Preconditions checked by g / f / h / p: results/T_2.json and T_3.json passed with the current code (sha256 of CODE_REL),
 results/S_rxns.csv = S_report.json outputs, results/O_report.json complete and not stop with O_status.csv / O_refs.csv
 unchanged and its ok rows = the .done markers (decision F-14: missing / incomplete = exit 2, stop = exit 3), every Part A
-reaction has a Phase O marker in $G3/<m>_final (else exit 2). The F step records the feature root it ran on
+reaction has a Phase O marker in $G3/<m>_final (else exit 2). Under U-1 (decision U-2f-2) .fail_stopped_user markers and
+O_status 'stopped_user' rows are valid Phase O markers; O_report u1.selection_sha256 must equal the current
+U1_selection.json sha256 and the selection must equal the U-1 rule recounted on the ts.g3r unit files (else exit 2:
+rerun select / assemble; no selection_sha256 = exit 3); U1_selection.json without a 'u1' block = exit 2 (rerun
+assemble; same rule as apply.py / g3_eval.py); the selection must match S_pairs.csv / Part A and the stopped markers,
+stopped rows and .done markers must agree with it (else exit 3). The T check applies to in-scope methods only
+(U-2f-1). The F step records the feature root it ran on
 ($G3/F_<m>/root_fp.json = sha256 of every base G folder's result.json); a changed root moves the F outputs of m aside and
 recomputes them (decision F-15). The T-2 / T-3 work folders carry the code sha256 they were made with; another code
 moves them aside (decision F-16).
@@ -75,22 +92,36 @@ because their default log folders are the read-only d1_pair / d1_hf scratch):
        --kill-on-invalid-dep=yes jobs/g.slurm ../d1_g3/feat.py t2_f)
   JT3=$(cd ../d1_hf && sbatch --parsable -p cpu1,cpu2 -J g3_t3 --time=48:00:00 --cpus-per-task=3 --mem=16G \
        --output=$L/%x_%j.out --dependency=afterok:${JS:?} --kill-on-invalid-dep=yes jobs/hf.slurm ../d1_g3/feat.py t3)
-  # Phase F (after opt.py assemble JA exited 0 = O complete, no STOP): 6 tasks. G and H start together; F waits for
-  # G; P + report wait for F and H.
-  JG=$(sbatch --parsable -p cpu1,cpu2 -J g3_G --time=48:00:00 --cpus-per-task=16 --mem=32G --output=$L/%x_%j.out \
-       --export=ALL,G3ENV=d1 --dependency=afterok:${JA:?} --kill-on-invalid-dep=yes jobs/g3.slurm feat.py g all)
-  JH=$(cd ../d1_hf && sbatch --parsable -p cpu1,cpu2 -J g3_H --time=48:00:00 --cpus-per-task=48 --mem=180G \
-       --array=0-1 --output=$L/%x_%A_%a.out --dependency=afterok:${JA:?} --kill-on-invalid-dep=yes \
-       jobs/hf.slurm ../d1_g3/feat.py h A)
-  JF=$(cd ../d1_pair && sbatch --parsable -p cpu1,cpu2 -J g3_F --time=48:00:00 --cpus-per-task=32 --mem=64G \
-       --array=0-1 --output=$L/%x_%A_%a.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F --dependency=afterok:${JG:?} \
-       --kill-on-invalid-dep=yes jobs/g.slurm ../d1_g3/feat.py f @I)
+  # Phase F under U-1 (decision U-2f-1: g3r only), after the LAST opt.py assemble JA exited 0 (O complete for the
+  # U-1 selection, no STOP): 7 tasks. The U-1 edit of this file changed the T code sha256 (CODE_REL), so T-2 / T-3 run
+  # again first (F-10 / F-16, decision U-2f-6); while they run T_2 / T_3.json say 'running' and opt.py work / assemble
+  # exit 2, so nothing of Phase O may start between JA and JT2F / JT3. G and H wait for both T checks; F waits for G;
+  # P + report wait for F and H. (Before U-1: 'g all', 'h A' / 'f @I' with --array=0-1 and 'p g3h ;;; p g3r ;;; report';
+  # those forms still work, their g3h parts exit 0 as 'stopped_user (U-1)', but cost submit slots. g.slurm turns '@I'
+  # into 0 = g3h without --array, so name g3r.)
+  JT2G=$(sbatch --parsable -p cpu1,cpu2 -J g3_t2g --time=48:00:00 --cpus-per-task=3 --mem=8G --output=$L/%x_%j.out \
+       --export=ALL,G3ENV=d1 --dependency=afterok:${JA:?} --kill-on-invalid-dep=yes jobs/g3.slurm feat.py t2_g)
+  JT2F=$(cd ../d1_pair && sbatch --parsable -p cpu1,cpu2 -J g3_t2f --time=48:00:00 --cpus-per-task=8 --mem=32G \
+       --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F --dependency=afterok:${JT2G:?} \
+       --kill-on-invalid-dep=yes jobs/g.slurm ../d1_g3/feat.py t2_f)
+  JT3=$(cd ../d1_hf && sbatch --parsable -p cpu1,cpu2 -J g3_t3 --time=48:00:00 --cpus-per-task=3 --mem=16G \
+       --output=$L/%x_%j.out --dependency=afterok:${JA:?} --kill-on-invalid-dep=yes jobs/hf.slurm ../d1_g3/feat.py t3)
+  JG=$(sbatch --parsable -p cpu1,cpu2 -J g3_G --time=48:00:00 --cpus-per-task=4 --mem=16G --output=$L/%x_%j.out \
+       --export=ALL,G3ENV=d1 --dependency=afterok:${JT2F:?}:${JT3:?} --kill-on-invalid-dep=yes \
+       jobs/g3.slurm feat.py g g3r)
+  JH=$(cd ../d1_hf && sbatch --parsable -p cpu1,cpu2 -J g3_H --time=48:00:00 --cpus-per-task=16 --mem=64G \
+       --output=$L/%x_%j.out --dependency=afterok:${JT2F:?}:${JT3:?} --kill-on-invalid-dep=yes \
+       jobs/hf.slurm ../d1_g3/feat.py h g3r)
+  JF=$(cd ../d1_pair && sbatch --parsable -p cpu1,cpu2 -J g3_F --time=48:00:00 --cpus-per-task=16 --mem=64G \
+       --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F --dependency=afterok:${JG:?} \
+       --kill-on-invalid-dep=yes jobs/g.slurm ../d1_g3/feat.py f g3r)
   JP=$(sbatch --parsable -p cpu1,cpu2 -J g3_P --time=48:00:00 --cpus-per-task=2 --mem=16G --output=$L/%x_%j.out \
        --export=ALL,G3ENV=reactot --dependency=afterok:${JF:?}:${JH:?} --kill-on-invalid-dep=yes \
-       jobs/g3.slurm feat.py p g3h ';;;' feat.py p g3r ';;;' feat.py report)
-Sizes: G ~2 x 200 serial xTB Freq (G0: 0.5 s - 1 min each); F per method 1 runroot slice + atoms on 32 cores (D1PAIR:
-8,433 reactions in 8 x 32 cores x 2-4 min); H per method ~200 x 5 serial HF single points (D1-HF pilot median 0.106
-core-h per reaction, %maxcore 3500: 48 workers = the D1-G2 Phase H job size 48 cores / 180 GB); P 2 cores.
+       jobs/g3.slurm feat.py p g3r ';;;' feat.py report)
+Sizes: (U-1, g3r base ~15 reactions) G ~15 serial xTB Freq (G0: 0.5 s - 1 min each); F 1 runroot slice + atoms (D1PAIR:
+8,433 reactions in 8 x 32 cores x 2-4 min; T-2: 3 reactions on 8 cores); H ~15 x 5 serial HF single points (D1-HF pilot
+median 0.106 core-h per reaction, %maxcore 3500 MB per worker: 16 workers / 64 GB); P 2 cores. Spec plan (~200
+reactions per method): G 16 cores, H 48 cores / 180 GB, F 32 cores / 64 GB.
 Resubmission (every step idempotent, writes atomic): a step that exited 2 or died -> the same line without
 --dependency (G: finished folders skipped; F: slice / merge / atoms cached; H: run.py skips .done reactions and good
 outputs; P / report recompute). Exit 3 = STOP: read results/F_steps/<step>.json (fail_stage, fail) and report.
@@ -146,6 +177,12 @@ G_STATUS = C.RES / "F_G_status.csv"
 T2_JSON, T3_JSON = C.RES / "T_2.json", C.RES / "T_3.json"
 T2_DIR, T3_DIR = C.G3 / "t2", C.G3 / "t3"
 O_REPORT, O_STATUS, O_REFS = C.RES / "O_report.json", C.RES / "O_status.csv", C.RES / "O_refs.csv"   # opt.py (F-14)
+U1_SEL = C.RES / "U1_selection.json"                    # opt.py select (U-1, user 2026-10-25; U-2f-2)
+U1_MARK, U1_STATUS = ".fail_stopped_user", "stopped_user"   # opt.py assemble: (method, rxn) outside the U-1 selection
+U1_TEXT = "stopped_user (U-1)"
+U1_METHOD = "g3r"                                       # U-1: the selection is made from the g3r TS units only
+UNITS = C.G3 / "O" / "units"                            # opt.py unit.json files (read only; U-1 rule recount)
+RE_SHA = re.compile(r"[0-9a-f]{64}")
 G_BUDGET_GB = float(os.environ.get("D1G3_G_BUDGET_GB", "2"))   # G-step bytes kept per run (G0-6 rule, F-2)
 CODE_MARK = "code_sha256.txt"                                   # T work folder code stamp (F-16)
 T2_RXN = [1000003, 1000019, 1000614]                    # = D1-G2 T3_JOBS (Br, Si, g1_rec)
@@ -248,6 +285,52 @@ DECISIONS = {
                                        "'지금 코드로 통과'가 기록되지 않게.",
     "F-12 quota": "G 폴더는 work/ts.inp, ts.out.gz, ts.hess만 남긴다(.gbw 등은 노드 로컬 작업 폴더와 함께 지움); HF는 run.py "
                   "규칙(.inp, .out.gz, .err.gz; .gbw·.tmp·.densities는 복사하지 않음).",
+    "U-2f-1 U-1 scope": "사용자 결정 2026-10-25(1: ts.g3h·ts.g3r 신규 제출 중단, 완료분 보존; 5: g3r 완료 반응으로 완성되는 "
+                        "P_012 para 짝만 F·E 진행, 설명용): Phase F 범위 = O_report.json 'u1' 블록과 results/"
+                        "U1_selection.json(opt.py select)이 정한 방법·반응. g3r 기준 집합 = $G3/g3r_final의 .done(= 완성 짝 "
+                        "(ts.g3r a·b 둘 다 unit.json ok)의 반응 중 assemble ok). 선택 반응이 없는 방법(g3h 전부)은 g / f / "
+                        "h / p가 폴더·표·P_build를 만들지 않고 단계 기록(F_steps/<step>.json의 u1 = 'stopped_user (U-1)')만 "
+                        "남긴 채 exit 0으로 끝난다. 순서: 환경 검사 -> Part A -> Phase O 전제(F-14, U-2f-2) -> 범위 판정 "
+                        "-> T 검사(need_t)는 범위 안 방법에만. 그래서 g3h는 T-2·T-3 상태(stale·running)와 무관하게 exit 0이고, "
+                        "환경이 틀리거나 Phase O·U-1 전제가 미충족이면 그 규칙대로 exit 2·3이다(범위 자체를 믿을 수 없음). "
+                        "'A'·'all'·배열 번호 형식은 그대로 동작한다(g3h 원소 = 위 조건에서 exit 0). O_report에 'u1' 블록이 "
+                        "없으면 명령서 그대로(F-3, F-14 변경 없음).",
+    "U-2f-2 U-1 precondition": "F-3·F-14를 U-1에 맞춘다: .fail_stopped_user 표지와 O_status 'stopped_user'(reason U-1) "
+                               "행은 유효한 Phase O 표지다(Phase O 실패도 F gate 실패도 아님; base_of는 n_stopped_user로 "
+                               "따로 센다). 추가 검사: (a) O_report u1.selection_sha256(opt.py가 쓰고 apply.py·g3_eval.py가 "
+                               "비교하는 바로 그 키) = 지금 U1_selection.json의 sha256(키가 없거나 64자리 hex가 아니면 계약 "
+                               "위반 exit 3, 다르면 assemble 뒤 선택이 바뀐 것 = exit 2: select·assemble 다시); 'u1' 블록 "
+                               "없이 U1_selection.json만 있으면 exit 2(assemble 다시; apply.py·g3_eval.py와 같은 규칙); "
+                               "(b) selected_rxns = complete_pairs의 a·b 합집합, 짝은 S_pairs.csv 행"
+                               "(pair_id, a_rxn, b_rxn, class)과 같고 반응은 Part A(아니면 exit 3); (c) complete_pairs = "
+                               "S_pairs 중 $G3/O/units/ts.g3r.<a>, ts.g3r.<b>의 unit.json이 모두 status ok인 짝(U-1 규칙을 "
+                               "unit 파일에서 다시 셈; 다르면 선택이 낡음 = exit 2: select·work sel·assemble 다시); (d) 방법"
+                               "마다 .fail_stopped_user 표지 = O_status stopped_user 행 = Part A − 선택 반응(g3h = Part A "
+                               "전부), .done ⊆ 선택 반응(다르면 exit 3: assemble 뒤 폴더 변경).",
+    "U-2f-3 small base gate": "명령서 12절 F 규칙(기존 gate 실패율 > 5 % = STOP)은 바꾸지 않고 g3r 기준 집합(U-1 선택 중 "
+                              ".done, 약 15반응)에서 센다: n = 15이면 실패 1개 = 6.7 % > 5 % = STOP. G 단계·feature·HF·HF "
+                              "입력 gate 모두 같고, 각 gate에 min_fail_to_stop(실패 수 / n > 0.05가 되는 가장 작은 수)을 "
+                              "적는다. FU2 atoms.py root gate의 ext 규칙(ext 통과율 >= 0.99, 코드 그대로)은 기준 집합이 "
+                              "100반응 미만이면 ext 실패 1개로 ext_used = false가 되어 토큰 배치가 g1과 달라지고 STOP한다"
+                              "(D1PAIR·D1-G2·dft에서 ext 실패율 0.01–0.05 %): 그 경우 STOP 이유에 이 설명을 붙인다. 작은 "
+                              "표본에 맞춰 문턱을 바꾸지 않는다(판정 규칙 불변).",
+    "U-2f-4 P small base": "P는 inputs.py 함수를 그대로 쓴다(F-7). 작은 기준 집합에서 확인한 것(코드 읽기): _read_h(allgeom은 "
+                           "ok 행만 씀), refs_min(refs_q.audit는 에너지가 있는 행만 쓰고 키별 최저값은 rung 안 = g3r 기준 "
+                           "반응 안에서만 고른다; 같은 키 구성원이 적어 교체가 드묾), ref_graphs(그 행만), assemble_rung"
+                           "(len(Hq) > 0), token_info(g1과 num/bin/glob/ext 배치만 비교, 원소 목록은 보고만), make_table"
+                           "(9,266행, usable = 기준 반응만), table_summary — 전체 표본을 가정해 멈추는 곳은 없다. "
+                           "P_build_g3r.json에 u1 블록(범위, 선택 sha256, 기준 수, 설명용)을 적는다. g3h는 P_build·표를 "
+                           "쓰지 않는다.",
+    "U-2f-5 report": "F_report.json 'u1' 블록: 범위 문구, 범위 안 방법(g3r)·stopped_user 방법(g3h), U1_selection.json "
+                     "경로·sha256·완성 짝 수(분류별)·선택 반응 수, O_report 'u1' 블록 사본, 방법별 기준 반응 수와 "
+                     "min_fail_to_stop, explanatory = true(설명용: U-1 완성 짝 부분집합). 방법별 항목에 scope를 두고 "
+                     "g3h는 O 표지 수만 적는다. pairs = S_pairs 전체 짝 기준(이전과 같은 뜻), pairs_u1 = 완성 짝 기준; "
+                     "pairs_usable_all_methods는 범위 안 방법들의 교집합이고 pairs_usable_methods에 그 목록을 적는다.",
+    "U-2f-6 T currency": "U-1 수정으로 feat.py sha256이 바뀌어(CODE_REL) T-2·T-3이 지금 코드 기준 미통과(stale, need_t exit "
+                         "2)가 된다. F-10·F-16은 바꾸지 않고 t2_g -> t2_f, t3를 다시 돌린 뒤 g / h를 시작한다(T 검사 경로 "
+                         "코드는 U-2f로 바뀌지 않았으므로 같은 결과가 기대됨; 이전 통과: 182열 max |차| 0, 토큰 3/3, HF "
+                         "max |차| 0). T 재실행 중에는 T_2/T_3.json이 'running'이라 opt.py work·assemble이 exit 2가 "
+                         "되므로 마지막 assemble 뒤에 돌린다.",
 }
 
 
@@ -358,6 +441,11 @@ def move_aside(p):
     return None
 
 
+def min_fail_to_stop(n):
+    """U-2f-3: the smallest failure count k with k / n > RATE_MAX (the spec 12 F rule as the gates compute it)."""
+    return min((k for k in range(1, int(n) + 1) if k / n > RATE_MAX), default=None) if n else None
+
+
 # ================================================================ code currency, T state
 def code_files():
     f = [C.REPO / r for r in CODE_REL] + sorted((C.REPO / "analysis" / "espley_xtb_repro").glob("*.py")) \
@@ -425,49 +513,152 @@ def part_a(rec=None):
     return out
 
 
-def base_of(m, pa, rec=None, need_complete=True):
+def base_of(m, pa, rec=None, need_complete=True, u1=None):
     """(base = [(rxn_id, job_id)] with $G3/<m>_final/<rxn_id>/.done, O info); need_complete: exit 2 while a Part A
-    reaction has no Phase O marker."""
+    reaction has no Phase O marker. u1 = o_state()['u1'] (U-2f-1 / U-2f-2): a method outside the U-1 selection has an
+    empty base by design (no STOP); .fail_stopped_user markers are counted apart from the Phase O failures."""
     P = paths(m)
     mk = {rid: G0F.marker(P.final / str(rid)) for rid, _ in pa}
     open_ = sorted(r for r, v in mk.items() if v is None)
     base = [(r, T) for r, T in pa if mk[r] == ".done"]
-    info = dict(root=str(P.final), n_part_a=len(pa), n_done=len(base), n_open=len(open_),
-                n_fail=sum(1 for v in mk.values() if v and v != ".done"),
-                fail_markers=dict(Counter(v for v in mk.values() if v and v != ".done").most_common(30)), open=open_[:50])
+    act = bool(u1 and u1.get("active"))
+    out = act and not u1["in_scope"][m]
+    fails = [v for v in mk.values() if v and v not in (".done", U1_MARK)]
+    info = dict(root=str(P.final), n_part_a=len(pa), n_done=len(base), n_open=len(open_), n_fail=len(fails),
+                fail_markers=dict(Counter(fails).most_common(30)), open=open_[:50],
+                n_stopped_user=sum(1 for v in mk.values() if v == U1_MARK),
+                scope=U1_TEXT if out else ("U-1 selection" if act else "Part A"),
+                n_selected=len(u1["selected"][m]) if act else None)
     if rec is not None:
         rec.setdefault("O", {})[m] = info
     if need_complete and open_:
         raise Stop("O", f"{m}: {len(open_)} Part A reactions without a Phase O marker in {P.final} (O not finished)", 2)
-    if need_complete and not base:
+    if need_complete and not base and not out:
         raise Stop("O", f"{m}: no Part A reaction with .done in {P.final}", 3)
     return base, info
 
 
+def unit_status(uid):
+    """status of a Phase O unit ($G3/O/units/<uid>/unit.json, read only); None = no unit.json (stopped / never run)."""
+    return G0F.read_json(UNITS / uid / "unit.json").get("status")
+
+
+def u1_check(r, pa):
+    """decision U-2f-2: the U-1 scope opt.py recorded (O_report.json 'u1' block + results/U1_selection.json) ->
+    dict(active, in_scope {m: bool}, selected {m: [rxn_id]}, selection, problems [(rc, why)]). Without a 'u1' block
+    the spec as written applies (every method, every Part A reaction; F-3 / F-14 unchanged), unless U1_selection.json
+    exists (problem rc 2: assemble not rerun)."""
+    u1 = r.get("u1")
+    if not u1:
+        # same rule as apply.py u1_state / g3_eval.py: a selection file without the block = assemble not rerun yet
+        probs = ([(2, f"{U1_SEL.name} exists but {O_REPORT.name} has no 'u1' block (rerun opt.py assemble; U-2f-2)")]
+                 if r and U1_SEL.is_file() else [])
+        return dict(active=False, in_scope={m: True for m in C.METHODS}, selected=None, selection=None, problems=probs)
+    probs = []
+    out = dict(active=True, method=U1_METHOD, o_report_u1=u1, selection=None, problems=probs,
+               in_scope={m: False for m in C.METHODS}, selected={m: [] for m in C.METHODS})
+    if not U1_SEL.is_file():
+        probs.append((3, f"{U1_SEL} missing although {O_REPORT.name} has a 'u1' block (U-1 contract)"))
+        return out
+    sha = C.sha256(U1_SEL)
+    rec_sha = u1.get("selection_sha256")                  # the key opt.py writes and apply.py / g3_eval.py compare
+    if not (isinstance(rec_sha, str) and RE_SHA.fullmatch(rec_sha)):
+        probs.append((3, "the O_report 'u1' block has no selection_sha256 (U-1 contract)"))
+    elif rec_sha != sha:
+        probs.append((2, f"{U1_SEL.name} sha256 {sha[:16]} != O_report u1.selection_sha256 {rec_sha[:16]} "
+                         f"(selection changed after assemble: rerun opt.py select / work sel / assemble)"))
+    try:
+        sel = C.read_json(U1_SEL)
+        cp = sel["complete_pairs"]
+        selected = sorted({int(x) for x in sel["selected_rxns"]})
+        pairs = {str(p["pair_id"]): (int(p["a_rxn"]), int(p["b_rxn"]), str(p["class"])) for p in cp}
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        probs.append((3, f"{U1_SEL.name}: unreadable complete_pairs / selected_rxns ({type(e).__name__}: {e})"))
+        return out
+    if sel.get("method", U1_METHOD) != U1_METHOD:
+        probs.append((3, f"{U1_SEL.name} method {sel.get('method')!r} != {U1_METHOD} (U-1: g3r only)"))
+    with open(S_PAIRS, newline="") as f:
+        sp = {str(x["pair_id"]): (int(x["a_rxn"]), int(x["b_rxn"]), str(x["class"])) for x in csv.DictReader(f)}
+    pa_ids = {rid for rid, _ in pa}
+    union = sorted({x for a, b, _ in pairs.values() for x in (a, b)})
+    if len(pairs) != len(cp) or selected != union:
+        probs.append((3, f"{U1_SEL.name}: selected_rxns ({len(selected)}) != a / b of the {len(cp)} complete_pairs "
+                         f"({len(union)}; duplicate pair ids {len(cp) - len(pairs)})"))
+    bad = sorted(p for p, v in pairs.items() if sp.get(p) != v)
+    if bad:
+        probs.append((3, f"{U1_SEL.name}: complete_pairs differ from the S_pairs.csv rows (pair_id, a, b, class): "
+                         f"{bad[:10]}"))
+    if set(selected) - pa_ids:
+        probs.append((3, f"{U1_SEL.name}: selected reactions outside Part A {sorted(set(selected) - pa_ids)[:10]}"))
+    ok_ts = {rid for rid in pa_ids if unit_status(f"ts.{U1_METHOD}.{rid}") == "ok"}   # the U-1 rule on the unit files
+    want = sorted(p for p, (a, b, _) in sp.items() if a in ok_ts and b in ok_ts)
+    if sorted(pairs) != want:
+        probs.append((2, f"complete_pairs ({len(pairs)}) != S_pairs with both ts.{U1_METHOD} units ok ({len(want)}): "
+                         f"missing {sorted(set(want) - set(pairs))[:10]}, extra {sorted(set(pairs) - set(want))[:10]} "
+                         f"(selection stale: rerun opt.py select / work sel / assemble)"))
+    out["selected"] = {m: (list(selected) if m == U1_METHOD else []) for m in C.METHODS}
+    out["in_scope"] = {m: bool(out["selected"][m]) for m in C.METHODS}
+    out["selection"] = dict(path=str(U1_SEL), sha256=sha, n_complete_pairs=len(pairs),
+                            n_by_class=dict(Counter(v[2] for v in pairs.values())), n_selected=len(selected),
+                            selected_rxns=selected, complete_pairs=sorted(pairs), n_ts_units_ok=len(ok_ts))
+    return out
+
+
+def in_scope(ost, m):
+    """U-2f-1: False when U-1 is active and method m has no selected reaction (g3h)."""
+    return bool(ost["u1"]["in_scope"][m])
+
+
+def u1_skip(rec, m, ost):
+    """U-2f-1: nothing to do for method m under U-1 (no folder, table or report of m is written) -> exit 0."""
+    s = ost["u1"].get("selection") or {}
+    rec.setdefault("u1", {})[m] = dict(status=U1_TEXT, decision="U-2f-1 U-1 scope",
+                                       selection={k: s.get(k) for k in ("path", "sha256", "n_complete_pairs",
+                                                                        "n_selected")})
+    print(f"[{m}] {U1_TEXT}: no Phase F work for this method (decision U-2f-1)", flush=True)
+    return 0
+
+
 def o_state(pa):
-    """decision F-14: results/O_report.json (opt.py assemble) state and the O_status ok rows vs the .done markers."""
+    """decision F-14: results/O_report.json (opt.py assemble) state and the O_status ok rows vs the .done markers;
+    U-2f-2: the U-1 block (u1) and the stopped_user markers / rows vs the selection (u1_mismatch)."""
     if not O_REPORT.is_file():
-        return dict(present=False, complete=False, stop=False, ok=False, why=f"{O_REPORT} missing (opt.py assemble)")
+        return dict(present=False, complete=False, stop=False, ok=False, why=f"{O_REPORT} missing (opt.py assemble)",
+                    marker_mismatch={}, u1_mismatch={}, u1=u1_check({}, pa))
     r = G0F.read_json(O_REPORT)
     outs = r.get("outputs") or {}
     changed = [str(p) for p in (O_STATUS, O_REFS) if outs.get(str(p)) != (C.sha256(p) if p.is_file() else None)]
     st = dict(present=True, file=str(O_REPORT), sha256=C.sha256(O_REPORT), written=r.get("written"),
               complete=bool(r.get("complete")), stop=bool(r.get("stop")), stop_reasons=r.get("stop_reasons"),
-              changed=changed, marker_mismatch={})
+              changed=changed, marker_mismatch={}, u1_mismatch={})
+    u = st["u1"] = u1_check(r, pa)
     if not changed and O_STATUS.is_file():
         with open(O_STATUS, newline="") as f:
             rows = [x for x in csv.DictReader(f) if x.get("part") == "A"]
+        pa_ids = {rid for rid, _ in pa}
         for m in C.METHODS:
+            mk = {rid: G0F.marker(paths(m).final / str(rid)) for rid in pa_ids}
             ok = {int(x["rxn_id"]) for x in rows if x.get("method") == m and x.get("status") == "ok"}
-            done = {rid for rid, _ in pa if G0F.marker(paths(m).final / str(rid)) == ".done"}
+            done = {rid for rid, v in mk.items() if v == ".done"}
             if ok != done:
                 st["marker_mismatch"][m] = sorted(ok ^ done)[:20]
-    st["ok"] = bool(st["complete"] and not st["stop"] and not changed and not st["marker_mismatch"])
+            if u["active"] and not u["problems"]:          # U-2f-2 (d)
+                sel = set(u["selected"][m])
+                srow = {int(x["rxn_id"]) for x in rows if x.get("method") == m and x.get("status") == U1_STATUS}
+                smk = {rid for rid, v in mk.items() if v == U1_MARK}
+                d = dict(rows_vs_markers=sorted(srow ^ smk)[:20],
+                         markers_vs_selection=sorted(smk ^ (pa_ids - sel))[:20],
+                         done_outside_selection=sorted(done - sel)[:20])
+                if any(d.values()):
+                    st["u1_mismatch"][m] = d
+    st["ok"] = bool(st["complete"] and not st["stop"] and not changed and not st["marker_mismatch"]
+                    and not st["u1_mismatch"] and not u["problems"])
     return st
 
 
 def need_o(rec, pa):
-    """decision F-14: exit 2 while Phase O is unfinished, exit 3 when it ended in a STOP or its folders changed."""
+    """decision F-14: exit 2 while Phase O is unfinished, exit 3 when it ended in a STOP or its folders changed;
+    U-2f-2: the U-1 checks (problems with their own exit code, markers / rows vs the selection = exit 3)."""
     st = o_state(pa)
     rec["O_report"] = st
     if not st["present"]:
@@ -475,12 +666,20 @@ def need_o(rec, pa):
     if st["stop"]:
         raise Stop("O", f"Phase O ended in a STOP ({O_REPORT} stop_reasons {st['stop_reasons']}; spec 12 O: report "
                         f"and wait)", 3)
+    up = st["u1"]["problems"]
+    if any(c == 3 for c, _ in up):
+        raise Stop("U-1", "; ".join(w for c, w in up if c == 3) + " (decision U-2f-2)", 3)
     if not st["complete"] or st["changed"]:
         raise Stop("O", f"Phase O not complete / O_status changed after O_report (complete {st['complete']}, changed "
                         f"{st['changed']}): rerun opt.py assemble", 2)
+    if up:
+        raise Stop("U-1", "; ".join(w for _, w in up) + " (decision U-2f-2)", 2)
     if st["marker_mismatch"]:
         raise Stop("O", f"$G3/<m>_final .done markers != O_status.csv ok rows {st['marker_mismatch']} (folders "
                         f"changed after assemble)", 3)
+    if st["u1_mismatch"]:
+        raise Stop("U-1", f"stopped_user markers / O_status stopped_user rows / .done disagree with {U1_SEL.name} "
+                          f"{st['u1_mismatch']} (decision U-2f-2; folders changed after assemble)", 3)
     return st
 
 
@@ -819,7 +1018,8 @@ def g_scan(m, base):
              stale=stale[:100], by_category=dict(Counter(x["category"] for x in rows)),
              fail_reasons=dict(Counter(x["reason"] for x in fail).most_common(30)),
              fail_rxn={str(x["rxn_id"]): x["reason"] for x in fail},
-             rate=rate, threshold=RATE_MAX, stop=bool(why), stop_reasons=why, complete=n_open == 0 and not stale,
+             rate=rate, threshold=RATE_MAX, min_fail_to_stop=min_fail_to_stop(n),             # U-2f-3
+             stop=bool(why), stop_reasons=why, complete=n_open == 0 and not stale,
              n_imag={"0": ni.get(0, 0), "1": ni.get(1, 0), "2": ni.get(2, 0), ">=3": sum(v for k, v in ni.items() if k >= 3)},
              imag1_cm=G0F.qstats(x["imag1_cm"] for x in done), forming_share=G0F.qstats(x["forming_share"] for x in done),
              n_share_below_0p5=sum(1 for x in done if isinstance(x["forming_share"], (int, float))
@@ -838,17 +1038,24 @@ def cmd_g(spec, retry=False):
 
     def body(rec):
         env_d1(rec)
-        need_t(rec)
         pa = part_a(rec)
-        need_o(rec, pa)
+        ost = need_o(rec, pa)
+        for m in ms:                                       # U-2f-1: methods without U-1 selected reactions
+            if not in_scope(ost, m):
+                u1_skip(rec, m, ost)
+        run_ms = [m for m in ms if in_scope(ost, m)]
+        rec["methods_run"] = run_ms
+        if not run_ms:
+            return 0
+        need_t(rec)                                        # U-2f-1: T only gates methods that do work
         G0F.g2_inputs_check(rec)
         meta = G0F.read_meta()
         mods = G0F.g0_modules(rec)
         lab = labels()
         jobs, bases, not_ready, moved = [], {}, {}, []
-        for m in ms:
+        for m in run_ms:
             try:
-                base, _ = base_of(m, pa, rec)
+                base, _ = base_of(m, pa, rec, u1=ost["u1"])
             except Stop as e:
                 if e.rc != 2:
                     raise
@@ -958,6 +1165,11 @@ def f_summary(m, base, gs=None, grows=None):
                         n_qa_fail_manifest=len(qa_fail), overrides=ov)
         if q.get("stop"):
             stop.append(f"Q gate STOP (atoms.py gate, unchanged): {q.get('stop_reason')}")
+        if q.get("ext_used") is False:                     # U-2f-3: the reason of the token layout STOP below
+            stop.append(f"FU2 Q ext_used false: ext pass rate {q.get('ext_pass_rate')} < {q.get('ext_min_pass')} over "
+                        f"{q.get('n_target')} reactions (below 100 reactions one ext failure is enough); the tokens "
+                        f"then lack mu_abs / f_plus / f_minus and differ from the g1 layout of the trained models "
+                        f"(U-2f-3)")
         want = dict(FU2_X182=str(P.x182), FU2_ATOM_VERSION=P.versions["FU2_ATOM_VERSION"], G1_ROOT=str(P.feat),
                     FU2_SCR=str(P.fu2_scr), FU2_RES=str(P.fu2_res))
         if any(ov.get(k) != v for k, v in want.items()) or q.get("manifest_sha256") != C.sha256(qm):
@@ -999,7 +1211,8 @@ def f_summary(m, base, gs=None, grows=None):
         rate = n_fail / len(ids) if ids else float("nan")
         comp = dict(g_step=len(ids) - len(g_done), features=len(feat_fail), b6=len(b6_fail), q_excluded=len(q_excl),
                     q_a=len(qa_fail), t_bad=len(t_bad))
-        out["gate"] = dict(n_fail=n_fail, n_base=len(ids), rate=rate, threshold=RATE_MAX, components=comp,
+        out["gate"] = dict(n_fail=n_fail, n_base=len(ids), rate=rate, threshold=RATE_MAX,
+                           min_fail_to_stop=min_fail_to_stop(len(ids)), components=comp,               # U-2f-3
                            component_rates={k: (v / len(ids) if ids else None) for k, v in comp.items()},
                            definition=DECISIONS["F-4 gate"])
         if not rate <= RATE_MAX:
@@ -1014,10 +1227,12 @@ def cmd_f(m):
 
     def body(rec):
         G0F.env_f(rec)
-        need_t(rec)
         pa = part_a(rec)
-        need_o(rec, pa)
-        base, _ = base_of(m, pa, rec)
+        ost = need_o(rec, pa)
+        if not in_scope(ost, m):                           # U-2f-1
+            return u1_skip(rec, m, ost)
+        need_t(rec)
+        base, _ = base_of(m, pa, rec, u1=ost["u1"])
         G0F.g2_inputs_check(rec)
         gs, grows = g_scan(m, base)
         rec["G"] = {k: gs[k] for k in ("n_base", "n_done", "n_open", "n_fail", "n_stale", "rate", "stop", "complete")}
@@ -1203,12 +1418,14 @@ def h_summary(m, base):
     out.update(by_status=by, n_inputs_ok=len(inok), n_finished=len(fin), n_ok=by.get("ok", 0),
                ok_jobs=sorted(S.job_id[S.status == "ok"]),
                gate_failure=dict(n=len(gate), n_finished=len(fin), rate=rate, threshold=RATE_MAX,
+                                 min_fail_to_stop=min_fail_to_stop(len(fin)),                       # U-2f-3
                                  by_status=gate.status.value_counts().to_dict(),
                                  reasons=dict(Counter(gate.reason).most_common(40)), jobs=gate.job_id.tolist()),
                run_fail=dict(n=int((S.status == "fail").sum()),
                              reasons=dict(Counter(S.reason[S.status == "fail"]).most_common(20)),
                              note="SCF not converged after the one SlowConv retry / ORCA error: reported, not a gate"),
-               input_fail=dict(n=len(input_fail), rate=in_rate, threshold=RATE_MAX, jobs=input_fail),
+               input_fail=dict(n=len(input_fail), rate=in_rate, threshold=RATE_MAX,
+                               min_fail_to_stop=min_fail_to_stop(len(jobs)), jobs=input_fail),
                open=dict(n=len(open_), by_status=open_.status.value_counts().to_dict(), jobs=open_.job_id.tolist()[:100]),
                absent=absent[:100], n_absent=len(absent), n_stale_runs=len(stale), stale_runs=stale[:100],
                core_h=dict(sum=float(sum(ch.values())), per_rxn=G0F.qstats(ch.values()),
@@ -1224,10 +1441,12 @@ def cmd_h(m):
     def body(rec):
         import pandas as pd
         env_hf(rec)
-        need_t(rec)
         pa = part_a(rec)
-        need_o(rec, pa)
-        base, _ = base_of(m, pa, rec)
+        ost = need_o(rec, pa)
+        if not in_scope(ost, m):                           # U-2f-1
+            return u1_skip(rec, m, ost)
+        need_t(rec)
+        base, _ = base_of(m, pa, rec, u1=ost["u1"])
         lab = labels()
         rid = {T: r for r, T in base}
         jobs = sorted(rid)
@@ -1338,10 +1557,13 @@ def cmd_p(m):
 
     def body(rec):
         env_reactot(rec)
-        need_t(rec)
         pa = part_a(rec)
-        need_o(rec, pa)
-        base, _ = base_of(m, pa, rec)
+        ost = need_o(rec, pa)
+        if not in_scope(ost, m):                           # U-2f-1: no P_build / table of m
+            return u1_skip(rec, m, ost)
+        need_t(rec)
+        u = ost["u1"]
+        base, _ = base_of(m, pa, rec, u1=u)
         gs, grows = g_scan(m, base)
         fs, hs = f_summary(m, base, gs, grows), h_summary(m, base)
         rec["F"] = {k: fs.get(k) for k in ("complete", "stop", "stop_reasons", "missing", "n_tokens_ok", "gate")}
@@ -1360,8 +1582,14 @@ def cmd_p(m):
         IN.RUNGS[m] = cfg
         rep = dict(phase="F (D1LADDER Phase P rules)", spec="docs/specs/D1G3.md 5", method=m, started=now(),
                    git_head=G0F.git_head(), rung_cfg={k: str(v) for k, v in cfg.items()},
-                   decisions={k: DECISIONS[k] for k in ("F-7 P tables", "F-7b constrained keys")},
-                   inputs_decisions=IN.DECISIONS, base=dict(n=len(base)), stop=False, all_pass=False)
+                   decisions={k: DECISIONS[k] for k in ("F-7 P tables", "F-7b constrained keys",
+                                                        "U-2f-4 P small base")},
+                   inputs_decisions=IN.DECISIONS, base=dict(n=len(base)),
+                   u1=dict(active=u["active"], scope="U-1 selection" if u["active"] else "Part A",
+                           decision="U-2f-1 U-1 scope" if u["active"] else None, explanatory=bool(u["active"]),
+                           selection={k: (u.get("selection") or {}).get(k)
+                                      for k in ("path", "sha256", "n_complete_pairs", "n_by_class", "n_selected")}),
+                   stop=False, all_pass=False)
         try:
             code, why = q_ready_rel(IN, rep)               # F-13 (inputs._q_ready cannot pass from this worktree)
             if code:
@@ -1778,6 +2006,15 @@ def _hfparse(lst, out):
 
 
 # ================================================================ report (G3ENV=reactot)
+def pair_counts(SP, usable):
+    """{class: dict(n_pairs, n_usable)} of a pair table (columns a_rxn, b_rxn, class); usable = both ends usable."""
+    out = {}
+    for cls, g in SP.groupby("class"):
+        ok = [(int(a_) in usable and int(b_) in usable) for a_, b_ in zip(g.a_rxn, g.b_rxn)]
+        out[str(cls)] = dict(n_pairs=int(len(g)), n_usable=int(sum(ok)))
+    return out
+
+
 def cmd_report():
     def body(rec):
         import pandas as pd
@@ -1790,21 +2027,32 @@ def cmd_report():
                 stop.append(f"T-{k} failed ({v['summary']})")
             elif not v["passed"] or v["stale"]:
                 incomplete.append(f"T-{k}: {v['verdict']}{' (stale code)' if v['stale'] else ''}")
-        ost = o_state(pa)                                  # F-14
-        if ost.get("stop") or ost.get("marker_mismatch"):
+        ost = o_state(pa)                                  # F-14, U-2f-2
+        u = ost["u1"]
+        u3 = [w for c, w in u["problems"] if c == 3]
+        if ost.get("stop") or ost.get("marker_mismatch") or ost.get("u1_mismatch") or u3:
             stop.append(f"Phase O: stop {ost.get('stop')} {ost.get('stop_reasons')}, marker mismatch "
-                        f"{ost.get('marker_mismatch')}")
+                        f"{ost.get('marker_mismatch')}, U-1 mismatch {ost.get('u1_mismatch')}, U-1 problems {u3}")
         elif not ost.get("ok"):
-            incomplete.append(f"Phase O: {ost.get('why') or 'O_report not complete / outputs changed'}")
+            incomplete.append(f"Phase O: {ost.get('why') or 'O_report not complete / outputs changed'}"
+                              + (f"; U-1 {[w for _, w in u['problems']]}" if u["problems"] else ""))
         SP = pd.read_csv(S_PAIRS)
+        cpairs = set((u.get("selection") or {}).get("complete_pairs") or [])
+        SPu = SP[SP.pair_id.astype(str).isin(cpairs)] if u["active"] else SP      # U-2f-5: the U-1 pair universe
+        scope_ms = [m for m in C.METHODS if in_scope(ost, m)]
         rep = dict(spec="docs/specs/D1G3.md 5 (STOP: 12 F)", written=now(), git_head=G0F.git_head(),
                    decisions=DECISIONS, threshold=RATE_MAX, T=ts, O=ost, n_part_a=len(pa), methods={})
         usable_by = {}
         grows_all = []
         for m in C.METHODS:
-            base, oinfo = base_of(m, pa, None, need_complete=False)
+            base, oinfo = base_of(m, pa, None, need_complete=False, u1=u)
             if oinfo["n_open"]:
                 incomplete.append(f"{m}: Phase O open for {oinfo['n_open']} Part A reactions")
+            if m not in scope_ms:                          # U-2f-1: g3h under U-1 (only its Phase O markers)
+                usable_by[m] = set()
+                rep["methods"][m] = dict(scope=U1_TEXT, status=U1_TEXT, decision="U-2f-1 U-1 scope", O=oinfo,
+                                         n_usable=0, pairs=pair_counts(SP, set()), pairs_u1=pair_counts(SPu, set()))
+                continue
             gs, grows = g_scan(m, base)
             grows_all += grows
             fs = f_summary(m, base, gs, grows)
@@ -1812,14 +2060,11 @@ def cmd_report():
             ps = p_summary(m)
             usable = set(int(x) for x in ps["usable"]) if ps["table_ok"] else set()
             usable_by[m] = usable
-            pr = {}
-            for cls, g in SP.groupby("class"):
-                ok = [(int(a_) in usable and int(b_) in usable) for a_, b_ in zip(g.a_rxn, g.b_rxn)]
-                pr[str(cls)] = dict(n_pairs=int(len(g)), n_usable=int(sum(ok)))
-            mrep = dict(O=oinfo, G={k: v for k, v in gs.items() if k != "fail_rxn"}, G_fail_rxn=gs["fail_rxn"],
-                        F={k: v for k, v in fs.items() if k != "tokens_ok"}, H={k: v for k, v in hs.items()
-                                                                                 if k != "ok_jobs"},
-                        P={k: v for k, v in ps.items()}, pairs=pr, n_usable=len(usable),
+            mrep = dict(scope=oinfo["scope"], O=oinfo, G={k: v for k, v in gs.items() if k != "fail_rxn"},
+                        G_fail_rxn=gs["fail_rxn"], F={k: v for k, v in fs.items() if k != "tokens_ok"},
+                        H={k: v for k, v in hs.items() if k != "ok_jobs"}, P={k: v for k, v in ps.items()},
+                        pairs=pair_counts(SP, usable), pairs_u1=pair_counts(SPu, usable), n_usable=len(usable),
+                        gate_min_fail_to_stop=min_fail_to_stop(len(base)),
                         core_h=dict(g_step=gs["core_h"], hf=hs.get("core_h"),
                                     f_alloc=G0F.read_json(STEPS / f"f_{m}.json").get("core_h_alloc"),
                                     h_alloc=G0F.read_json(STEPS / f"h_{m}.json").get("core_h_alloc")))
@@ -1840,10 +2085,24 @@ def cmd_report():
             elif ps["stale"]:
                 incomplete.append(f"{m} P: inputs changed since the build {ps['stale'][:3]} (rerun p {m})")
             rep["methods"][m] = mrep
-        both = usable_by[C.METHODS[0]] & usable_by[C.METHODS[1]]
+        both = set.intersection(*(usable_by[m] for m in scope_ms)) if scope_ms else set()     # U-2f-5
         rep["pairs_usable_all_methods"] = {str(cls): int(sum(1 for a_, b_ in zip(g.a_rxn, g.b_rxn)
                                                             if int(a_) in both and int(b_) in both))
                                            for cls, g in SP.groupby("class")}
+        rep["pairs_usable_methods"] = scope_ms
+        rep["u1"] = dict(
+            active=u["active"], decision=DECISIONS["U-2f-1 U-1 scope"] if u["active"] else None,
+            scope=(f"{U1_METHOD} only: .done reactions of $G3/{U1_METHOD}_final = the reactions of the complete P_012 "
+                   f"para pairs ({U1_SEL.name}) assembled ok" if u["active"]
+                   else "spec 5 as written (every method, every Part A reaction)"),
+            methods_in_scope=scope_ms, methods_stopped_user=[m for m in C.METHODS if m not in scope_ms],
+            selection=u.get("selection"), o_report_u1=u.get("o_report_u1"), problems=u["problems"],
+            n_base={m: rep["methods"][m]["O"]["n_done"] for m in C.METHODS},
+            min_fail_to_stop={m: min_fail_to_stop(rep["methods"][m]["O"]["n_done"]) for m in scope_ms},
+            gate_rule=DECISIONS["U-2f-3 small base gate"] if u["active"] else None,
+            pairs_u1_usable={m: rep["methods"][m]["pairs_u1"] for m in C.METHODS},
+            explanatory=bool(u["active"]),
+            label="설명용 (U-1: g3r 완성 짝 부분집합, 사용자 결정 2026-10-25 5)" if u["active"] else None)
         G = pd.DataFrame(grows_all)
         C.write_atomic(G_STATUS, lambda t: G.to_csv(t, index=False))
         rep.update(g_status_csv=str(G_STATUS), g_status_sha256=C.sha256(G_STATUS), stop=bool(stop), stop_reasons=stop,
@@ -1851,6 +2110,8 @@ def cmd_report():
         write_json(F_REPORT, rep)
         rec["report"] = {k: rep[k] for k in ("stop", "stop_reasons", "complete", "incomplete")}
         rec["report"]["n_usable"] = {m: rep["methods"][m]["n_usable"] for m in C.METHODS}
+        rec["report"]["u1"] = {k: rep["u1"][k]
+                               for k in ("active", "methods_in_scope", "methods_stopped_user", "n_base")}
         return 3 if stop else (2 if incomplete else 0)
     return step("report", body)
 

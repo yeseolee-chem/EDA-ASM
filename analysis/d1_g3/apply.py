@@ -28,6 +28,13 @@ float32 CPU tensor; submit from analysis/d1_g3; exit 0 = done / up to date, 2 = 
         until they exist). Self-check: input level = model rung reproduces L_predictions (1e-3) on the Part A pairs,
         LINE = the SH units' baseline (1e-9); else STOP. -> $G3/apply/predictions.parquet, $G3/apply/apply_report.json
         (up to date -> exit 0 unless --force).
+        Needs results/O_report.json complete (exit 2) and not stop (exit 3). U-1 (user 2026-10-25; decisions U-2e-1,
+        U-2e-2): when O_report.json has a 'u1' block, the pair list is the complete_pairs of results/U1_selection.json
+        (ts.g3r ok at both ends; rows = S_pairs.csv, else STOP) and the input levels are dft, g1, g2, g3r: g3h is
+        'stopped by user (U-1)' (no table / tokens / P_build read, no rows; apply_report levels_stopped), never an
+        error. The selection sha256 must equal O_report u1.selection_sha256 and P_build_g3r.json u1.selection.sha256
+        (else exit 2: rerun select / assemble / feat.py p); apply_report.json gets a 'u1' block (explanatory). Without
+        a 'u1' block: the spec as written (every S_pairs pair, five levels).
 
 Inputs of the levels g3h / g3r (feat.py contract, A-7): table $G3/inputs/<m>.parquet (inputs.py make_table layout: rxn_id,
   tok_path, tok_sha256, usable, the 182 X182 columns, H_<t>, ...), token reports $D1G3_FU2_RES (default
@@ -48,7 +55,8 @@ Outputs
                                    file ($LAD/F_pairs_cr2.csv); S: base = beta = 0; SH: base = beta * dH(level);
                                    LINE: yhat = base = beta * dH(level), yhat_seed_sd NaN; 10 targets (TARGETS order).
   $G3/apply/apply_report.json      E-3 record: per level usable / missing pairs (with the reason), common pairs, layout
-                                   checks, representatives, LINE betas, self-checks, fingerprint, outputs sha256.
+                                   checks, representatives, LINE betas, self-checks, fingerprint, outputs sha256;
+                                   levels (used), levels_stopped (U-1: g3h 'stopped by user (U-1)'), u1 (U-2e-1).
   results/DECISIONS.md             the A-* decisions (g3_common.record_decision under the shared fcntl lock
                                    $G3/locks/DECISIONS.lock; written when t4 / e3 start).
 
@@ -59,10 +67,13 @@ sbatch (login node: one-shot commands only; first `squeue -u $USER -h -r | wc -l
   JT4=$(sbatch --parsable -p cpu1,cpu2 -J g3_T4 --time=48:00:00 --cpus-per-task=4 --mem=16G \
       --output=/gpfs/tmp_cpu2/yeseo1ee/d1_g3/logs/%x_%j.out --dependency=afterok:$JS --kill-on-invalid-dep=yes \
       ../d1_ladder/jobs/gpu.slurm apply.py t4)
-  (after the feat.py 'p g3h ;;; p g3r ;;; report' job JPF = g3h / g3r tables + tokens)
+  (after the feat.py 'p g3h ;;; p g3r ;;; report' job JPF = g3h / g3r tables + tokens; under U-1 the feat.py
+   'p g3r ;;; report' job: the same line. t4 runs first in the same job (U-2e-2): A-12 hashes apply.py AND
+   g3_common.py, so T-4 is re-checked against the code e3 runs with (up to date -> exit 0 at once, else ~70 s), and
+   there is no afterok on an earlier T-4 job that slurmctld may have purged)
   JE3=$(sbatch --parsable -p cpu1,cpu2 -J g3_E3 --time=48:00:00 --cpus-per-task=4 --mem=24G \
       --output=/gpfs/tmp_cpu2/yeseo1ee/d1_g3/logs/%x_%j.out --dependency=afterok:$JPF --kill-on-invalid-dep=yes \
-      ../d1_ladder/jobs/gpu.slurm apply.py e3)
+      ../d1_ladder/jobs/gpu.slurm apply.py t4 ::: apply.py e3)
   (feat.py roots elsewhere: add --export=ALL,D1G3_FU2_RES=<dir with {m}>,D1G3_FU2_TOKENS=<dir with {m}>)
 
 Decisions (user: every judgment = the recommended option): DECISIONS below, also in results/DECISIONS.md and the reports.
@@ -117,6 +128,9 @@ OUT_DIR = C.G3 / "apply"
 PRED_OUT = OUT_DIR / "predictions.parquet"
 APPLY_REPORT = OUT_DIR / "apply_report.json"
 G3_INPUTS = C.G3 / "inputs"
+O_REPORT, U1_SEL = C.RES / "O_report.json", C.RES / "U1_selection.json"   # opt.py assemble / select (U-2e-1)
+U1_METHOD = "g3r"                                         # U-1: the selection is made from the g3r TS units only
+U1_TEXT = "stopped by user (U-1)"
 G3_FU2_RES = os.environ.get("D1G3_FU2_RES") or str(C.RES / "fu2_{m}")
 G3_TOKENS = os.environ.get("D1G3_FU2_TOKENS") or str(C.G3 / "fu2_{m}" / "tokens")
 OUT_COLS = ["pair_id", "fold", "class", "target", "model_rung", "arm", "model", "input_level", "y", "yhat", "base",
@@ -168,6 +182,24 @@ DECISIONS = {
     "A-12": "E-3 실행 조건: results/T_4.json all_pass, 그 fingerprint의 코드 sha256(apply.py, g3_common.py, train_atoms "
             "CODE_SHA) = 현재(다르면 exit 2: t4 다시), .pt sha256 = T_4.json pt_sha256, 대표 선택 = T_4.json. 보고 파일 "
             "$G3/apply/apply_report.json을 predictions.parquet 옆에 둔다(누락 짝·검사 기록; 명령서에 없는 부속 출력).",
+    "U-2e-1": "U-1 범위(사용자 결정 2026-10-25 1·5: ts.g3h·ts.g3r 중단, g3r 완료 반응으로 완성되는 P_012 para 짝만 F·E, 설명용; "
+              "apply.py e3): results/O_report.json이 있어야 한다(없음·미완 = exit 2, stop = exit 3). 그 'u1' 블록이 있으면 "
+              "U-1이다: 짝 목록 = results/U1_selection.json complete_pairs(행의 pair_id, a_rxn, b_rxn, fold, class가 "
+              "S_pairs.csv와 같아야 하고 중복·빈 목록이면 STOP), 입력 수준 = dft, g1, g2와 선택 파일의 method(= g3r만; "
+              "다르면 STOP). g3h는 표·토큰·P_build를 읽지 않고 예측 행을 만들지 않으며 apply_report.json levels_stopped에 "
+              "'stopped by user (U-1)'로 적는다(오류·미완이 아님). 선택 파일 sha256 = O_report u1.selection_sha256 = "
+              "P_build_g3r.json u1.selection.sha256이어야 한다(다르거나 P_build에 U-1 기록이 없으면 exit 2: select·assemble·"
+              "feat.py p 다시; 'u1' 블록이 있는데 선택 파일이 없으면 STOP, 블록 없이 선택 파일만 있으면 exit 2). 지문에 선택 "
+              "sha256과 범위를 넣어 선택이 바뀌면 다시 계산한다. apply_report.json에 u1 블록(결정, 선택 sha256, 짝 수·분류별, "
+              "범위 안·밖 방법, explanatory = true)을 둔다. 'u1' 블록이 없으면 명령서 그대로(S_pairs 전체, 다섯 수준).",
+    "U-2e-2": "작은 짝 목록(U-1 완성 짝 약 10개, fold 몇 개, core 몇 개): 짝이 없는 fold는 건너뛴다(그 fold의 unit 모델은 "
+              "읽지 않음, A-12의 .pt sha256 검사는 그대로 전체), 수준 X에서 usable 짝이 0인 fold·수준은 행 없이 apply_report "
+              "units n_pairs 0으로 남긴다. 범위 안 g3 수준에서 usable 짝이 하나도 없어도 STOP하지 않고 levels_info n_usable 0과 "
+              "이유를 적는다(E 단계가 그 수준의 비교 목록을 0짝으로 보고한다). 자기 검사(A-11)는 대각선 행(dft·g2 입력 = "
+              "표본 전부 usable)이 1개 이상이면 된다. bootstrap·CI는 여기서 계산하지 않는다(g3_eval.py U-2e-8). 실행 순서: "
+              "U-1 코드 수정으로 code_sha(apply.py, g3_common.py)가 바뀌었으므로 같은 작업에서 't4 ::: e3'로 돌린다(T-4가 e3와 "
+              "같은 코드로 다시 확인됨, 최신이면 t4는 바로 exit 0; 이미 끝나 slurmctld에서 지워진 T-4 작업에 afterok를 걸지 "
+              "않음).",
 }
 
 
@@ -270,9 +302,9 @@ def level_files(X):
                                                                  "S_splits.json")}}
 
 
-def g3_missing():
+def g3_missing(methods=C.METHODS):
     miss = []
-    for m in C.METHODS:
+    for m in methods:
         p = g3_paths(m)
         miss += [str(f) for f in level_files(m).values() if not Path(f).is_file()]
         if not p["tokens"].is_dir():
@@ -280,14 +312,21 @@ def g3_missing():
     return miss
 
 
-def g3_pbuild(m):
-    """A-7: feat.py's results/P_build_<m>.json passed for the current table, with the same token roots (rung_cfg)."""
+def g3_pbuild(m, u1=None):
+    """A-7: feat.py's results/P_build_<m>.json passed for the current table, with the same token roots (rung_cfg);
+    U-2e-1: under U-1 its 'u1' block names the current U1_selection.json (sha256)."""
     p, pb = g3_paths(m), C.RES / f"P_build_{m}.json"
     if not pb.is_file():
         not_ready(f"{pb} missing (feat.py Phase F table of {m})")
     r = C.read_json(pb)
     if not r.get("all_pass") or r.get("stop"):
         not_ready(f"{pb}: all_pass {r.get('all_pass')}, stop {r.get('stop')} ({r.get('stop_reason')})")
+    if u1 and u1["active"]:
+        pu = r.get("u1") or {}
+        got = (pu.get("selection") or {}).get("sha256")
+        if not pu.get("active") or got != u1["selection"]["sha256"]:
+            not_ready(f"{pb.name}: built without the current U-1 selection (u1 active {pu.get('active')}, selection "
+                      f"sha256 {str(got)[:16]} vs {u1['selection']['sha256'][:16]}): rerun feat.py p {m} (U-2e-1)")
     if (r.get("outputs") or {}).get(str(p["table"])) != C.sha256(p["table"]):
         C.stop(f"{p['table']} sha256 != {pb.name} outputs (table changed after its build)")
     cfg = r.get("rung_cfg") or {}
@@ -295,7 +334,66 @@ def g3_pbuild(m):
             if os.path.abspath(str(cfg.get(k))) != os.path.abspath(str(p[k]))}
     if diff:
         C.stop(f"{pb.name} rung_cfg roots differ from apply.py's {diff} (set D1G3_FU2_RES / D1G3_FU2_TOKENS, A-7)")
-    return dict(file=str(pb), sha256=C.sha256(pb), n_usable=len(r.get("usable") or []), rung_cfg=cfg)
+    return dict(file=str(pb), sha256=C.sha256(pb), n_usable=len(r.get("usable") or []), rung_cfg=cfg, u1=r.get("u1"))
+
+
+def u1_state(SP):
+    """U-2e-1: the U-1 scope from results/O_report.json ('u1' block, opt.py assemble) and results/U1_selection.json
+    (opt.py select) -> dict(active, methods, levels, stopped, pairs, selection, fingerprint, record). Without a 'u1'
+    block the spec as written (every S_pairs pair; both methods)."""
+    if not O_REPORT.is_file():
+        not_ready(f"{O_REPORT} missing (opt.py assemble)")
+    o = C.read_json(O_REPORT)
+    if o.get("stop"):
+        C.stop(f"{O_REPORT}: Phase O ended in a STOP ({o.get('stop_reasons')}; spec 12 O)")
+    if not o.get("complete"):
+        not_ready(f"{O_REPORT}: Phase O not complete ({o.get('n_incomplete')} open; opt.py assemble)")
+    u = o.get("u1")
+    if not u:
+        if U1_SEL.is_file():
+            not_ready(f"{U1_SEL} exists but {O_REPORT.name} has no 'u1' block (rerun opt.py assemble, U-1)")
+        return dict(active=False, methods=list(C.METHODS), levels=list(LEVELS), stopped={}, pairs=None, selection=None,
+                    fingerprint=dict(active=False), record=dict(active=False, rule="spec as written (no U-1 block in "
+                                                                                    "O_report.json)"))
+    if not U1_SEL.is_file():
+        C.stop(f"{O_REPORT.name} has a 'u1' block but {U1_SEL} is missing (U-1 contract)")
+    sha = C.sha256(U1_SEL)
+    if u.get("selection_sha256") != sha:
+        not_ready(f"{U1_SEL.name} sha256 {sha[:16]} != O_report u1.selection_sha256 "
+                  f"{str(u.get('selection_sha256'))[:16]} (selection changed after assemble: rerun opt.py select / "
+                  f"assemble, feat.py, U-2e-1)")
+    s = C.read_json(U1_SEL)
+    if s.get("method") != U1_METHOD:
+        C.stop(f"{U1_SEL.name}: method {s.get('method')!r} != {U1_METHOD} (U-1: g3r only)")
+    cp = s.get("complete_pairs") or []
+    ids = [str(p.get("pair_id")) for p in cp]
+    if not cp or len(set(ids)) != len(ids):
+        C.stop(f"{U1_SEL.name}: {len(cp)} complete pairs, {len(ids) - len(set(ids))} duplicated pair ids (U-1a)")
+    bad = []
+    for p in cp:
+        pid = str(p["pair_id"])
+        if pid not in SP.index:
+            bad.append(f"{pid}: not in S_pairs.csv")
+            continue
+        r = SP.loc[pid]
+        mine = (int(r.a_rxn), int(r.b_rxn), int(r.fold), str(r["class"]))
+        theirs = (int(p["a_rxn"]), int(p["b_rxn"]), int(p["fold"]), str(p["class"]))
+        if mine != theirs:
+            bad.append(f"{pid}: S_pairs {mine} vs selection {theirs}")
+    if bad:
+        C.stop(f"{U1_SEL.name}: complete_pairs differ from {S_PAIRS} (pair_id, a_rxn, b_rxn, fold, class): {bad[:4]}")
+    ms = [U1_METHOD]
+    stopped = {m: U1_TEXT for m in C.METHODS if m not in ms}
+    sel = dict(path=str(U1_SEL), sha256=sha, written=s.get("written"), n_complete_pairs=len(cp),
+               n_by_class=s.get("n_by_class"), n_selected_rxns=len(s.get("selected_rxns") or []))
+    rec = dict(active=True, decision=DECISIONS["U-2e-1"], explanatory=True,
+               label="설명용 (U-1: g3r 완성 짝 부분집합, 사용자 결정 2026-10-25 5)", selection=sel,
+               methods_in_scope=ms, methods_stopped=stopped, levels=list(LEVELS[:3]) + ms,
+               o_report_u1={k: u.get(k) for k in ("decision", "selection_sha256", "n_complete_pairs", "n_by_class",
+                                                  "n_selected_rxns", "n_selected_done", "n_pairs_both_done",
+                                                  "pairs_both_done_by_class", "stopped_user")})
+    return dict(active=True, methods=ms, levels=rec["levels"], stopped=stopped, pairs=sorted(ids), selection=sel,
+                fingerprint=dict(active=True, selection_sha256=sha, methods=ms), record=rec)
 
 
 def tok_path_check(m):
@@ -809,22 +907,26 @@ def cmd_e3(force=False):
     if (t4.get("fingerprint") or {}).get("code_sha256") != norm(code_sha()):
         not_ready("apply.py / g3_common.py / trainer code changed since T-4: rerun `apply.py t4` (A-12)")
     SP, srep = read_s_pairs()
-    miss = g3_missing()
+    u1 = u1_state(SP)                                               # U-2e-1: U-1 pair list and levels
+    if u1["active"]:
+        SP = SP[SP.pair_id.isin(set(u1["pairs"]))]
+    MS, LV = u1["methods"], u1["levels"]
+    miss = g3_missing(MS)
     if miss:
         not_ready(f"g3 inputs missing (Phase F / feat.py; roots A-7): {miss[:6]}")
-    pbuild = {m: g3_pbuild(m) for m in C.METHODS}
-    tokchk = {m: tok_path_check(m) for m in C.METHODS}
+    pbuild = {m: g3_pbuild(m, u1) for m in MS}
+    tokchk = {m: tok_path_check(m) for m in MS}
     E2 = C.read_json(E2_REPORT)
     lp_sha = C.sha256(L_PRED)
     if lp_sha != (E2.get("l_report") or {}).get("predictions_sha256"):
         C.stop(f"{L_PRED} sha256 != E2_report l_report.predictions_sha256")
-    fp = base_fingerprint(C.sha256(E2_REPORT), lp_sha, LEVELS)
+    fp = base_fingerprint(C.sha256(E2_REPORT), lp_sha, LV)
     t4fp = t4.get("fingerprint") or {}
     if fp["pt"] != t4.get("pt_sha256") or norm(fp["unit_json"]) != t4fp.get("unit_json") or \
             lp_sha != t4fp.get("l_predictions") or fp["e2_report"] != t4fp.get("e2_report"):
         C.stop("unit .pt / json files, L_predictions or E2_report differ from the ones T-4 tested (results/T_4.json)")
     fp = norm(dict(fp, t_4=C.sha256(T4_JSON), s_pairs=C.sha256(S_PAIRS), roots=roots,
-                   p_build={m: v["sha256"] for m, v in pbuild.items()}))
+                   p_build={m: v["sha256"] for m, v in pbuild.items()}, u1=u1["fingerprint"]))
     if not force and APPLY_REPORT.is_file() and PRED_OUT.is_file():
         old = C.read_json(APPLY_REPORT)
         if old.get("fingerprint") == fp and (old.get("outputs") or {}).get("predictions_sha256") == C.sha256(PRED_OUT):
@@ -837,7 +939,7 @@ def cmd_e3(force=False):
     if line_bad:
         C.stop(f"LINE betas: {line_bad[:3]}")
     pids = SP.pair_id.tolist()
-    DL = {(X, a): TA.get_data(X, a, LABELS) for X in LEVELS for a in ARMS}
+    DL = {(X, a): TA.get_data(X, a, LABELS) for X in LV for a in ARMS}
     P = DL[("dft", "S")].P
     absent = [p for p in pids if p not in P.index]
     if absent:
@@ -854,15 +956,15 @@ def cmd_e3(force=False):
                 leak += [f"{R} {a} f{k} {p}" for p in SP.pair_id[SP.fold == k] if p not in te]
     if leak:
         C.stop(f"{len(leak)} Part A pairs are not in their fold's test list of the model rung: {leak[:4]}")
-    layouts = {f"{R}|{X}|{a}": layout_check(DL[(R, a)], DL[(X, a)]) for R in MODEL_RUNGS for X in LEVELS for a in ARMS}
+    layouts = {f"{R}|{X}|{a}": layout_check(DL[(R, a)], DL[(X, a)]) for R in MODEL_RUNGS for X in LV for a in ARMS}
     lev = {}
-    for X in LEVELS:
+    for X in LV:
         ok, _, mi = pair_index(DL[(X, "S")], pids)
         lev[X] = dict(n_usable=len(ok), n_missing=len(mi), missing=mi, table=str(TA.inputs_path(X)),
                       fu2_res=str(TA.RUNGS[X]["fu2_res"]), tokens=str(TA.RUNGS[X]["tokens"]),
                       hinfo={k: v for k, v in DL[(X, "S")].hinfo.items() if k != "h_cols"},
                       by_class={c: int(sum(1 for p in ok if SP.at[p, "class"] == c)) for c in sorted(set(SP["class"]))})
-    common = [p for p in pids if all(p not in lev[X]["missing"] for X in LEVELS)]
+    common = [p for p in pids if all(p not in lev[X]["missing"] for X in LV)]
     parts, urec = [], {}
     for R, a in FAMILIES:
         Dm = DL[(R, a)]
@@ -878,7 +980,7 @@ def cmd_e3(force=False):
                 if probs or fdiff or mprobs:
                     C.stop(f"{name}: {probs + mprobs} fingerprint keys {fdiff}")
                 urec[name] = dict(json_sha256=jsha, n_pairs={})
-                for X in LEVELS:
+                for X in LV:
                     DX = DL[(X, a)]
                     ok, prow, _ = pair_index(DX, pk)
                     urec[name]["n_pairs"][X] = len(ok)
@@ -894,7 +996,7 @@ def cmd_e3(force=False):
             if not pk:
                 continue
             b = np.asarray([lines[f"{R}|{k}"]["beta"][t] for t in TARGETS], dtype=float)
-            for X in LEVELS:
+            for X in LV:
                 DX = DL[(X, "SH")]
                 ok, prow, _ = pair_index(DX, pk)
                 if not ok:
@@ -924,10 +1026,12 @@ def cmd_e3(force=False):
     counts = A.groupby(["model_rung", "arm", "model", "input_level"]).pair_id.nunique()
     rep = dict(
         phase="E-3 support", spec="docs/specs/D1G3.md 6 E-3", created=now(), env=env, fingerprint=fp,
-        rule=("Part A pairs (S_pairs.csv) x their own T1 fold's units of dft·SH, dft·S, g2·SH, g2·S x input levels "
-              "dft, g1, g2, g3h, g3r; AW / GNN / TF rows, REP (E2_report representatives, XGB -> best atom model), "
+        rule=(("U-1 complete pairs (results/U1_selection.json, U-2e-1)" if u1["active"] else "Part A pairs (S_pairs.csv)")
+              + " x their own T1 fold's units of dft·SH, dft·S, g2·SH, g2·S x input levels " + ", ".join(LV)
+              + "; AW / GNN / TF rows, REP (E2_report representatives, XGB -> best atom model), "
               "LINE (fold SH unit beta x dH of the level, both arms)"),
-        families=[f"{R}·{a}" for R, a in FAMILIES], levels=list(LEVELS), n_pairs=len(pids),
+        families=[f"{R}·{a}" for R, a in FAMILIES], levels=list(LV), levels_stopped=u1["stopped"], u1=u1["record"],
+        n_pairs=len(pids), folds_with_pairs=sorted(int(k) for k in set(SP.fold)),
         pairs_by_class=SP["class"].value_counts().to_dict(), levels_info=lev,
         common_pairs=dict(n=len(common), by_class={c: int(sum(1 for p in common if SP.at[p, "class"] == c))
                                                    for c in sorted(set(SP["class"]))}, ids=common),
@@ -940,8 +1044,9 @@ def cmd_e3(force=False):
         decisions={k: DECISIONS[k] for k in DECISIONS}, wall_s=time.time() - t0)
     C.write_json(APPLY_REPORT, rep)
     print(f"[E-3] {len(A)} rows -> {PRED_OUT}; usable pairs per level "
-          f"{ {X: lev[X]['n_usable'] for X in LEVELS} } of {len(pids)}, common {len(common)}; self-check ok "
-          f"(max |dyhat| {chk['atoms']['yhat_max_abs']:.3g})", flush=True)
+          f"{ {X: lev[X]['n_usable'] for X in LV} } of {len(pids)}, common {len(common)}; self-check ok "
+          f"(max |dyhat| {chk['atoms']['yhat_max_abs']:.3g})"
+          + (f"; U-1: {', '.join(f'{m} {v}' for m, v in u1['stopped'].items())}" if u1["active"] else ""), flush=True)
     return 0
 
 

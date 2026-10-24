@@ -20,8 +20,20 @@ sbatch (login node: one-shot commands only; first `squeue -u $USER -h -r | wc -l
   cd /gpfs/home1/yeseo1ee/projects/eda-asm-prediction-d1g3/analysis/d1_g3
   sbatch -p cpu1,cpu2 -J g3_E --time=48:00:00 --cpus-per-task=8 --mem=32G --export=ALL,G3ENV=reactot \
       --dependency=afterok:$JE3 --kill-on-invalid-dep=yes jobs/g3.slurm g3_eval.py run ::: g3_eval.py summary
-  (JE3 = the apply.py e3 job, which itself waits for opt.py assemble -> feat.py p / report.)
+  (JE3 = the 'apply.py t4 ::: apply.py e3' job (apply.py U-2e-2), which itself waits for opt.py assemble -> feat.py p /
+   report.)
   (log $G3/logs/g3_E_<jobid>.out; ' ::: ' = summary only if run exited 0.) Rerun = the same line.
+
+U-1 / U-2 / U-3 (user decisions 2026-10-25; results/DEVIATIONS.md; decisions U-2e-3 .. U-2e-9): when O_report.json has a
+'u1' block (opt.py assemble), Phase E runs for g3r only, on the complete pairs of results/U1_selection.json (ts.g3r ok
+at both ends): the inputs dft, g1, g2 (D1LADDER) and g3r sit side by side on exactly the same pair list (complete pairs
+with both ends usable in all four inputs; the spec 12 E STOP is judged on that list), scopes 'common' = 'own_g3r'. g3h
+has no F / E: it is 'stopped by user (U-1)' everywhere (no rows in E-1 .. E-4 / figures, spec 9 verdict
+'stopped_user'), never an error; E-5 still reports the finished g3h / g3r units (O_status ts_status / core_h of every
+Part A row, the stopped_user rows included) and E-6 every finished Part B unit. U-3b: spec 9 ② = TS success >= 0.9
+only, shape retention is reported but not judged. Under U-1 every spec 9 number is explanatory (설명용, subset) and no
+formal recommendation is made. The U-1 selection sha256 must agree in O_report.json, F_report.json, P_build_g3r.json
+and apply_report.json (else exit 2: rerun the later steps). Without a 'u1' block: the spec as written (+ U-3b).
 
 Inputs (read only; missing -> exit 2)
   results/start_report.json (sample.py start; stop false; its 0-1 sha256 of E2_report.json / L_predictions.parquet and
@@ -33,10 +45,11 @@ Inputs (read only; missing -> exit 2)
       ts_status (ok | fail | error), ts_reason, imag_freqs_cm, n_imag, shape_kept, rmsd_start_A, dform_start_A, core_h,
       core_h_refs, attempt_used, n_atoms, dipole, classes, phase, part (A | B), converged_to_label, dE_kcal, e_sp_eh,
       e_label_eh, sp_mode;  results/O_refs.csv mid, method, ..., status, core_h;  results/O_report.json (complete true,
-      stop false -> else exit 2 / 3; outputs sha256 of O_status.csv / O_refs.csv);  results/O_estimate.json (reported)
+      stop false -> else exit 2 / 3; outputs sha256 of O_status.csv / O_refs.csv; 'u1' block = U-1);
+      results/O_estimate.json (reported);  results/U1_selection.json (U-1: complete_pairs, selected_rxns, method)
   $G3/<m>_final/<rxn_id>/{.done | .fail_*, ts.xyz}   (marker must agree with O_status status)
   $G3/partB/<rxn_id>/result.json  (rmsd_label_A, dform_label_A, same_as_g2_start, rmsd_g2_A, core_h_optts, core_h_sp)
-  results/F_report.json (feat.py report; complete true, stop false -> else exit 2 / 3)
+  results/F_report.json (feat.py report; complete true, stop false -> else exit 2 / 3; U-1: its 'u1' block)
   results/P_build_<m>.json (all_pass, outputs[$G3/inputs/<m>.parquet] = its sha256, usable = the usable rxn_ids) and
       $G3/inputs/<m>.parquet (D1LADDER make_table layout: rxn_id, usable, H_<t> for the 9 H targets)
   $G3/apply/predictions.parquet + apply_report.json (apply.py e3; the contract this file reads, decision EV-7): one row
@@ -84,13 +97,15 @@ also in results/DECISIONS.md (written when 'run' starts) and E_report.json)
                    n_retry, ts_core_h_median, ts_core_h_mean, ts_core_h_sum, ts_core_h_per_success,
                    ref_core_h_rxn_median, ref_core_h_rxn_mean, ref_core_h_rxn_sum, n_ref_units, n_ref_units_ok,
                    ref_unit_core_h_median, ref_unit_core_h_mean, ref_unit_core_h_sum, label_ts_core_h,
-                   ts_core_h_median_over_label   (E-5; method partB: Part B OptTS + SP cost)
+                   ts_core_h_median_over_label, n_ts_finished, n_ts_not_run, n_stopped_user, n_ref_units_not_run,
+                   scope   (E-5 over the finished units, U-2e-6; method partB: Part B OptTS + SP cost)
   B_energies.csv   rxn_id, job_id, dipole, ts_class, part_a, status, reason, ts_status, ts_reason, resolved,
                    converged_to_label, dE_kcal, dE_eff_kcal, bin (lt_m05 | abs_le_05 | gt_05 | ''), sp_mode,
                    rmsd_label_A, dform_label_A, same_as_g2_start, rmsd_g2_A, n_imag, imag_freqs_cm, core_h,
                    core_h_optts, core_h_sp, e_sp_eh, e_label_eh   (E-6; distribution by dipole in E_report.json partB)
   E_report.json    provenance (inputs sha256, env, code), checks, pair lists, representatives used, e1_detail, partB,
-                   spec9 (per method criteria, verdict, recommendation), decisions, outputs sha256, stop false
+                   spec9 (per method criteria, verdict, recommendation), decisions, outputs sha256, stop false;
+                   u1 (U-1 record) and scope (methods / levels / scopes used; 'summary' reads it)
   figures/figG3_1_noise, figG3_2_endtoend, figG3_3_partB (.png, .pdf, .csv)
   SUMMARY_G3.md    (summary)
 """
@@ -182,12 +197,32 @@ CRIT = dict(rec_oi=0.8, mae_oi=0.20, ts_success=0.9, shape_kept=0.9, core_h_medi
 PARTB_CUT, PARTB_FRAC = 0.5, 0.2                           # spec 6 E-6 / 9 Part B
 N_BOOT, SEED = EV.N_BOOT, C.SEED_BOOT                      # spec 6 E-3: 2,000, 20261019
 TOL_Y, TOL_DIAG, TOL_BASE, TOL_CC, TOL_BOOT = 1e-9, 1e-3, 1e-6, 1e-9, 1e-12
-VERDICT_KO = {"go": "본격 진행 권고 (go)", "partial": "부분", "impossible": "불가"}
+VERDICT_KO = {"go": "본격 진행 권고 (go)", "partial": "부분", "impossible": "불가",
+              "not_judged": "판정 불가(비교 짝 없음)"}       # U-2e-5: ① has no data (0 same pairs / no MAE row)
 METHOD_KO = {"g3h": "g3h(HF-D3BJ/6-31G*, SMD water)", "g3r": "g3r(r2SCAN-3c, SMD water)"}
 LEVEL_SLOT = {"dft": 0, "g1": 1, "g2": 2, "g3h": 3, "g3r": 4}     # fixed palette slots (decision EV-13)
 LEVEL_MARK = {"dft": "o", "g1": "s", "g2": "^", "g3h": "D", "g3r": "v"}
 LEVEL_LABEL = {"dft": "dft (label DFT TS)", "g1": "g1 (xTB, from DFT TS)", "g2": "g2 (xTB, from SMILES)",
                "g3h": "g3h (HF-D3BJ/6-31G*)", "g3r": "g3r (r2SCAN-3c)"}
+# U-1 (user decisions 2026-10-25, results/DEVIATIONS.md U-1 .. U-3; decisions U-2e-3 .. U-2e-9)
+U1_SEL = C.RES / "U1_selection.json"                       # opt.py select
+DEVIATIONS = C.RES / "DEVIATIONS.md"                       # written by the main session; referenced, never written here
+U1_METHOD = "g3r"                                          # U-1: only g3r reactions go on to Phase F / E
+U1_STATUS = "stopped_user"                                 # opt.py assemble: O_status / O_refs status, marker .fail_<this>
+U1_TEXT, U1_TEXT_KO = "stopped by user (U-1)", "사용자 결정으로 중단(U-1)"
+EXPL_KO = "설명용"
+# the methods / input levels / scopes this run evaluates (set_scope; = the spec as written unless U-1 is active)
+SCOPE = dict(active=False, methods=tuple(C.METHODS), stopped=(), levels=LEVELS, scope_levels=dict(SCOPE_LEVELS))
+
+
+def set_scope(methods, active):
+    """U-2e-3 / U-2e-4: methods in scope -> their input levels and scopes ('common' = dft, g1, g2 + the methods;
+    'own_<m>' per method in scope); every other method is 'stopped by user (U-1)'."""
+    ms = tuple(m for m in C.METHODS if m in set(methods))
+    SCOPE.update(active=bool(active), methods=ms, stopped=tuple(m for m in C.METHODS if m not in ms),
+                 levels=LAD_RUNGS + ms, scope_levels={"common": LAD_RUNGS + ms, **{f"own_{m}": LAD_RUNGS + (m,)
+                                                                                   for m in ms}})
+    return {k: (list(v) if isinstance(v, tuple) else v) for k, v in SCOPE.items()}
 # spec sentences used verbatim (checked against docs/specs/D1G3.md at run time; STOP if one is not there)
 SPEC_TEXT = {
     "9-scope": "Part A는 방법마다 `same` 분류에서 판정한다.",
@@ -278,6 +313,48 @@ DECISIONS = {
              "T_4.json(apply.py)은 pass / verdict만 읽는다. start_report 0-3의 strict_reading(명령서 0-3 엄격 읽기는 STOP "
              "조건, 결정 0-3으로 진행)과 T_2 deviation, O_report deviations를 이탈로 적는다. E_report.json outputs sha256이 "
              "지금 파일과 다르면 exit 2(run 다시).",
+    "U-2e-3": "U-1 범위(사용자 결정 2026-10-25 1·5, DEVIATIONS.md U-1·U-2): results/O_report.json에 'u1' 블록이 있으면 U-1이다. "
+              "범위 안 방법 = U1_selection.json method(= g3r만; 다르면 STOP), 짝 universe = 그 complete_pairs(행의 pair_id, "
+              "a_rxn, b_rxn, fold, class, dipole = S_pairs.csv; selected_rxns = a·b 합집합; 아니면 STOP). 선택 파일 sha256은 "
+              "O_report u1.selection_sha256, F_report u1.selection.sha256, P_build_g3r.json u1.selection.sha256, apply_report "
+              "u1.selection.sha256과 같아야 한다(다르거나 그 파일에 U-1 기록이 없으면 exit 2: 뒤 단계를 다시; 'u1' 블록이 있는데 "
+              "선택 파일이 없으면 STOP). O_status 일관성: 모든 Part A 반응·방법에서 status 'stopped_user' ⇔ (방법 ≠ g3r 또는 "
+              "선택 밖), 완성 짝 = S_pairs 중 g3r ts_status가 a·b 모두 ok인 짝(O_status로 다시 셈); 어긋나면 STOP(assemble 뒤 "
+              "파일 변경). g3h는 E-1–E-4·그림·판정에 행이 없고 'stopped by user (U-1)'로 적는다(오류·미완 아님; P_build·표·"
+              "F 결과를 읽지 않음). E-1의 반응 = 완성 짝의 반응(그 반응에서 dft, g1, g2, g3r 구조를 나란히). 'u1' 블록이 없으면 "
+              "명령서 그대로(+ U-2e-5).",
+    "U-2e-4": "U-1 비교 목록(명령서 12 E): 범위 = 'common'(dft, g1, g2, g3r) = 'own_g3r'(범위 안 방법이 하나라 같은 목록; 두 이름을 "
+              "그대로 두어 표 구조와 판정 경로(EV-11 own_<m>)를 바꾸지 않음). 목록 = 완성 짝 중 a·b가 네 입력에서 모두 쓸 수 있는 짝"
+              "(E-1: .done 구조, E-2–E-4: 입력표 usable), 분류별. 이 목록 안에서 모든 입력이 같은 짝이고 예측이 빠진 짝이 있으면 "
+              "STOP(12 E). apply.py 예측에 범위 밖 입력(g3h) 행이 있으면 STOP. apply_report levels_info에서 usable 짝이 0인 범위 안 "
+              "입력은 예측 행이 없어도 된다(그 목록은 0짝, 표는 'no pairs').",
+    "U-2e-5": "판정 ② 변경(사용자 결정 3(b), DEVIATIONS.md U-3b): EV-11의 ②를 'TS 성공률 ≥ 0.9'만으로 바꾼다. 형태 유지율(rmsd.same_ts "
+              "0.1 Å · 0.02 Å, 수준 간 비교에 부적합: G1 대 DFT 기준선 1.17 %)은 E_cost.csv·spec9 c2.shape_kept에 참고 값으로만 "
+              "적고 판정에 쓰지 않는다(shape_kept_in_judgment = false). ①·③·부분/불가 규칙은 그대로. 명령서 9절 문구 검사(EV-12)는 "
+              "그대로 하되 적용 규칙은 이것이다. U-1에서는 모든 판정 수치를 설명용(explanatory = true, verdict_ko에 '(설명용)')으로 "
+              "적고 명령서 9절의 정식 권고(go 방법 권고)를 내지 않는다: 권고 문장은 '정식 권고 없음 + 방법별 설명용 판정 + 중단 "
+              "방법'. 중단 방법(g3h)의 verdict = 'stopped_user'(판정 안 함), E-5의 끝난 단위 TS 성공률·코어시간 중앙값은 참고 값으로 "
+              "같이 적는다. 범위 안 방법의 own_<m> same 목록이 0짝이거나 dft·SH oi MAE 행이 없으면 ①을 셀 수 없으므로 c1.ok = "
+              "null, verdict = 'not_judged'('판정 불가(비교 짝 없음)'; '불가'로 읽지 않음, 표의 ① 칸 '—'); 짝이 있는데 회복률이 "
+              "NaN(분모 ≤ 0)이면 EV-8·EV-11 그대로 ① 불만족.",
+    "U-2e-6": "E-5 비용·성공(U-1): O_status.csv의 모든 Part A 행(stopped_user 행 포함)에서 TS 단위가 끝난 것(ts_status ok / fail / "
+              "error)만 센다 = O_report methods의 끝난 TS 단위. unit.json이 없는 TS(미실행, U-1 scancel로 죽음)는 n_ts_not_run으로 "
+              "따로 세고 성공률·코어시간에 넣지 않는다. g3h도 끝난 단위로 행을 둔다(F·E는 없음, scope 열 'stopped by user (U-1)'). "
+              "기준 구조 분자 단위 비용 = O_refs.csv에서 끝난 단위(status가 비어 있지 않고 stopped_user가 아님)만; 반응당 기준 구조 "
+              "코어시간(core_h_refs)은 조립된 반응(g3r 선택)에만 있다. final_done_rate = n_final_done / 조립된 행(status ≠ "
+              "stopped_user; g3h는 0행이라 NaN, U-1이 아니면 Part A 행 전부). 검사: 방법마다 끝난 TS 수와 core_h 합(모든 끝난 TS) = "
+              "O_report methods.n_ts, ts_core_h n × mean(상대 1e-9), 아니면 STOP. ③과 ②는 이 수치(same 분류)로 본다.",
+    "U-2e-7": "E-6 Part B(U-1에서도 명령서 그대로): S_rxns part_b 반응 전부(40)의 Part B 단위 결과(남은 2반응은 사용자 결정 2로 "
+              "마무리, O_report complete가 그것을 요구). 분포·dipole별·9절 Part B 문장은 EV-10 그대로.",
+    "U-2e-8": "작은 목록의 bootstrap·CI(U-1 완성 짝 약 10개, core 몇 개): d1_eval.boot_diff는 짝 1개·core 1개에서도 돈다(core 1개면 "
+              "모든 재표집이 같아 CI 폭 0 — 표에 n_cores를 같이 적는다); 짝 0개 = NaN 행('no pairs'), 회복률 CI = 분모 > 0인 "
+              "재표집이 없으면 NaN, Wilson CI = n 0이면 NaN. 그림은 빈 패널이어도 그린다(n = 0 표시). 수치는 설명용. same 목록이 "
+              "0짝이면 판정은 'not_judged'(U-2e-5), '불가'가 아니다.",
+    "U-2e-9": "SUMMARY_G3.md(U-1): 맨 앞 세 문장(명령서 10) = (1) 판정 문장을 '설명용 판정(U-1 부분 표본), g3h는 사용자 결정으로 "
+              "중단, ②는 TS 성공률만(U-3b)'으로, (2) Part B 비율 그대로, (3) 권고 = 정식 권고 없음. 그 뒤 절 앞에 U-1·U-2·U-3a·"
+              "U-3b 문단(수치 = O_report u1·estimate_retro, U1_selection, E_report pair_lists; 경위는 results/DEVIATIONS.md 참조, "
+              "여기서 쓰지 않음). 절 순서는 명령서 10 그대로, 각 표의 g3h 칸은 '중단(U-1)', E-5와 비용에는 g3h 끝난 단위를 적는다. "
+              "한계에 U-1 표본 편향(끝난 단위·성공 조건으로 고른 짝, 작은 n·core)을 더한다.",
 }
 
 
@@ -550,21 +627,106 @@ def load_o(A, B):
     return OS, OR, rep, est, files
 
 
-def load_f():
+def load_u1(SP, A, OS, o_rep):
+    """U-2e-3: the U-1 scope (O_report.json 'u1' block + results/U1_selection.json) checked against S_pairs.csv and
+    O_status.csv; sets SCOPE. -> (record, {file: sha256}). Without a 'u1' block: the spec as written (both methods)."""
+    u = o_rep.get("u1")
+    if not u:
+        if U1_SEL.is_file():
+            not_ready(f"{U1_SEL} exists but {O_REPORT.name} has no 'u1' block (rerun opt.py assemble, U-1)")
+        set_scope(C.METHODS, False)
+        return dict(active=False, rule="spec as written (no 'u1' block in O_report.json)"), {}
+    if not U1_SEL.is_file():
+        C.stop(f"{O_REPORT.name} has a 'u1' block but {U1_SEL} is missing (U-1 contract)")
+    sha = C.sha256(U1_SEL)
+    if u.get("selection_sha256") != sha:
+        not_ready(f"{U1_SEL.name} sha256 {sha[:16]} != O_report u1.selection_sha256 "
+                  f"{str(u.get('selection_sha256'))[:16]} (rerun opt.py select / assemble and the later steps)")
+    s = C.read_json(U1_SEL)
+    if s.get("method") != U1_METHOD:
+        C.stop(f"{U1_SEL.name}: method {s.get('method')!r} != {U1_METHOD} (U-1: g3r only)")
+    cp = s.get("complete_pairs") or []
+    ids = [str(p.get("pair_id")) for p in cp]
+    if not cp or len(set(ids)) != len(ids):
+        C.stop(f"{U1_SEL.name}: {len(cp)} complete pairs, {len(ids) - len(set(ids))} duplicated pair ids (U-1a)")
+    sp = SP.set_index("pair_id")
+    bad = []
+    for p in cp:
+        pid = str(p["pair_id"])
+        if pid not in sp.index:
+            bad.append(f"{pid}: not in S_pairs.csv")
+            continue
+        r = sp.loc[pid]
+        mine = (int(r.a_rxn), int(r.b_rxn), int(r.fold), str(r["class"]), str(r.dipole))
+        theirs = (int(p["a_rxn"]), int(p["b_rxn"]), int(p["fold"]), str(p["class"]), str(p.get("dipole")))
+        if mine != theirs:
+            bad.append(f"{pid}: S_pairs {mine} vs selection {theirs}")
+    rxns = sorted({int(p[k]) for p in cp for k in ("a_rxn", "b_rxn")})
+    if sorted(int(x) for x in s.get("selected_rxns") or []) != rxns or not set(rxns) <= set(A):
+        bad.append("selected_rxns != the a / b reactions of complete_pairs, or outside Part A")
+    if bad:
+        C.stop(f"{U1_SEL.name} inconsistent with {S_PAIRS} (U-1a): {bad[:4]}")
+    # O_status (opt.py assemble U-1b) agrees with the selection: stopped rows, and the U-1 rule on ts_status
+    Aq = OS[OS.part == "A"]
+    want = ((Aq.method != U1_METHOD) | ~Aq.rxn_id.astype(int).isin(rxns)).to_numpy(dtype=bool)
+    got = (Aq.status.astype(str) == U1_STATUS).to_numpy(dtype=bool)
+    mism = [f"{m} {r} {st}" for m, r, st, w, g in zip(Aq.method, Aq.rxn_id, Aq.status, want, got) if w != g]
+    ok_ts = set(Aq.rxn_id[(Aq.method == U1_METHOD) & (Aq.ts_status.fillna("").astype(str) == "ok")].astype(int))
+    rule = sorted(str(p) for p, a_, b_ in zip(SP.pair_id, SP.a_rxn, SP.b_rxn) if int(a_) in ok_ts and int(b_) in ok_ts)
+    if mism or rule != sorted(ids):
+        C.stop(f"O_status.csv disagrees with {U1_SEL.name} (assemble U-1b; files changed after assemble?): stopped_user "
+               f"rows != outside the selection for {len(mism)} rows {mism[:4]}; complete pairs by O_status ts_status "
+               f"{len(rule)} vs selection {len(ids)} (only O_status {sorted(set(rule) - set(ids))[:4]}, only selection "
+               f"{sorted(set(ids) - set(rule))[:4]})")
+    sc = set_scope((U1_METHOD,), True)
+    by = {c: int(sum(1 for p in cp if str(p["class"]) == c)) for c in CLASSES}
+    rec = dict(active=True, decision=DECISIONS["U-2e-3"], explanatory=True, label=f"{EXPL_KO} (U-1 부분 표본)",
+               deviations=str(DEVIATIONS), method=U1_METHOD, methods_in_scope=sc["methods"],
+               methods_stopped={m: U1_TEXT for m in sc["stopped"]},
+               selection=dict(path=str(U1_SEL), sha256=sha, written=s.get("written"), n_complete_pairs=len(cp),
+                              n_by_class=by, n_selected_rxns=len(rxns), pair_ids=sorted(ids), rxns=rxns),
+               o_report_u1={k: u.get(k) for k in ("decision", "selection_sha256", "n_complete_pairs", "n_by_class",
+                                                  "n_selected_rxns", "n_selected_done", "n_pairs_both_done",
+                                                  "pairs_both_done_by_class", "needed_refs_missing", "stopped_user",
+                                                  "first20")},
+               estimate_retro=o_rep.get("estimate_retro"))
+    return rec, {str(U1_SEL): sha}
+
+
+def u1_sha_check(name, blk, rec):
+    """U-2e-3: a later step's 'u1' record names the same selection (sha256) as O_report; else exit 2 (rerun it)."""
+    if not rec.get("active"):
+        if blk and blk.get("active"):
+            not_ready(f"{name} has an active 'u1' block but O_report.json has none (rerun {name})")
+        return None
+    got = ((blk or {}).get("selection") or {}).get("sha256")
+    if not (blk or {}).get("active") or got != rec["selection"]["sha256"]:
+        not_ready(f"{name}: written without the current U-1 selection (u1 active {(blk or {}).get('active')}, "
+                  f"selection sha256 {str(got)[:16]} vs {rec['selection']['sha256'][:16]}): rerun it (U-2e-3)")
+    return got
+
+
+def load_f(u1):
+    """F_report.json + the P tables of the methods in scope (U-2e-3: a stopped method's table is never read)."""
     need(F_REPORT)
     rep = C.read_json(F_REPORT)
     if rep.get("stop"):
         C.stop(f"Phase F ended in a STOP ({F_REPORT}: {rep.get('stop_reasons')})")
     if not rep.get("complete"):
         not_ready(f"{F_REPORT}: Phase F not complete ({(rep.get('incomplete') or [])[:5]})")
+    u1_sha_check(F_REPORT.name, rep.get("u1"), u1)
+    if u1.get("active") and list((rep.get("u1") or {}).get("methods_in_scope") or []) != list(SCOPE["methods"]):
+        C.stop(f"{F_REPORT.name} u1.methods_in_scope {(rep.get('u1') or {}).get('methods_in_scope')} != "
+               f"{list(SCOPE['methods'])} (U-1: g3r only)")
     T, usable, files = {}, {}, {str(F_REPORT): C.sha256(F_REPORT)}
-    for m in C.METHODS:
+    for m in SCOPE["methods"]:
         pb, tab = C.RES / f"P_build_{m}.json", C.G3 / "inputs" / f"{m}.parquet"
         need(pb, tab)
         b = C.read_json(pb)
         sha = C.sha256(tab)
         if not b.get("all_pass") or (b.get("outputs") or {}).get(str(tab)) != sha:
             C.stop(f"{pb}: all_pass {b.get('all_pass')} or {tab} sha256 != its outputs")
+        u1_sha_check(pb.name, b.get("u1"), u1)
         X = pd.read_parquet(tab, columns=["rxn_id", "usable"] + H_COLS)
         X["rxn_id"] = X.rxn_id.astype(int)
         X = X.set_index("rxn_id")
@@ -692,7 +854,9 @@ def geom_tasks(A, SR, OS, lab):
             st = OS[(OS.method == m) & (OS.part == "A") & (OS.rxn_id == rid)].status.iloc[0]
             if (mk == ".done") != (str(st) == "ok") or mk is None:
                 bad.append(f"{m} {rid}: marker {mk} vs O_status status {st!r} (Phase O folder changed after assemble)")
-            if mk == ".done":
+            if (str(st) == U1_STATUS) != (mk == f".fail_{U1_STATUS}"):            # U-2e-3: U-1 marker = U-1 row
+                bad.append(f"{m} {rid}: marker {mk} vs O_status status {st!r} (U-1 stopped marker)")
+            if mk == ".done" and m in SCOPE["methods"]:                         # U-2e-3: no stopped-method geometry
                 if not (fd / "ts.xyz").is_file():
                     bad.append(f"{m} {rid}: .done without ts.xyz")
                 else:
@@ -759,7 +923,7 @@ def e1_tables(G, SP, cls_of):
             detail.append(dict(rxn_id=rid, cls=cls_of[rid], level=lv, d1=v["d"][0], d2=v["d"][1],
                                dform_short=v["dform_short"], dform_long=v["dform_long"], rmsd_heavy=v["rmsd"],
                                form_diff_max=v["form_diff_max"], same_ts=v["same_ts"], short_pair=g["short_pair"]))
-    for scope, lvls in SCOPE_LEVELS.items():
+    for scope, lvls in SCOPE["scope_levels"].items():
         avail = {r for r, g in G.items() if all(lv in g["levels"] for lv in lvls)}
         for cls in CLASSES:
             R = sorted(r for r in avail if cls_of[r] == cls)
@@ -798,7 +962,7 @@ def e1_tables(G, SP, cls_of):
 def model_lists(SP, usable):
     """{(scope, class): pair frame (pair_id order)}: both ends usable in every input of the scope (decision EV-1)."""
     out = {}
-    for scope, lvls in SCOPE_LEVELS.items():
+    for scope, lvls in SCOPE["scope_levels"].items():
         ok = set.intersection(*[usable[lv] for lv in lvls])
         for cls in CLASSES:
             Pp = SP[(SP["class"] == cls) & SP.a_rxn.isin(ok) & SP.b_rxn.isin(ok)].sort_values("pair_id")
@@ -822,7 +986,7 @@ def e2_table(T, ML):
     rows = []
     for (scope, cls), Pp in ML.items():
         D0 = dH(T, "dft", Pp)
-        for lv in SCOPE_LEVELS[scope]:
+        for lv in SCOPE["scope_levels"][scope]:
             D = dH(T, lv, Pp)
             for j, t in enumerate(T9):
                 x = D[:, j] - D0[:, j]
@@ -837,7 +1001,9 @@ def e2_table(T, ML):
 class Pred:
     KEY = ["input", "train_rung", "arm", "model", "target"]
 
-    def __init__(self, SP, Y):
+    def __init__(self, SP, Y, n_usable=None):
+        """SP = the pair universe (U-1: the complete pairs); n_usable = apply_report levels_info n_usable per input
+        (U-2e-4: an input in scope with 0 usable pairs has no rows by design)."""
         need(PRED)
         P = pd.read_parquet(PRED)
         cols = set(P.columns)
@@ -864,12 +1030,17 @@ class Pred:
               & (P.model != XGB)].copy()
         P["fold"] = P.fold.astype(int)
         self.inputs = sorted(set(P.input))
-        need_in = ["dft", "g2"] + list(C.METHODS)
+        nu = n_usable or {}
+        need_in = [x for x in ["dft", "g2"] + list(SCOPE["methods"]) if nu.get(x, 1) > 0]
         absent = [x for x in need_in if x not in self.inputs]
         if absent:
             not_ready(f"{PRED} has no rows for inputs {absent} (apply.py not finished?)")
         if not set(self.inputs) <= set(LEVELS):
             C.stop(f"{PRED}: unknown inputs {sorted(set(self.inputs) - set(LEVELS))}")
+        out = sorted(set(self.inputs) - set(SCOPE["levels"]))
+        if out:                                              # U-2e-4: a stopped method has no predictions
+            C.stop(f"{PRED}: rows for inputs {out} outside the scope {list(SCOPE['levels'])} ({U1_TEXT}: "
+                   f"{list(SCOPE['stopped'])})")
         if P.duplicated(self.KEY + ["pair_id"]).any():
             C.stop(f"{PRED}: duplicated (input, train_rung, arm, model, target, pair_id) rows")
         fold = dict(zip(SP.pair_id, SP.fold))
@@ -899,7 +1070,7 @@ class Pred:
         self.info = dict(path=str(PRED), sha256=C.sha256(PRED), n_rows_file=n_all, n_rows_used=int(len(P)),
                          n_xgb_rows_ignored=n_xgb, columns=sorted(cols), aliases=alias, inputs=self.inputs,
                          models=sorted(set(P.model)), y_max_abs_diff=ydev, has_source=self.has_source,
-                         has_base=self.has_base)
+                         has_base=self.has_base, inputs_required=need_in, n_usable_apply=nu)
 
     def get(self, X, r, a, model, t, ids, kind):
         """yhat on ids for unit model `model` (or the REP rows when kind = REP); None = no rows for that model (REP_atom
@@ -1026,17 +1197,25 @@ def check_rep_rows(pred, reps):
     return dict(n_rep_blocks=n)
 
 
-def check_apply_report():
-    """$G3/apply/apply_report.json written by the same apply.py run (outputs sha256 = predictions.parquet)."""
-    need(APPLY_REPORT)
+def check_apply_report(u1):
+    """$G3/apply/apply_report.json written by the same apply.py run (outputs sha256 = predictions.parquet); U-2e-3 /
+    U-2e-4: its 'u1' record names the current selection and its levels are the levels in scope (else exit 2)."""
+    need(APPLY_REPORT, PRED)
     ar = C.read_json(APPLY_REPORT)
     if (ar.get("outputs") or {}).get("predictions_sha256") != C.sha256(PRED):
         C.stop(f"{PRED} sha256 != {APPLY_REPORT} outputs (rerun apply.py e3)")
     sc = ar.get("self_check") or {}
     if sc and not sc.get("ok"):
         C.stop(f"{APPLY_REPORT}: self_check not ok")
+    u1_sha_check(APPLY_REPORT.name, ar.get("u1"), u1)
+    lv = ar.get("levels")
+    if lv is not None and list(lv) != list(SCOPE["levels"]):
+        not_ready(f"{APPLY_REPORT.name} levels {lv} != {list(SCOPE['levels'])} (rerun apply.py e3)")
+    li = ar.get("levels_info") or {}
+    nu = {X: int((li.get(X) or {}).get("n_usable", 1)) for X in SCOPE["levels"]}
     return dict(path=str(APPLY_REPORT), sha256=C.sha256(APPLY_REPORT), self_check_ok=sc.get("ok"),
                 common_pairs_n=(ar.get("common_pairs") or {}).get("n"), xgb_replaced=ar.get("xgb_replaced"),
+                levels=lv, levels_stopped=ar.get("levels_stopped"), n_usable=nu,
                 common_ids=sorted(str(x) for x in ((ar.get("common_pairs") or {}).get("ids") or [])))
 
 
@@ -1072,7 +1251,7 @@ def e3_table(ML, pred, reps, T, betas, Y):
     rows, ERR = [], {}
     for (scope, cls), Pp in ML.items():
         ids, cores = Pp.pair_id.tolist(), Pp.core.to_numpy()
-        inputs = [x for x in SCOPE_LEVELS[scope] if x in pred.inputs]
+        inputs = [x for x in SCOPE["scope_levels"][scope] if x in pred.inputs]
         Yp = Y.loc[ids] if ids else None
         for r, a in FAMILIES:
             for t in T9:
@@ -1142,7 +1321,7 @@ def e4_table(ML, ERR, E3, reps):
             ch = reps[("dft", "SH", t)]
             kind = "REP" if ch["rep"] != XGB else "REP_atom"
             src = ch["rep"] if kind == "REP" else ch["rep_atom"]
-            for m in [x for x in C.METHODS if x in SCOPE_LEVELS[scope]]:
+            for m in [x for x in SCOPE["methods"] if x in SCOPE["scope_levels"][scope]]:
                 base = dict(scope=scope, **{"class": cls}, method=m, target=t, family="dft·SH", model=kind, source=src,
                             n_pairs=int(len(Pp)), n_cores=int(len(np.unique(cores))))
                 ks = [(scope, cls, "dft", "SH", kind, t, X) for X in ("g2", m, "dft")]
@@ -1176,6 +1355,9 @@ def _stats(x):
 
 
 def e5_table(OS, OR, cls_of, B):
+    """E-5 over the finished units (U-2e-6): every Part A row of O_status (stopped_user rows too) whose TS unit
+    finished; a TS unit without unit.json (never run / killed by the U-1 scancel) is counted apart (n_ts_not_run).
+    Every method has rows (g3h: finished-unit cost only, scope 'stopped by user (U-1)')."""
     rows = []
     for m in C.METHODS:
         Aq = OS[(OS.method == m) & (OS.part == "A")]
@@ -1184,6 +1366,7 @@ def e5_table(OS, OR, cls_of, B):
             st = q.ts_status.fillna("").astype(str)
             ok, fail, err = st == "ok", st == "fail", st == "error"
             n_ok, n_fail, n_err = int(ok.sum()), int(fail.sum()), int(err.sum())
+            n_nr = int((~(ok | fail | err)).sum())
             kept = [_tri(v) for v in q.shape_kept[ok]]
             n_kept = sum(1 for v in kept if v is True)
             med, mean, tot = _stats(q.core_h[ok | fail])
@@ -1191,20 +1374,28 @@ def e5_table(OS, OR, cls_of, B):
             rmed, rmean, rtot = _stats(q.core_h_refs)
             sci = wilson(n_ok, n_ok + n_fail) if n_ok + n_fail else (float("nan"), float("nan"))
             kci = wilson(n_kept, n_ok) if n_ok else (float("nan"), float("nan"))
+            n_su = int((q.status.astype(str) == U1_STATUS).sum())
+            n_fd = int((q.status.astype(str) == "ok").sum())
             row = dict(method=m, **{"class": cls}, n_rxn=int(len(q)), n_ts_ok=n_ok, n_ts_fail=n_fail, n_ts_error=n_err,
                        ts_success=frac(n_ok, n_ok + n_fail), ts_success_ci_lo=sci[0], ts_success_ci_hi=sci[1],
                        n_shape_kept=n_kept, shape_kept_rate=frac(n_kept, n_ok), shape_kept_ci_lo=kci[0],
-                       shape_kept_ci_hi=kci[1], n_final_done=int((q.status.astype(str) == "ok").sum()),
-                       final_done_rate=frac(int((q.status.astype(str) == "ok").sum()), len(q)),
+                       shape_kept_ci_hi=kci[1], n_final_done=n_fd,
+                       final_done_rate=frac(n_fd, int(len(q)) - n_su),    # U-2e-6: over assembled (non-U-1) rows
                        n_retry=int((pd.to_numeric(q.attempt_used, errors="coerce") == 2).sum()),
                        ts_core_h_median=med, ts_core_h_mean=mean, ts_core_h_sum=tot,
                        ts_core_h_per_success=(tot_all / n_ok) if n_ok else float("nan"),
                        ref_core_h_rxn_median=rmed, ref_core_h_rxn_mean=rmean, ref_core_h_rxn_sum=rtot,
-                       label_ts_core_h=LABEL_TS_CORE_H, ts_core_h_median_over_label=med / LABEL_TS_CORE_H)
+                       label_ts_core_h=LABEL_TS_CORE_H, ts_core_h_median_over_label=med / LABEL_TS_CORE_H,
+                       n_ts_finished=n_ok + n_fail + n_err, n_ts_not_run=n_nr,
+                       n_stopped_user=n_su,
+                       scope="in scope" if m in SCOPE["methods"] else U1_TEXT)
             if cls == "all":
                 u = OR[OR.method == m]
-                umed, umean, utot = _stats(u.core_h)
-                row.update(n_ref_units=int(len(u)), n_ref_units_ok=int((u.status.astype(str) == "ok").sum()),
+                ust = u.status.fillna("").astype(str)
+                fin = u[(ust != "") & (ust != U1_STATUS)]                           # U-2e-6: finished units only
+                umed, umean, utot = _stats(fin.core_h)
+                row.update(n_ref_units=int(len(fin)), n_ref_units_ok=int((fin.status.astype(str) == "ok").sum()),
+                           n_ref_units_not_run=int(len(u) - len(fin)),
                            ref_unit_core_h_median=umed, ref_unit_core_h_mean=umean, ref_unit_core_h_sum=utot)
             rows.append(row)
     if len(B):
@@ -1225,8 +1416,28 @@ def e5_table(OS, OR, cls_of, B):
             "n_final_done", "final_done_rate", "n_retry", "ts_core_h_median", "ts_core_h_mean", "ts_core_h_sum",
             "ts_core_h_per_success", "ref_core_h_rxn_median", "ref_core_h_rxn_mean", "ref_core_h_rxn_sum",
             "n_ref_units", "n_ref_units_ok", "ref_unit_core_h_median", "ref_unit_core_h_mean", "ref_unit_core_h_sum",
-            "label_ts_core_h", "ts_core_h_median_over_label"]
+            "label_ts_core_h", "ts_core_h_median_over_label", "n_ts_finished", "n_ts_not_run", "n_stopped_user",
+            "n_ref_units_not_run", "scope"]
     return pd.DataFrame(rows).reindex(columns=cols)
+
+
+def cost_check(OS, o_rep):
+    """U-2e-6: the finished TS units of O_status (ts_status set) = O_report methods (n_ts; core_h sum = n x mean)."""
+    rec, bad = {}, []
+    for m in C.METHODS:
+        q = OS[(OS.method == m) & (OS.part == "A") & OS.ts_status.fillna("").astype(str).isin(["ok", "fail", "error"])]
+        o = (o_rep.get("methods") or {}).get(m) or {}
+        oq = o.get("ts_core_h") or {}
+        x = [v for v in (_f(u) for u in q.core_h) if v is not None]
+        s_here, s_o = float(sum(x)), (float(oq["n"]) * float(oq["mean"]) if oq.get("n") else 0.0)
+        rec[m] = dict(n_ts_o_status=int(len(q)), n_ts_o_report=o.get("n_ts"), core_h_sum_o_status=s_here,
+                      core_h_sum_o_report=s_o, n_core_h=len(x), n_core_h_o_report=oq.get("n"))
+        if int(len(q)) != int(o.get("n_ts") or 0) or len(x) != int(oq.get("n") or 0) or \
+                not abs(s_here - s_o) <= 1e-9 * max(1.0, abs(s_o)):
+            bad.append(f"{m}: {rec[m]}")
+    if bad:
+        C.stop("E-5: O_status.csv finished TS units differ from O_report.json methods (U-2e-6): " + "; ".join(bad))
+    return rec
 
 
 def _bin(v):
@@ -1304,8 +1515,25 @@ def partb_summary(Bt):
 
 # ---------------------------------------------------------------- spec 9 decision
 def spec9(E3, E4, E5):
+    """spec 9 per method (EV-11) with ② = TS success only (U-2e-5 = U-3b); under U-1 the numbers are explanatory and
+    no formal recommendation is made; a stopped method is not judged (its E-5 finished-unit numbers are kept)."""
     out = {}
+    act = SCOPE["active"]
     for m in C.METHODS:
+        c = E5[(E5.method == m) & (E5["class"] == "same")]
+        ts, sk, ch = ((_f(c[x].iloc[0]) if len(c) else None) for x in ("ts_success", "shape_kept_rate",
+                                                                        "ts_core_h_median"))
+        chm = _f(c.ts_core_h_mean.iloc[0]) if len(c) else None
+        nfin = int(_f(c.n_ts_finished.iloc[0]) or 0) if len(c) else 0
+        if m not in SCOPE["methods"]:                      # U-2e-3: stopped by the user, not judged
+            out[m] = dict(scope=None, judged=False, explanatory=None, verdict=U1_STATUS, verdict_ko=U1_TEXT_KO,
+                          note=f"{U1_TEXT}: no Phase F / E; E-5 finished-unit numbers below are descriptive only",
+                          c1=dict(ok=None, recovery_oi=None, mae_oi_dftSH=None, model=None, n_pairs=0),
+                          c2=dict(ok=None, ts_success=ts, shape_kept=sk, shape_kept_in_judgment=False,
+                                  n_ts_finished=nfin),
+                          c3=dict(ok=None, ts_core_h_median=ch, ts_core_h_mean=chm, threshold=CRIT["core_h_median"],
+                                  label_ts_core_h=LABEL_TS_CORE_H))
+            continue
         sc = f"own_{m}"                                    # EV-11: each method on its own pair list
         r = E4[(E4.scope == sc) & (E4["class"] == "same") & (E4.method == m) & (E4.target == "oi")]
         rec = _f(r.recovery.iloc[0]) if len(r) else None
@@ -1313,21 +1541,32 @@ def spec9(E3, E4, E5):
         q = E3[(E3.scope == sc) & (E3["class"] == "same") & (E3.family == "dft·SH") & (E3.model == kind)
                & (E3.target == "oi") & (E3.input == m)]
         mae = _f(q.mae.iloc[0]) if len(q) else None
-        c = E5[(E5.method == m) & (E5["class"] == "same")]
-        ts, sk, ch = ((_f(c[x].iloc[0]) if len(c) else None) for x in ("ts_success", "shape_kept_rate",
-                                                                        "ts_core_h_median"))
-        c1 = rec is not None and rec >= CRIT["rec_oi"] and mae is not None and mae <= CRIT["mae_oi"]
-        c2 = ts is not None and ts >= CRIT["ts_success"] and sk is not None and sk >= CRIT["shape_kept"]
+        n_same = int(_f(q.n_pairs.iloc[0]) or 0) if len(q) else 0
+        # U-2e-5: no same pair (or no MAE row) = ① cannot be evaluated -> 'not_judged', not '불가'; a NaN recovery
+        # with pairs present stays '불만족' (EV-8 / EV-11 pre-registered rule)
+        nodata = n_same == 0 or mae is None
+        c1 = None if nodata else (rec is not None and rec >= CRIT["rec_oi"] and mae <= CRIT["mae_oi"])
+        c2 = ts is not None and ts >= CRIT["ts_success"]   # U-2e-5 (U-3b): shape retention is not judged
         c3 = ch is not None and ch <= CRIT["core_h_median"]
-        v = "go" if (c1 and c2 and c3) else ("partial" if c1 else "impossible")
-        out[m] = dict(scope=sc, c1=dict(ok=c1, recovery_oi=rec, mae_oi_dftSH=mae, model=kind,
-                                        n_pairs=int(q.n_pairs.iloc[0]) if len(q) else 0,
-                                        thresholds=dict(recovery=CRIT["rec_oi"], mae=CRIT["mae_oi"])),
-                      c2=dict(ok=c2, ts_success=ts, shape_kept=sk, thresholds=dict(ts_success=CRIT["ts_success"],
-                                                                                  shape_kept=CRIT["shape_kept"])),
-                      c3=dict(ok=c3, ts_core_h_median=ch, ts_core_h_mean=_f(c.ts_core_h_mean.iloc[0]) if len(c) else None,
+        v = "not_judged" if nodata else ("go" if (c1 and c2 and c3) else ("partial" if c1 else "impossible"))
+        out[m] = dict(scope=sc, judged=not nodata, explanatory=act,
+                      c1=dict(ok=c1, recovery_oi=rec, mae_oi_dftSH=mae, model=kind, n_pairs=n_same,
+                              n_cores=int(q.n_cores.iloc[0]) if len(q) else 0,
+                              thresholds=dict(recovery=CRIT["rec_oi"], mae=CRIT["mae_oi"])),
+                      c2=dict(ok=c2, ts_success=ts, shape_kept=sk, shape_kept_in_judgment=False, n_ts_finished=nfin,
+                              thresholds=dict(ts_success=CRIT["ts_success"]),
+                              shape_kept_reference=dict(threshold_spec=CRIT["shape_kept"],
+                                                        rule="U-3b: reported, not judged (decision U-2e-5)")),
+                      c3=dict(ok=c3, ts_core_h_median=ch, ts_core_h_mean=chm,
                               threshold=CRIT["core_h_median"], label_ts_core_h=LABEL_TS_CORE_H),
-                      verdict=v, verdict_ko=VERDICT_KO[v])
+                      verdict=v, verdict_ko=VERDICT_KO[v] + (f" ({EXPL_KO})" if act else ""))
+    if act:                                                # U-2e-5: explanatory only, no formal recommendation
+        js = ", ".join(f"{m} '{out[m]['verdict_ko']}'" for m in SCOPE["methods"])
+        txt = (f"U-1 부분 표본의 설명용 판정이라 명령서 9절의 정식 권고는 내지 않는다(설명용 판정 {js}; "
+               f"{', '.join(SCOPE['stopped']) or '없음'}는 사용자 결정으로 중단되어 판정하지 않음).")
+        return dict(methods=out, recommended=None, recommendation_ko=txt, explanatory=True,
+                    scope={m: f"own_{m}" for m in SCOPE["methods"]}, cls="same",
+                    rule=DECISIONS["EV-11"] + " / " + DECISIONS["U-2e-5"])
     gos = [m for m in C.METHODS if out[m]["verdict"] == "go"]
     if len(gos) >= 2:
         best = sorted(gos, key=lambda m: (out[m]["c3"]["ts_core_h_median"], out[m]["c3"]["ts_core_h_mean"] or 0.0,
@@ -1346,10 +1585,13 @@ def spec9(E3, E4, E5):
         if part:                                           # one sentence (spec 10: the third of the first three)
             txt = (f"본격 진행을 권고하는 방법은 없다({', '.join(part)}는 정확도 기준 ①만 만족: 정확도는 되지만 비용이나 "
                    f"안정성이 문제다).")
-        else:
+        elif all(out[m]["verdict"] == "impossible" for m in C.METHODS):
             txt = "본격 진행을 권고하는 방법은 없다(두 방법 모두 ① 불만족)."
+        else:                                              # U-2e-5: 'not_judged' is reported, never read as '불가'
+            txt = ("본격 진행을 권고하는 방법은 없다("
+                   + ", ".join(f"{m} '{out[m]['verdict_ko']}'" for m in C.METHODS) + ").")
     return dict(methods=out, recommended=rec_m, recommendation_ko=txt, scope={m: f"own_{m}" for m in C.METHODS},
-                cls="same", rule=DECISIONS["EV-11"])
+                cls="same", explanatory=False, rule=DECISIONS["EV-11"] + " / " + DECISIONS["U-2e-5"])
 
 
 # ---------------------------------------------------------------- figures
@@ -1363,9 +1605,14 @@ def _save(plt, fig, name, df):
     return paths
 
 
+def _sub():
+    """figure title suffix under U-1 (U-2e-8: the subset numbers are explanatory)."""
+    return "; U-1 subset, explanatory" if SCOPE["active"] else ""
+
+
 def fig_noise(plt, DF, N):
     d = N[(N.scope == "common") & (N.level != "dft")].copy()
-    lv = [x for x in LEVELS if x != "dft"]
+    lv = [x for x in SCOPE["levels"] if x != "dft"]                     # U-2e-3: no stopped method
     fig, axs = plt.subplots(1, 2, figsize=(DP.FIG_W, DP.FIG_W * 0.40), sharey=True, constrained_layout=True)
     x = np.arange(len(T9))
     w = 0.18
@@ -1380,7 +1627,7 @@ def fig_noise(plt, DF, N):
         ax.set_yscale("log")
         ax.set_xticks(x)
         ax.set_xticklabels([DF.TLAB.get(t, t) for t in T9], rotation=45, ha="right")
-        ax.set_title(f"{cls}-TS pairs (n = {n})")
+        ax.set_title(f"{cls}-TS pairs (n = {n}{_sub()})")
         ax.grid(axis="x", visible=False)
     axs[0].set_ylabel("median |ΔΔ_HF(input) − ΔΔ_HF(DFT TS)| (kcal/mol)")
     axs[-1].legend(loc="upper left", bbox_to_anchor=(1.0, 1.0))
@@ -1390,6 +1637,7 @@ def fig_noise(plt, DF, N):
 def fig_endtoend(plt, DF, E3):
     from matplotlib.lines import Line2D
     series = (("dft·SH", "o", True, -0.22), ("dft·S", "s", False, 0.0), ("LINE·dft", "X", True, 0.22))
+    ins = [x for x in FIG2_INPUTS if x in SCOPE["levels"]]              # U-2e-3: no stopped method
     rows = []
     fig, axs = plt.subplots(2, 3, figsize=(DP.FIG_W, DP.FIG_W * 0.62), constrained_layout=True)
     for i, cls in enumerate(CLASSES):
@@ -1397,7 +1645,7 @@ def fig_endtoend(plt, DF, E3):
             ax = axs[i, j]
             n = 0
             for name, mk, filled, off in series:
-                for xpos, X in enumerate(FIG2_INPUTS):
+                for xpos, X in enumerate(ins):
                     q = E3[(E3.scope == "common") & (E3["class"] == cls) & (E3.family == name) & (E3.target == t)
                            & (E3.input == X)]
                     q = q[q.model.isin(["REP", "LINE"]) & q.mae.notna()]
@@ -1422,14 +1670,14 @@ def fig_endtoend(plt, DF, E3):
                                      substituted=sub))
             if t == "oi":
                 ax.axhline(CRIT["mae_oi"], color=DF.MUTED, lw=0.8, ls="--")
-                ax.annotate("0.20 (spec 9, criterion 1)", (len(FIG2_INPUTS) - 0.5, CRIT["mae_oi"]),
+                ax.annotate("0.20 (spec 9, criterion 1)", (len(ins) - 0.5, CRIT["mae_oi"]),
                             textcoords="offset points",
                             xytext=(0, 3), ha="right", fontsize=DP.FONT_PT - 1, color=DF.INK2)
-            ax.set_xticks(range(len(FIG2_INPUTS)))
-            ax.set_xticklabels(list(FIG2_INPUTS))
-            ax.set_xlim(-0.6, len(FIG2_INPUTS) - 0.4)
+            ax.set_xticks(range(len(ins)))
+            ax.set_xticklabels(list(ins))
+            ax.set_xlim(-0.6, len(ins) - 0.4)
             ax.set_ylim(bottom=0)
-            ax.set_title(f"{DF.TLAB.get(t, t)} · {cls}-TS pairs (n = {n})")
+            ax.set_title(f"{DF.TLAB.get(t, t)} · {cls}-TS pairs (n = {n}{_sub()})")
             ax.grid(axis="x", visible=False)
             if j == 0:
                 ax.set_ylabel("para MAE (kcal/mol)")
@@ -1504,11 +1752,21 @@ def cmd_run(workers, with_figures=True):
     rep["phase_t"] = check_t()
     SP, SR, A, B, cls_of, s_info, f_s = load_s()
     OS, OR, o_rep, o_est, f_o = load_o(A, B)
-    Tg, ug, f_rep, f_f = load_f()
+    u1, f_u = load_u1(SP, A, OS, o_rep)                            # U-2e-3: sets SCOPE (methods / levels / scopes)
+    rep["u1"] = u1
+    rep["scope"] = dict(active=SCOPE["active"], methods=list(SCOPE["methods"]), stopped=list(SCOPE["stopped"]),
+                        levels=list(SCOPE["levels"]), scope_levels={k: list(v) for k, v in SCOPE["scope_levels"].items()})
+    if u1["active"]:                                               # the pair universe of E-1 .. E-4 (U-2e-4)
+        SPu = SP[SP.pair_id.isin(set(u1["selection"]["pair_ids"]))].reset_index(drop=True)
+    else:
+        SPu = SP
+    Au = sorted(set(SPu.a_rxn) | set(SPu.b_rxn))
+    Tg, ug, f_rep, f_f = load_f(u1)
     Tl, ul, p012, Y, E2, f_l = load_ladder()
     T, usable = {**Tl, **Tg}, {**ul, **ug}
-    rep["inputs_sha256"] = {**f_start, **f_s, **f_o, **f_f, **f_l, str(C_COMPARE): C.sha256(C_COMPARE)}
-    rep["sample"] = s_info
+    rep["inputs_sha256"] = {**f_start, **f_s, **f_o, **f_u, **f_f, **f_l, str(C_COMPARE): C.sha256(C_COMPARE)}
+    rep["sample"] = dict(s_info, n_pairs_evaluated=int(len(SPu)), n_part_a_evaluated=len(Au),
+                         pairs_evaluated_by_class={k: int((SPu["class"] == k).sum()) for k in CLASSES})
     miss = sorted(set(SP.pair_id) - p012)
     notu = {r: sorted(set(A) - usable[r]) for r in LAD_RUNGS}
     if miss or any(notu.values()):
@@ -1517,34 +1775,37 @@ def cmd_run(workers, with_figures=True):
     reps = rep_choices(E2)
     betas = line_betas(E2)
     rep["representatives"] = {f"{r}|{a}|{t}": v for (r, a, t), v in reps.items()}
-    print(f"[E {time.time() - t0:5.0f}s] inputs: {len(SP)} pairs, {len(A)} Part A, {len(B)} Part B", flush=True)
-    # E-1
+    print(f"[E {time.time() - t0:5.0f}s] inputs: {len(SP)} pairs, {len(A)} Part A, {len(B)} Part B; evaluated "
+          f"{len(SPu)} pairs / {len(Au)} reactions, methods {list(SCOPE['methods'])}"
+          + (f" (U-1: {', '.join(SCOPE['stopped'])} {U1_TEXT})" if SCOPE["active"] else ""), flush=True)
+    # E-1 (U-1: the reactions of the complete pairs; the O markers of every method are still checked on them)
     lab = {int(d["rxn_id"]): d for d in C.targets()}
-    G = run_geometry(geom_tasks(A, SR, OS, lab), workers)
+    G = run_geometry(geom_tasks(Au, SR, OS, lab), workers)
     rep["e1_cross_check_c_compare"] = cc_check(G)
-    E1, glists, detail = e1_tables(G, SP, cls_of)
-    rep["e1_availability"] = {lv: sum(1 for g in G.values() if lv in g["levels"]) for lv in LEVELS}
+    E1, glists, detail = e1_tables(G, SPu, cls_of)
+    rep["e1_availability"] = {lv: sum(1 for g in G.values() if lv in g["levels"]) for lv in SCOPE["levels"]}
     rep["e1_lists"] = glists
     rep["e1_detail"] = detail
     print(f"[E {time.time() - t0:5.0f}s] E-1 done: {rep['e1_availability']}", flush=True)
     # pair lists for E-2 .. E-4
-    ML = model_lists(SP, usable)
+    ML = model_lists(SPu, usable)
     rep["pair_lists"] = {f"{s}|{c}": dict(n=int(len(P)), pair_ids=P.pair_id.tolist(),
                                           sha256=DP.sha256_text("\n".join(P.pair_id)))
                          for (s, c), P in ML.items()}
-    rep["usable"] = {lv: dict(n_part_a_usable=len(set(A) & usable[lv])) for lv in LEVELS}
+    rep["usable"] = {lv: dict(n_part_a_usable=len(set(A) & usable[lv]), n_evaluated_usable=len(set(Au) & usable[lv]))
+                     for lv in SCOPE["levels"]}
     N = e2_table(T, ML)
-    pred = Pred(SP, Y)
+    ar = check_apply_report(u1)                                    # before Pred: U-1 record, zero-usable levels
+    pred = Pred(SPu, Y, ar.get("n_usable"))
     rep["predictions"] = pred.info
-    ar = check_apply_report()
     mine = sorted(set(ML[("common", "same")].pair_id) | set(ML[("common", "different")].pair_id))
     ids_ar = ar.pop("common_ids")
     ar["common_vs_this_file"] = dict(n_apply=len(ids_ar), n_here=len(mine), only_apply=sorted(set(ids_ar) - set(mine)),
                                      only_here=sorted(set(mine) - set(ids_ar)),
                                      note="recorded; a pair of this file's list without predictions is a STOP in E-3")
     rep["apply_report"] = ar
-    rep["check_diagonal"] = check_diag(pred, SP, reps)
-    rep["check_base"] = check_base(pred, T, betas, SP, usable)
+    rep["check_diagonal"] = check_diag(pred, SPu, reps)
+    rep["check_base"] = check_base(pred, T, betas, SPu, usable)
     rep["check_rep_rows"] = check_rep_rows(pred, reps)
     E3, ERR = e3_table(ML, pred, reps, T, betas, Y)
     E4, bchk = e4_table(ML, ERR, E3, reps)
@@ -1553,15 +1814,18 @@ def cmd_run(workers, with_figures=True):
                                   note="every scope x class: one pair list for all inputs (E-1 by construction; E-2 / "
                                        "E-3 dH and predictions on exactly that list, a missing pair = STOP)")
     print(f"[E {time.time() - t0:5.0f}s] E-2 / E-3 / E-4 done", flush=True)
-    Bt = b_table(OS, SR, B)
-    E5 = e5_table(OS, OR, cls_of, Bt)
+    Bt = b_table(OS, SR, B)                                        # U-2e-7: every Part B reaction
+    E5 = e5_table(OS, OR, cls_of, Bt)                              # U-2e-6: finished units of every method
+    rep["check_cost"] = cost_check(OS, o_rep)
     rep["partB"] = partb_summary(Bt)
     rep["spec9"] = spec9(E3, E4, E5)
     rep["phase_reports"] = dict(O=dict(complete=o_rep.get("complete"), stop=o_rep.get("stop"),
                                        measured_core_h=o_rep.get("measured_core_h"),
-                                       estimate_total_core_h=(o_est or {}).get("total_core_h")),
+                                       estimate_total_core_h=(o_est or {}).get("total_core_h"),
+                                       estimate_retro=o_rep.get("estimate_retro"), u1=o_rep.get("u1")),
                                 F=dict(complete=f_rep.get("complete"), stop=f_rep.get("stop"),
-                                       pairs_usable_all_methods=f_rep.get("pairs_usable_all_methods")))
+                                       pairs_usable_all_methods=f_rep.get("pairs_usable_all_methods"),
+                                       pairs_usable_methods=f_rep.get("pairs_usable_methods"), u1=f_rep.get("u1")))
     outs = {}
     for k, df in (("geometry", E1), ("noise", N), ("endtoend", E3), ("recovery", E4), ("cost", E5), ("partB", Bt)):
         write_csv(OUT[k], df)
@@ -1641,23 +1905,42 @@ def cmd_summary():
     orep, oest, frep = _rj(O_REPORT) or {}, _rj(O_ESTIMATE) or {}, _rj(F_REPORT) or {}
     s9, pb = E["spec9"], E["partB"]
     M = s9["methods"]
-    hm, rm_ = C.METHODS
-    n_own = {m: ((E.get("pair_lists") or {}).get(f"own_{m}|same") or {}).get("n") for m in C.METHODS}   # EV-11
+    sc_ = E.get("scope") or {}                             # U-2e-9: the scope 'run' evaluated (U-1 or the spec)
+    set_scope(sc_.get("methods") or C.METHODS, sc_.get("active"))
+    act, u1 = SCOPE["active"], E.get("u1") or {}
+    pl = E.get("pair_lists") or {}
+    n_own = {m: (pl.get(f"own_{m}|same") or {}).get("n") for m in C.METHODS}   # EV-11
     lab_ts = next((v for v in (_f(x) for x in E5.get("label_ts_core_h", pd.Series(dtype=float))) if v is not None),
                   None)                                    # EV-14: from E_cost.csv
+    rt = orep.get("estimate_retro") or {}                  # U-3a (opt.py estimate retro, report only)
+    pa_req = (srep.get("part_a") or {}).get("requested") or {}
     L_ = []
     w = L_.append
     w("# D1-G3 결과 요약 — G2 TS를 값싼 방법으로 다시 최적화하는 시범(HF/6-31G\\* 대 r2SCAN-3c)과 Part B TS 형태 확인")
     w("")
     # first three sentences (spec 10)
-    s1 = (f"판정(명령서 9절, `same` 분류, 방법별 짝 목록 g3h {fi(n_own[hm])}개 / g3r {fi(n_own[rm_])}개): "
-          f"{METHOD_KO[hm]} 판정은 '{M[hm]['verdict_ko']}', "
-          f"{METHOD_KO[rm_]} 판정은 '{M[rm_]['verdict_ko']}'이며, 근거 수치(g3h / g3r)는 oi 회복률 "
-          f"{fm(M[hm]['c1']['recovery_oi'])} / {fm(M[rm_]['c1']['recovery_oi'])}, dft·SH 대표 oi para MAE "
-          f"{fm(M[hm]['c1']['mae_oi_dftSH'])} / {fm(M[rm_]['c1']['mae_oi_dftSH'])} kcal/mol, TS 성공률 "
-          f"{fm(M[hm]['c2']['ts_success'])} / {fm(M[rm_]['c2']['ts_success'])}, 형태 유지율 "
-          f"{fm(M[hm]['c2']['shape_kept'])} / {fm(M[rm_]['c2']['shape_kept'])}, TS 하나당 코어시간 중앙값 "
-          f"{fm(M[hm]['c3']['ts_core_h_median'])} / {fm(M[rm_]['c3']['ts_core_h_median'])}이다.")
+    if act:                                                # U-2e-9: explanatory verdicts, stopped method
+        js = []
+        for m in SCOPE["methods"]:
+            v = M[m]
+            js.append(f"{METHOD_KO[m]}의 설명용 판정은 '{v['verdict_ko']}'이며 근거 수치는 oi 회복률 "
+                      f"{fm(v['c1']['recovery_oi'])}, dft·SH 대표 oi para MAE {fm(v['c1']['mae_oi_dftSH'])} kcal/mol"
+                      f"(same {fi(n_own[m])}짝, core {fi(v['c1'].get('n_cores'))}개), 끝난 TS 단위의 TS 성공률 "
+                      f"{fm(v['c2']['ts_success'])}(same {fi(v['c2'].get('n_ts_finished'))}개), TS 하나당 코어시간 중앙값 "
+                      f"{fm(v['c3']['ts_core_h_median'])}(형태 유지율 {fm(v['c2']['shape_kept'])}은 판정에서 뺀 참고 값)")
+        stp = "".join(f"{METHOD_KO[m]}는 사용자 결정으로 중단되어(U-1) 판정하지 않았고, " for m in SCOPE["stopped"])
+        s1 = (f"판정(명령서 9절, `same` 분류; ②는 TS 성공률만(U-3b); U-1 부분 표본이라 설명용): {stp}"
+              f"{'; '.join(js)}이다.")
+    else:
+        hm, rm_ = C.METHODS
+        s1 = (f"판정(명령서 9절, `same` 분류, 방법별 짝 목록 g3h {fi(n_own[hm])}개 / g3r {fi(n_own[rm_])}개; ②는 TS "
+              f"성공률만(U-3b)): {METHOD_KO[hm]} 판정은 '{M[hm]['verdict_ko']}', "
+              f"{METHOD_KO[rm_]} 판정은 '{M[rm_]['verdict_ko']}'이며, 근거 수치(g3h / g3r)는 oi 회복률 "
+              f"{fm(M[hm]['c1']['recovery_oi'])} / {fm(M[rm_]['c1']['recovery_oi'])}, dft·SH 대표 oi para MAE "
+              f"{fm(M[hm]['c1']['mae_oi_dftSH'])} / {fm(M[rm_]['c1']['mae_oi_dftSH'])} kcal/mol, TS 성공률 "
+              f"{fm(M[hm]['c2']['ts_success'])} / {fm(M[rm_]['c2']['ts_success'])}, 형태 유지율(참고, 판정 제외) "
+              f"{fm(M[hm]['c2']['shape_kept'])} / {fm(M[rm_]['c2']['shape_kept'])}, TS 하나당 코어시간 중앙값 "
+              f"{fm(M[hm]['c3']['ts_core_h_median'])} / {fm(M[rm_]['c3']['ts_core_h_median'])}이다.")
     a = pb["all"]
     if a.get("n_resolved"):
         s2 = (f"Part B에서 라벨 수준 ΔE‡ < −0.5 kcal/mol(G2 형태 TS가 더 낮음)인 반응은 결과가 있는 {fi(a['n_resolved'])}"
@@ -1671,6 +1954,32 @@ def cmd_summary():
     w(f"(수치 출처: results/E_report.json, E_geometry.csv, E_noise.csv, E_endtoend.csv, E_recovery.csv, E_cost.csv, "
       f"B_energies.csv와 단계 보고 파일. E 작성 {E.get('finished')}, git {(E.get('env') or {}).get('git_head')}; "
       f"요약 작성 {now()}.)")
+    w("")
+    # U-1 / U-2 / U-3 (user decisions 2026-10-25; the account and its numbers: results/DEVIATIONS.md, not written here)
+    w("사용자 결정 2026-10-25에 따른 변경(경위: results/DEVIATIONS.md):")
+    w("")
+    if act:
+        om, su = orep.get("methods") or {}, ((orep.get("u1") or {}).get("stopped_user") or {})
+        fin = "; ".join(f"{m} TS {fi((om.get(m) or {}).get('n_ts'))}개 끝남(ok {fi((om.get(m) or {}).get('n_ts_ok'))}), "
+                        f"실행하지 않음 {fi((su.get(m) or {}).get('ts_not_run'))}개" for m in C.METHODS)
+        w(f"- U-1 (중단): ts.g3h·ts.g3r 신규 계산을 멈추고 실행 중 작업을 취소했으며 끝난 단위만 쓴다({fin}; "
+          f"results/O_report.json u1). {', '.join(SCOPE['stopped'])}는 Phase F·E를 하지 않는다({U1_TEXT}); E-5·비용에는 "
+          f"끝난 단위가 그대로 들어 있다.")
+        sel = u1.get("selection") or {}
+        nb = sel.get("n_by_class") or {}
+        w(f"- U-2 (부분 표본, 설명용): F·E는 g3r TS가 a·b 모두 ok인 짝(완성 짝, results/U1_selection.json) "
+          f"{fi(sel.get('n_complete_pairs'))}짝(same {fi(nb.get('same'))}, different {fi(nb.get('different'))}; 반응 "
+          f"{fi(sel.get('n_selected_rxns'))}개)에서만 계산했다. 그중 {', '.join(SCOPE['levels'])} 입력을 모두 쓸 수 있는 "
+          f"비교 짝은 same {fi((pl.get('common|same') or {}).get('n'))}, different "
+          f"{fi((pl.get('common|different') or {}).get('n'))}이다(계획 표본 same {fi(pa_req.get('same'))}, different "
+          f"{fi(pa_req.get('different'))}). 판정 수치는 모두 설명용이다.")
+        if rt:
+            tot = _f(rt.get("total_core_h"))
+            w(f"- U-3a (비용 STOP 조건): 명령서 12절 O의 '예상 합계 > 3,000 코어시간'은 비용 예상이 사용자 지시(결정 O-23)로 "
+              f"돌지 않아 작동하지 않았다. 같은 파일럿 규칙(O-13)의 사후 계산은 {fm(tot, 1)} 코어시간"
+              f"{'으로 한도를 넘는다' if tot is not None and tot > 3000 else '이다'}(results/O_estimate_retro.json).")
+    w("- U-3b (판정 ② 변경): 형태 유지 규칙(무거운 원자 RMSD 0.1 Å · 형성 결합 0.02 Å)은 수준 간 비교에 맞지 않아 9절 ②에서 "
+      "뺐다. ② = TS 성공률 ≥ 0.9만 보고, 형태 유지율은 참고 값으로만 적는다(결정 U-2e-5).")
     w("")
     # 시작 조건
     w("## 시작 조건")
@@ -1700,6 +2009,12 @@ def cmd_summary():
     sft = "; ".join("Part {} {} {}: {}/{}".format(x.get("part"), x.get("stratum"), x.get("dipole"), x.get("drawn"),
                                                     x.get("need")) for x in sf)
     w(f"- 모자람(뽑은 수/요청 수): {sft if sf else '없음'}.")
+    if act:
+        smp = E.get("sample") or {}
+        pec = smp.get("pairs_evaluated_by_class") or {}
+        w(f"- U-1 평가 범위(U-2): 위 Part A 중 완성 짝 {fi(smp.get('n_pairs_evaluated'))}짝(same {fi(pec.get('same'))}, "
+          f"different {fi(pec.get('different'))}), 반응 {fi(smp.get('n_part_a_evaluated'))}개만 E-1–E-4에 쓴다. E-5는 끝난 "
+          f"단위 전부, E-6은 Part B 전부.")
     w("")
     # T
     w("## T — 회귀 검사")
@@ -1734,13 +2049,21 @@ def cmd_summary():
     for m in C.METHODS:
         o = (orep.get("methods") or {}).get(m) or {}
         fr = o.get("fail_reasons") or {}
-        w(f"- {m}: TS {fi(o.get('n_ts_ok'))}/{fi(o.get('n_ts'))} 성공({fm(o.get('ts_success'))}), 형태 유지 "
-          f"{fm(o.get('shape_kept'))}, 최종 .done {fi(o.get('final_done'))}, 재시도 사용 {fi(o.get('retry_used'))}; "
-          f"기준 구조 단위 {fi(o.get('n_refs_ok'))}/{fi(o.get('n_refs'))} 성공; TS 실패 이유 "
-          f"{', '.join(f'{k} {v}' for k, v in fr.items()) if fr else '없음'}.")
+        su = ((orep.get("u1") or {}).get("stopped_user") or {}).get(m) or {}
+        ux = (f"; U-1: 실행하지 않은 TS {fi(su.get('ts_not_run'))}개, stopped_user 반응 {fi(su.get('rxns'))}개(그중 TS "
+              f"끝남 {fi(su.get('ts_finished'))}), 실행하지 않은 기준 구조 {fi(su.get('refs_not_run'))}개"
+              + (f", {U1_TEXT}" if m in SCOPE["stopped"] else f", 선택 반응 {fi(o.get('n_selected'))}개")) if act else ""
+        w(f"- {m}: TS {fi(o.get('n_ts_ok'))}/{fi(o.get('n_ts'))} 성공{'(끝난 단위)' if act else ''}"
+          f"({fm(o.get('ts_success'))}), 형태 유지(참고, U-3b) {fm(o.get('shape_kept'))}, 최종 .done "
+          f"{fi(o.get('final_done'))}, 재시도 사용 {fi(o.get('retry_used'))}; 기준 구조 단위 {fi(o.get('n_refs_ok'))}/"
+          f"{fi(o.get('n_refs'))} 성공; TS 실패 이유 {', '.join(f'{k} {v}' for k, v in fr.items()) if fr else '없음'}"
+          f"{ux}.")
     ost = orep.get("o_stats") or {}
+    rtot = _f(rt.get("total_core_h"))
     est_txt = (f"예상 합계 {fm(oest.get('total_core_h'), 1)} 코어시간(한도 3,000, results/O_estimate.json)" if oest
-               else "비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)")
+               else "비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)"
+               + (f"; 사후 계산(U-3a) {fm(rtot, 1)} 코어시간{' > 3,000' if rtot is not None and rtot > 3000 else ''}"
+                  f"(results/O_estimate_retro.json)" if rt else ""))
     w(f"- 파이프라인 오류 {fi(ost.get('n_error'))}/{fi(ost.get('n_finished'))} 단위; {est_txt}, 측정 합계 "
       f"{fm(orep.get('measured_core_h'), 1)} 코어시간(results/O_report.json).")
     ob = orep.get("partB") or {}
@@ -1760,24 +2083,43 @@ def cmd_summary():
     w("")
     for m in C.METHODS:
         fm_ = (frep.get("methods") or {}).get(m) or {}
-        pr = fm_.get("pairs") or {}
+        fo = fm_.get("O") or {}
+        if m in SCOPE["stopped"]:                          # U-2e-9: no Phase F for a stopped method
+            w(f"- {m}: {U1_TEXT_KO} — Phase F를 하지 않았다(Phase O 표지 stopped_user {fi(fo.get('n_stopped_user'))}/"
+              f"{fi(fo.get('n_part_a'))}).")
+            continue
+        pr = (fm_.get("pairs_u1") if act else fm_.get("pairs")) or {}
         fg = ((fm_.get("F") or {}).get("gate") or {})
         hg = ((fm_.get("H") or {}).get("gate_failure") or {})
-        w(f"- {m}: 사용 가능 반응 {fi(fm_.get('n_usable'))}/{fi((fm_.get('O') or {}).get('n_part_a'))}; 짝 same "
+        base_txt = (f"{fi(fo.get('n_done'))}(U-1 선택 {fi(fo.get('n_selected'))}반응 중 .done)" if act
+                    else f"{fi(fo.get('n_part_a'))}")
+        w(f"- {m}: 사용 가능 반응 {fi(fm_.get('n_usable'))}/{base_txt}; {'완성 짝 중 ' if act else ''}짝 same "
           f"{fi((pr.get('same') or {}).get('n_usable'))}/{fi((pr.get('same') or {}).get('n_pairs'))}, different "
           f"{fi((pr.get('different') or {}).get('n_usable'))}/{fi((pr.get('different') or {}).get('n_pairs'))}; "
           f"feature gate 실패 {fi(fg.get('n_fail'))}/{fi(fg.get('n_base'))}({fm(fg.get('rate'))}), HF gate 실패 "
-          f"{fi(hg.get('n'))}/{fi(hg.get('n_finished'))}({fm(hg.get('rate'))}).")
-    pl = E.get("pair_lists") or {}
-    w(f"- 공통 짝 목록(다섯 입력 모두 사용 가능; E-2–E-4 나란히 놓는 표·그림): same "
-      f"{fi((pl.get('common|same') or {}).get('n'))}, different {fi((pl.get('common|different') or {}).get('n'))}. "
-      f"방법별 목록(9절 판정, EV-11): "
-      + ", ".join(f"{m} same {fi((pl.get(f'own_{m}|same') or {}).get('n'))} / different "
-                  f"{fi((pl.get(f'own_{m}|different') or {}).get('n'))}" for m in C.METHODS) + ".")
+          f"{fi(hg.get('n'))}/{fi(hg.get('n_finished'))}({fm(hg.get('rate'))})"
+          + (f"; 작은 기준 집합이라 실패 {fi(fm_.get('gate_min_fail_to_stop'))}개면 5 % STOP(feat.py U-2f-3)" if act
+             else "") + ".")
+    if act:
+        w(f"- 비교 짝 목록(U-1 완성 짝 중 {', '.join(SCOPE['levels'])} 모두 사용 가능; 범위 안 방법이 "
+          f"{', '.join(SCOPE['methods'])} 하나라 공통 목록 = 방법별 목록): same {fi((pl.get('common|same') or {}).get('n'))}, "
+          f"different {fi((pl.get('common|different') or {}).get('n'))}.")
+    else:
+        w(f"- 공통 짝 목록(다섯 입력 모두 사용 가능; E-2–E-4 나란히 놓는 표·그림): same "
+          f"{fi((pl.get('common|same') or {}).get('n'))}, different {fi((pl.get('common|different') or {}).get('n'))}. "
+          f"방법별 목록(9절 판정, EV-11): "
+          + ", ".join(f"{m} same {fi((pl.get(f'own_{m}|same') or {}).get('n'))} / different "
+                      f"{fi((pl.get(f'own_{m}|different') or {}).get('n'))}" for m in C.METHODS) + ".")
     w("")
-    # E-1
-    w("## E-1 구조 — 라벨 DFT TS와의 차이 (공통 목록)")
+    # E-1 (U-2e-9: under U-1 the U-1 comparison list; stopped methods have no column / row)
+    lst = f"U-1 비교 목록, {EXPL_KO}" if act else "공통 목록"
+    stop_note = (f"{', '.join(SCOPE['stopped'])}: {U1_TEXT_KO}, 표에 없음. 짝 수가 적어 수치는 {EXPL_KO}이다(U-2)."
+                 if act else None)
+    w(f"## E-1 구조 — 라벨 DFT TS와의 차이 ({lst})")
     w("")
+    if stop_note:
+        w(stop_note)
+        w("")
     for cls in CLASSES:
         q = G[(G.scope == "common") & (G["class"] == cls)]
         n0 = q.n_rxn.max() if len(q) else 0
@@ -1787,7 +2129,7 @@ def cmd_summary():
         w("| 입력 | \\|Δd\\| 중앙값 | \\|Δd\\| 90 % | 짝 \\|Δdd\\| 중앙값 | 짝 \\|Δdd\\| 90 % | RMSD 중앙값 | RMSD 90 % | "
           "라벨과 같은 TS |")
         w("|---|---|---|---|---|---|---|---|")
-        for lv in LEVELS:
+        for lv in SCOPE["levels"]:
             r = _row(q, level=lv)
             if r is None:
                 continue
@@ -1799,9 +2141,9 @@ def cmd_summary():
       "(a − b); RMSD = D1 검증 rmsd.py 무거운 원자 매핑 RMSD; 같은 TS = 0.10 Å / 0.02 Å 규칙. dft 행은 정의상 0.")
     w("")
     # E-2
-    w("## E-2 짝 구조 잡음 — |ΔΔ_HF(입력) − ΔΔ_HF(DFT 구조)| 중앙값 (kcal/mol, para, 공통 목록)")
+    w(f"## E-2 짝 구조 잡음 — |ΔΔ_HF(입력) − ΔΔ_HF(DFT 구조)| 중앙값 (kcal/mol, para, {lst})")
     w("")
-    lv2 = [x for x in LEVELS if x != "dft"]
+    lv2 = [x for x in SCOPE["levels"] if x != "dft"]
     for cls in CLASSES:
         q = N[(N.scope == "common") & (N["class"] == cls)]
         w(f"**{cls}** (짝 {fi(q.n_pairs.max() if len(q) else 0)}; 괄호 = 평균)")
@@ -1816,12 +2158,12 @@ def cmd_summary():
             w(f"| {t} | " + " | ".join(cells) + " |")
         w("")
     # E-3
-    w("## E-3 처음부터 끝까지 — 학습된 모델에 새 입력 (para MAE [95 % CI], kcal/mol, 공통 목록)")
+    w(f"## E-3 처음부터 끝까지 — 학습된 모델에 새 입력 (para MAE [95 % CI], kcal/mol, {lst})")
     w("")
-    ins = [x for x in LEVELS if x in set(E3.input)]
+    ins = [x for x in SCOPE["levels"] if x in set(E3.input)]
     for cls in CLASSES:
         q = E3[(E3.scope == "common") & (E3["class"] == cls)]
-        w(f"**{cls}** (짝 {fi(q.n_pairs.max() if len(q) else 0)})")
+        w(f"**{cls}** (짝 {fi(q.n_pairs.max() if len(q) else 0)}, core {fi(q.n_cores.max() if len(q) else 0)})")
         w("")
         w("| 모델 | 타깃 | " + " | ".join(ins) + " |")
         w("|---|---|" + "---|" * len(ins))
@@ -1843,30 +2185,36 @@ def cmd_summary():
                 w(f"| {fam} ({src}) | {t} | " + " | ".join(cells) + " |")
         w("")
     w("REP = D1LADDER E2 대표 모델(괄호 = unit 모델); † = 대표가 XGB라 모델 파일이 없어 같은 칸 검증 MAE가 가장 낮은 원자 "
-      "모델로 대신한 설명용 값; LINE = 그 fold SH unit의 β × ΔΔ_HF(입력). dft·SH, dft·S가 주 모델, g2 모델은 참고.")
+      "모델로 대신한 설명용 값; LINE = 그 fold SH unit의 β × ΔΔ_HF(입력). dft·SH, dft·S가 주 모델, g2 모델은 참고."
+      + (" core가 몇 개뿐이라 CI는 매우 넓거나(core 1개면 폭 0) 의미가 약하다(U-2e-8)." if act else ""))
     w("")
     # E-4
     w("## E-4 회복률 — (MAE_g2 − MAE_g3) ÷ (MAE_g2 − MAE_dft), dft·SH 대표")
     w("")
-    w("**공통 목록**(다섯 입력 모두 쓸 수 있는 짝, 나란히 비교)")
-    w("")
-    w("| 분류 | 방법 | 타깃 | 회복률 [95 % CI] | MAE g2 | MAE g3 | MAE dft |")
-    w("|---|---|---|---|---|---|---|")
-    for cls in CLASSES:
-        for m in C.METHODS:
-            for t in REC_TARGETS:
-                r = _row(E4, scope="common", **{"class": cls}, method=m, target=t)
-                if r is None:
-                    continue
-                w(f"| {cls} | {m} | {t} | {fm(r.recovery)} [{fm(r.recovery_ci_lo)}, {fm(r.recovery_ci_hi)}] | "
-                  f"{fm(r.mae_g2)} | {fm(r.mae_g3)} | {fm(r.mae_dft)} |")
-    w("")
-    w("**방법별 목록**(판정에 쓰는 목록, EV-11: dft, g1, g2와 그 방법이 모두 쓸 수 있는 짝)")
-    w("")
+    if act:                                                # U-2e-4: common = own_<m> (one method in scope)
+        w(f"U-1 비교 목록 하나({', '.join(SCOPE['levels'])} 모두 쓸 수 있는 완성 짝; 공통 = 방법별 목록), {EXPL_KO}. "
+          f"{', '.join(SCOPE['stopped'])}: {U1_TEXT_KO}.")
+        w("")
+    else:
+        w("**공통 목록**(다섯 입력 모두 쓸 수 있는 짝, 나란히 비교)")
+        w("")
+        w("| 분류 | 방법 | 타깃 | 회복률 [95 % CI] | MAE g2 | MAE g3 | MAE dft |")
+        w("|---|---|---|---|---|---|---|")
+        for cls in CLASSES:
+            for m in SCOPE["methods"]:
+                for t in REC_TARGETS:
+                    r = _row(E4, scope="common", **{"class": cls}, method=m, target=t)
+                    if r is None:
+                        continue
+                    w(f"| {cls} | {m} | {t} | {fm(r.recovery)} [{fm(r.recovery_ci_lo)}, {fm(r.recovery_ci_hi)}] | "
+                      f"{fm(r.mae_g2)} | {fm(r.mae_g3)} | {fm(r.mae_dft)} |")
+        w("")
+        w("**방법별 목록**(판정에 쓰는 목록, EV-11: dft, g1, g2와 그 방법이 모두 쓸 수 있는 짝)")
+        w("")
     w("| 분류 | 방법 | 타깃 | 짝 | 회복률 [95 % CI] | MAE g2 | MAE g3 | MAE dft |")
     w("|---|---|---|---|---|---|---|---|")
     for cls in CLASSES:
-        for m in C.METHODS:
+        for m in SCOPE["methods"]:
             for t in REC_TARGETS:
                 r = _row(E4, scope=f"own_{m}", **{"class": cls}, method=m, target=t)
                 if r is None:
@@ -1879,20 +2227,26 @@ def cmd_summary():
     # E-5
     w("## E-5 비용·성공")
     w("")
-    w("| 방법 | 분류 | TS 성공률 (ok/(ok+fail)) | 형태 유지율 | TS 코어시간 중앙값 / 평균 | 성공 TS당 | 기준 구조 코어시간"
-      f"(반응당 중앙값) | TS 중앙값 ÷ {fm(lab_ts, 1)} |")
+    w(f"| 방법 | 분류 | TS 성공률 (ok/(ok+fail){', 끝난 단위' if act else ''}) | 형태 유지율(참고, U-3b) | TS 코어시간 "
+      f"중앙값 / 평균 | 성공 TS당 | 기준 구조 코어시간(반응당 중앙값) | TS 중앙값 ÷ {fm(lab_ts, 1)} |")
     w("|---|---|---|---|---|---|---|---|")
-    for m in C.METHODS:
+    for m in C.METHODS:                                    # U-2e-6: every method (g3h: its finished units)
         for cls in CLASSES + ("all",):
             r = _row(E5, method=m, **{"class": cls})
             if r is None:
                 continue
-            w(f"| {m} | {cls} | {fm(r.ts_success)} ({fi(r.n_ts_ok)}/{fi((_f(r.n_ts_ok) or 0) + (_f(r.n_ts_fail) or 0))}"
-              f"; error {fi(r.n_ts_error)}) | {fm(r.shape_kept_rate)} ({fi(r.n_shape_kept)}/{fi(r.n_ts_ok)}) | "
+            nr = f"; 미실행 {fi(r.n_ts_not_run)}" if act else ""
+            w(f"| {m}{' (U-1 중단)' if m in SCOPE['stopped'] else ''} | {cls} | {fm(r.ts_success)} ({fi(r.n_ts_ok)}/"
+              f"{fi((_f(r.n_ts_ok) or 0) + (_f(r.n_ts_fail) or 0))}; error {fi(r.n_ts_error)}{nr}) | "
+              f"{fm(r.shape_kept_rate)} ({fi(r.n_shape_kept)}/{fi(r.n_ts_ok)}) | "
               f"{fm(r.ts_core_h_median, 2)} / {fm(r.ts_core_h_mean, 2)} | {fm(r.ts_core_h_per_success, 2)} | "
               f"{fm(r.ref_core_h_rxn_median, 2)} | {fm(r.ts_core_h_median_over_label)} |")
     w("")
     w(f"라벨 TS 단계 = 파일럿 평균 {fm(lab_ts, 1)} 코어시간/반응(명령서 6 E-5; E_cost.csv label_ts_core_h).")
+    if act:
+        w(f"U-1: 끝난 단위 = unit.json이 있는 TS(취소·미실행 TS는 '미실행'으로 따로 세고 성공률·코어시간에 넣지 않음). "
+          f"{', '.join(SCOPE['stopped'])}는 F·E 없이 끝난 단위의 비용만 적는다. 반응당 기준 구조 코어시간은 조립된 "
+          f"반응(U-1 선택)에만 있다.")
     w("")
     # E-6
     w("## E-6 Part B — 라벨 수준 ΔE‡ = E(G2 형태 TS) − E(라벨 TS)")
@@ -1910,18 +2264,28 @@ def cmd_summary():
       f"{fi(pb['all'].get('n_error'))}). converged_to_label은 ΔE‡ = 0으로 \\|ΔE‡\\| ≤ 0.5에 넣었다.")
     w("")
     # 판정
-    w("## 판정 (명령서 9절, `same` 분류, 방법별 목록)")
+    w(f"## 판정 (명령서 9절, `same` 분류, 방법별 목록{'; U-1 부분 표본, ' + EXPL_KO if act else ''})")
     w("")
-    w("| 방법 | ① 회복률_oi ≥ 0.8 · oi MAE ≤ 0.20 | ② TS 성공률 ≥ 0.9 · 형태 유지율 ≥ 0.9 | ③ TS 코어시간 중앙값 ≤ 2.0 | 판정 |")
+    w("| 방법 | ① 회복률_oi ≥ 0.8 · oi MAE ≤ 0.20 | ② TS 성공률 ≥ 0.9 (U-3b; 형태 유지율은 참고) | ③ TS 코어시간 중앙값 ≤ 2.0 | "
+      "판정 |")
     w("|---|---|---|---|---|")
     ok = {True: "만족", False: "불만족"}
     for m in C.METHODS:
         v = M[m]
-        w(f"| {m} | {fm(v['c1']['recovery_oi'])} · {fm(v['c1']['mae_oi_dftSH'])} → {ok[bool(v['c1']['ok'])]} | "
-          f"{fm(v['c2']['ts_success'])} · {fm(v['c2']['shape_kept'])} → {ok[bool(v['c2']['ok'])]} | "
-          f"{fm(v['c3']['ts_core_h_median'])} → {ok[bool(v['c3']['ok'])]} | {v['verdict_ko']} |")
+        if m in SCOPE["stopped"]:                          # U-2e-5: not judged; finished-unit numbers for reference
+            w(f"| {m} | — | {fm(v['c2']['ts_success'])} (끝난 단위, 참고) | {fm(v['c3']['ts_core_h_median'])} (끝난 단위, "
+              f"참고) | {v['verdict_ko']} |")
+            continue
+        w(f"| {m} | {fm(v['c1']['recovery_oi'])} · {fm(v['c1']['mae_oi_dftSH'])} → {ok.get(v['c1']['ok'], '—')} | "
+          f"{fm(v['c2']['ts_success'])} → {ok.get(v['c2']['ok'], '—')} (형태 유지율 {fm(v['c2']['shape_kept'])}, "
+          f"참고) | {fm(v['c3']['ts_core_h_median'])} → {ok.get(v['c3']['ok'], '—')} | {v['verdict_ko']} |")
     w("")
     w(f"- 권고: {s9['recommendation_ko']}")
+    if act:
+        sub_txt = ", ".join(f"{m} same {fi(n_own[m])}짝, core {fi(M[m]['c1'].get('n_cores'))}개" for m in SCOPE["methods"])
+        w(f"- U-1: 판정 수치는 완성 짝 부분 표본({sub_txt})과 끝난 TS 단위에서 낸 설명용 값이며 명령서 9절의 정식 판정이 "
+          f"아니다(U-2, results/DEVIATIONS.md).")
+    w("- ②는 사용자 결정 3(b)(U-3b)로 TS 성공률만 본다. 형태 유지율은 같은 수준 재현성 규칙이라 수준 간 비교에 맞지 않는다.")
     w("- `different` 분류의 결과는 설명용이다. TS 형태가 달라 회복을 기대하지 않는다.")
     itp = pb.get("interpretation") or {}
     if itp.get("sentence"):
@@ -1933,18 +2297,22 @@ def cmd_summary():
     w("## 비용")
     w("")
     est_txt = (f"Phase O 예상 합계 {fm(oest.get('total_core_h'), 1)} 코어시간(spec 7 한도 3,000)" if oest
-               else "Phase O 비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)")
-    w(f"- {est_txt}, 측정 합계 {fm(orep.get('measured_core_h'), 1)} 코어시간.")
+               else "Phase O 비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)"
+               + (f"; 사후 계산(U-3a) {fm(rtot, 1)} 코어시간{' > 3,000' if rtot is not None and rtot > 3000 else ''}"
+                  if rt else ""))
+    w(f"- {est_txt}, 측정 합계(끝난 단위) {fm(orep.get('measured_core_h'), 1)} 코어시간.")
     for m in C.METHODS:
         r = _row(E5, method=m, **{"class": "all"})
         fc = ((frep.get("methods") or {}).get(m) or {}).get("core_h") or {}
         g_ = fc.get("g_step") if isinstance(fc.get("g_step"), dict) else {}
         h_ = fc.get("hf") if isinstance(fc.get("hf"), dict) else {}
+        ftxt = (f"Phase F 없음({U1_TEXT_KO})" if m in SCOPE["stopped"]
+                else f"Phase F xTB Freq {fm(g_.get('sum'), 2)}, HF EDA {fm(h_.get('sum'), 1)} 코어시간")
         if r is not None:
-            w(f"- {m}: TS 합 {fm(r.ts_core_h_sum, 1)}, 기준 구조 분자 단위 합 {fm(r.ref_unit_core_h_sum, 1)} 코어시간"
-              f"(단위 {fi(r.n_ref_units)}개, 중앙값 {fm(r.ref_unit_core_h_median, 2)}); TS 하나당 중앙값 "
-              f"{fm(r.ts_core_h_median, 2)} = 라벨 TS 단계 {fm(lab_ts, 1)}의 {fm(r.ts_core_h_median_over_label)}배; "
-              f"Phase F xTB Freq {fm(g_.get('sum'), 2)}, HF EDA {fm(h_.get('sum'), 1)} 코어시간.")
+            w(f"- {m}: TS 합 {fm(r.ts_core_h_sum, 1)}{'(끝난 단위)' if act else ''}, 기준 구조 분자 단위 합 "
+              f"{fm(r.ref_unit_core_h_sum, 1)} 코어시간(단위 {fi(r.n_ref_units)}개, 중앙값 "
+              f"{fm(r.ref_unit_core_h_median, 2)}); TS 하나당 중앙값 {fm(r.ts_core_h_median, 2)} = 라벨 TS 단계 "
+              f"{fm(lab_ts, 1)}의 {fm(r.ts_core_h_median_over_label)}배; {ftxt}.")
     rb = _row(E5, method="partB")
     if rb is not None:
         w(f"- Part B: OptTS 합 {fm(rb.ts_core_h_sum, 1)}(중앙값 {fm(rb.ts_core_h_median, 2)}), SP 합 "
@@ -1956,17 +2324,26 @@ def cmd_summary():
     for k in ("10-lim1", "10-lim2", "10-lim3", "10-lim4"):
         w(f"- {SPEC_TEXT[k]}")
     w(f"- XGB 대표 칸은 모델 파일이 없어 E에서 뺐다(T-4); 표의 † 값은 설명용 대체 모델이다.")
-    w("- 판정은 방법마다 그 방법이 쓸 수 있는 짝(방법별 목록, E_*.csv scope own_<방법>)에서 했다. 두 방법의 짝 목록이 "
-      "달라 두 방법의 판정 수치는 같은 짝 위의 비교가 아니다(같은 짝 비교는 공통 목록 표·그림).")
+    if act:                                                # U-2e-9: the U-1 sample limits
+        w("- U-1: TS 성공률·코어시간은 끝난 TS 단위만으로 셌다. 취소·미실행 TS는 빠져 있고, 본 계산 queue가 큰 반응 먼저였기 "
+          "때문에 끝난 단위는 반응 크기 쪽으로 치우쳐 있을 수 있다(results/DEVIATIONS.md U-3a).")
+        w("- U-2: 완성 짝은 g3r TS가 양 끝 모두 성공한 짝이라 성공 조건으로 골라진 표본이다. 짝 수가 적고 core가 몇 개뿐이라 "
+          "bootstrap CI는 매우 넓거나(core 1개면 폭 0) 의미가 약하다. 범위 안 방법이 하나라 두 방법을 같은 짝에서 비교하지 "
+          "못했다.")
+    else:
+        w("- 판정은 방법마다 그 방법이 쓸 수 있는 짝(방법별 목록, E_*.csv scope own_<방법>)에서 했다. 두 방법의 짝 목록이 "
+          "달라 두 방법의 판정 수치는 같은 짝 위의 비교가 아니다(같은 짝 비교는 공통 목록 표·그림).")
     w(f"- E-1의 g3 구조는 Phase O .done 폴더만 썼다(TS는 성공했지만 기준 구조가 실패한 반응은 빠짐). Part B SP는 T-5 방식 "
       f"'{((orep.get('t5') or {}).get('mode'))}'으로 계산했고 라벨 TS 에너지는 라벨 e_ab_eh다.")
     w("- 회복률 CI는 같은 core 재표집의 비율 백분위로 설명용이다(분모가 0에 가까우면 불안정).")
     w("")
-    w("결정 기록: results/DECISIONS.md (EV-0 – EV-14, R-1), 판정 규칙은 결과를 보기 전에 고정된 명령서 9절 그대로.")
+    w("결정 기록: results/DECISIONS.md (EV-0 – EV-14, U-2e-3 – U-2e-9, R-1); 명령서 이탈과 사용자 결정 2026-10-25의 경위: "
+      "results/DEVIATIONS.md. 판정 규칙은 결과를 보기 전에 고정된 명령서 9절에 사용자 결정 3(b)(U-3b)만 적용했다.")
     C.write_atomic(SUMMARY, "\n".join(L_) + "\n")
     record_decision("R-1", "SUMMARY_G3.md: 맨 앞 세 문장 = (1) 두 방법 판정과 근거 수치(same, 방법별 목록), (2) Part B "
                              "ΔE‡ < −0.5 비율(결과 있는 반응 기준, converged는 0), (3) 권고; 절 순서 = 명령서 10절; 수치는 "
-                             "E_report.json·E_*.csv·B_energies.csv·단계 보고 파일에서만(반올림 표시).")
+                             "E_report.json·E_*.csv·B_energies.csv·단계 보고 파일에서만(반올림 표시). U-1이면 결정 U-2e-9의 "
+                             "형식(설명용 판정, 중단 방법, U-1·U-2·U-3 문단).")
     print(f"[R] {SUMMARY} written ({len(L_)} lines)", flush=True)
     return 0
 

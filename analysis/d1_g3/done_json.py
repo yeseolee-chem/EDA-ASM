@@ -41,7 +41,7 @@ def main():
     units, counts = {}, {}
     for uj in sorted(UNITS.glob("*/unit.json")):
         ud = uj.parent
-        if ud.name.startswith("T5."):
+        if ud.name.startswith(("T5.", "L.")):                      # T-5 tests and G3L pilot units (U-7-5)
             continue
         if cut is not None and uj.stat().st_mtime > cut:
             continue

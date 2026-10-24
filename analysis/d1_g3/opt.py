@@ -39,9 +39,21 @@ CLI (exit 0 = done / up to date, 2 = incomplete (resubmit) or usage, 3 = STOP; s
   tests                 G3ENV=d1: T-1 + T-5 (needs check ok) -> results/T_1.json, results/T_5.json
   work <pilot|main>     G3ENV=d1, array: claims units (pilot: T-1 + pilot units; main: every unit) and runs
                         $SLURM_CPUS_PER_TASK // 8 ORCA calculations at a time (O-23: main needs no estimate)
+  work sel --only <f>   G3ENV=d1, U-1 (user 2026-10-25): only the plan units listed in <f> (one uid per line, '#' lines
+                        are comments), e.g. results/O_sel_partB.txt, results/O_sel_refs.txt
   estimate              O-23: no-op (exit 0, writes nothing); before O-23: results/O_estimate.json (spec 7)
+  select                G3ENV=d1, U-1a (after the ts.g3h / ts.g3r work is cancelled): results/U1_selection.json = the
+                        S_pairs.csv pairs whose ts.g3r.<a_rxn> and ts.g3r.<b_rxn> both finished 'ok', their reactions
+                        and the ref.g3r units they need, + results/O_sel_refs.txt (the needed ref.g3r units without
+                        unit.json now, for 'work sel --only'); exit 2 = a g3r TS unit is still held by a live job, 3 = no
+                        complete pair. A rerun keeps U1_selection.json (and its sha256) while the selection is the same
   assemble [--force]    G3ENV=d1: $G3/g3h_final/<rxn>/, $G3/g3r_final/<rxn>/, $G3/partB/<rxn>/, results/O_status.csv,
-                        results/O_refs.csv, results/O_report.json (exit 3 = O STOP, 2 = units missing)
+                        results/O_refs.csv, results/O_report.json (exit 3 = O STOP, 2 = units missing). U-1b: reads
+                        results/U1_selection.json (missing / stale = exit 2); (method, rxn) outside it -> marker
+                        .fail_stopped_user only, O_status status 'stopped_user'; only the selected g3r reactions and
+                        Part B must be complete
+                        U-1 order: select ::: work sel --only results/O_sel_refs.txt (one 32-CPU job), then assemble
+                        after it and after the Part B 'work sel' job
   status                counts per phase / kind / status and the O STOP statistics (writes nothing)
   one <uid>             run one unit (debugging; the same claim / lock / idempotency rules)
   options: --nprocs N   MPI ranks of the Part A ORCA runs (default 8; slots per task = cpus // 8 because the Part B
@@ -276,6 +288,35 @@ DECISIONS = {
             "이름 / roles 열의 partB 표지), 없으면 STOP.",
     "O-18": "Part A 최종 폴더: TS ok이고 두 기준 구조 ok일 때만 .done; 아니면 첫 이유로 .fail_<ts_|ref1_|ref2_|pipeline_...>. xyz는 "
             ".done 폴더에만 쓴다(G2 finalize와 같음; 실패 구조는 units/에 남음).",
+    "U-1a": "U-1 선택(사용자 결정 2026-10-25 1·5: ts.g3h·ts.g3r 신규 제출 중단, 완료분 보존, g3r 완료 반응으로 완성되는 P_012 para "
+            "짝만 F·E 진행(설명용)): 'opt.py select'(G3ENV=d1)가 results/S_pairs.csv(P_012 para 짝의 Part A 표본) 중 "
+            "ts.g3r.<a_rxn>와 ts.g3r.<b_rxn>의 unit.json status가 둘 다 'ok'인 짝 = 완성 짝을 pair_id 순으로 고른다(분류 same·"
+            "different 모두; 한쪽 TS가 fail·error·미실행이면 완성 짝이 아님). 선택 반응 = 완성 짝의 a·b 반응, 방법은 g3r만(g3h는 "
+            "선택 없음). 필요한 기준 구조 = 선택 반응마다 plan rxns의 mid1·mid2의 ref.g3r 단위(assemble_a가 읽는 연결 그대로); 그중 "
+            "unit.json이 없는 것 = missing_refs -> results/O_sel_refs.txt('#' 머리 + 한 줄에 uid 하나)를 'opt.py work sel --only "
+            "results/O_sel_refs.txt'가 돈다. 출력 results/U1_selection.json(complete_pairs, n_by_class, selected_rxns, needed_refs, "
+            "missing_refs, plan 지문, S_pairs sha256)은 선택을 정하는 키(method, plan 지문, S_pairs sha256, complete_pairs, "
+            "selected_rxns, needed_refs)가 같으면 다시 쓰지 않는다(sha256 고정: 기준 구조가 돈 뒤 select를 다시 돌려도 assemble·F·E가 "
+            "기록한 sha256이 그대로; 파일의 missing_refs·ts_units_finished는 'written' 시점 값). O_sel_refs.txt는 매번 지금 없는 "
+            "기준 구조로 쓴다(바뀔 때만). unit.json이 없는 g3r TS 단위를 "
+            "살아 있는 job이 잡고 있으면(lock 주인이 squeue에 있음) 고르지 않는다(exit 2: scancel 먼저; 끝나면 완성 짝이 바뀔 수 "
+            "있음). 완성 짝이 0이면 STOP(exit 3).",
+    "U-1b": "U-1 조립: 'opt.py assemble'은 선택을 다시 정하지 않고 results/U1_selection.json을 읽는다(없음 = exit 2). 선택 파일의 "
+            "plan 지문·S_pairs sha256이 다르거나, 지금 끝난 unit.json으로 본 완성 짝 목록이 파일과 다르면 exit 2('opt.py select' "
+            "다시); selected_rxns·needed_refs가 파일의 complete_pairs와 plan에서 따라 나오지 않거나 완성 짝이 0이면 exit 3. 선택 밖 "
+            "(방법, 반응)(g3h 전부, 완성 짝 밖의 g3r) = $G3/<m>_final/<rxn>/에 .fail_stopped_user 표지와 result.json만(xyz 없음), "
+            "O_status status 'stopped_user', reason 'U-1'(TS 단위가 끝났으면 ts_status·core_h 등을 그대로 기록, core_h_refs는 비움). "
+            "선택된 g3r 반응은 O-18 그대로(TS ok + 두 기준 구조 ok -> .done; 필요한 기준 구조의 unit.json 없음 = incomplete -> "
+            "exit 2). Part B 행은 그대로. unit.json이 없는 단위(미실행, U-1 scancel)는 파이프라인 오류도 미완도 아니다: 어떤 선택 "
+            "반응도 쓰지 않는 미실행 기준 구조는 O_refs.csv status 'stopped_user'(u1_needed 열). 표지가 선택과 맞지 않는 폴더(선택"
+            "됐는데 .fail_stopped_user, 선택 밖인데 다른 표지)는 --force 없이도 다시 조립한다(이전 폴더는 <m>_final_prev/로); 그 "
+            "밖의 --force 의미는 그대로. O STOP 통계(오류율, 첫 20, STOP 파일)는 끝난 단위만 센다: 끝난 TS가 20개 미만인 방법(g3h "
+            "19개)은 첫 20 규칙을 판정하지 않는다(O_report u1.first20에 보고). O_report.json에 u1 블록(결정, 선택 파일 sha256, 수), "
+            "O_status.csv에 u1_selected 열. unit.json 없는 TS(n_ts_not_run)는 killed(단위 폴더 있음 = ORCA 단계가 시작됐고 "
+            "scancel로 죽음)와 never_started로 나눠 보고하고, killed 중 1차 시도가 gate를 통과하지 못한 뒤 죽은 단위(a2/ 있음 또는 "
+            "a1/step.json gate 실패)를 ts_killed_in_retry(uid 목록)로 적는다; ts_success_lower_bound = TS ok / (끝난 TS + 재시도 "
+            "중 죽은 TS)(그것들을 실패로 셈; 설명용, 판정 ②의 ts_success는 끝난 단위 기준 그대로). killed 단위의 끝난 ORCA 단계 "
+            "core_h 합(ts_killed_core_h_finished_steps; 죽을 때 돌던 단계는 기록 없음 = 하한)도 보고.",
 }
 
 
@@ -1625,6 +1666,143 @@ def cmd_estimate(retro=False):
     return 0
 
 
+# ================================================================ U-1 selection (user 2026-10-25; G3ENV=d1)
+U1_METHOD = "g3r"                                               # U-1a: only g3r reactions go on to Phase F / E
+U1_JSON, SEL_REFS = C.RES / "U1_selection.json", C.RES / "O_sel_refs.txt"
+STOPPED = "stopped_user"                                        # U-1b: O_status / O_refs status; marker .fail_<this>
+STOPPED_MARK = ".fail_" + STOPPED
+U1_KEYS = ("method", "plan_fingerprint", "S_pairs_sha256", "complete_pairs", "selected_rxns", "needed_refs")  # U-1a
+
+
+def _counts(vals):
+    out = {}
+    for v in vals:
+        out[str(v)] = out.get(str(v), 0) + 1
+    return dict(sorted(out.items()))
+
+
+def u1_pairs(plan, res):
+    """U-1a: ([complete pair records], number of S_pairs.csv pairs): the pairs whose ts.g3r.<a_rxn> and ts.g3r.<b_rxn>
+    unit.json both have status 'ok' (pair_id order)."""
+    S = pd.read_csv(S_PAIRS)
+    for c in ("pair_id", "a_rxn", "b_rxn", "fold", "class", "dipole"):
+        if c not in S.columns:
+            C.stop(f"{S_PAIRS}: column {c} missing")
+    pa = {int(r) for r in plan["part_a"]}
+    out = []
+    for r in sorted(S.to_dict("records"), key=lambda x: str(x["pair_id"])):   # (itertuples would rename 'class')
+        a, b = int(r["a_rxn"]), int(r["b_rxn"])
+        if a not in pa or b not in pa:
+            C.stop(f"{S_PAIRS} {r['pair_id']}: {a} / {b} are not Part A reactions of the plan")
+        if all((res.get(f"ts.{U1_METHOD}.{x}") or {}).get("status") == "ok" for x in (a, b)):
+            out.append({"pair_id": str(r["pair_id"]), "a_rxn": a, "b_rxn": b, "fold": int(r["fold"]),
+                        "class": str(r["class"]), "dipole": str(r["dipole"])})
+    return out, len(S)
+
+
+def u1_needed_refs(plan, rxns):
+    """U-1a: the ref.g3r unit ids the reactions need (plan rxns mid1 / mid2 = the link assemble_a reads), sorted."""
+    return sorted({f"ref.{U1_METHOD}.{plan['rxns'][str(r)][f'mid{k}']}" for r in rxns for k in (1, 2)})
+
+
+def _live_ts_locks(D, res):
+    """{method: [[uid, job]]}: TS units without unit.json whose lock owner is a SLURM job still in squeue."""
+    out = {}
+    for p in (sorted(LOCKS.glob("ts.*.lock")) if LOCKS.is_dir() else []):
+        uid = p.name[:-len(".lock")]
+        if uid in res:
+            continue
+        try:
+            owner = p.read_text().split()[0]
+        except (OSError, IndexError):
+            continue
+        if owner.isdigit() and D["RV"]._job_alive(owner):
+            out.setdefault(uid.split(".")[1], []).append([uid, owner])
+    return out
+
+
+def cmd_select():
+    """U-1a: results/U1_selection.json + results/O_sel_refs.txt (decision U-1a). U1_selection.json is rewritten only
+    when a key that defines the selection (U1_KEYS) changes, so a rerun - also after the needed refs have run - keeps
+    the selection sha256 that assemble and the later steps record; its missing_refs / ts_units_finished are the values
+    at 'written'. O_sel_refs.txt always lists the needed refs missing now (rewritten when that list changes)."""
+    D, plan = d1(), load_plan()
+    code, why = t_gate()                                           # O-20: nothing is written while T has not passed
+    if code:
+        print(f"{'STOP' if code == 3 else 'NOT READY'}: select: {why}", file=sys.stderr, flush=True)
+        return code
+    res = load_results(plan)
+    live = _live_ts_locks(D, res)
+    if live.get(U1_METHOD):
+        jobs = sorted({j for _, j in live[U1_METHOD]})
+        print(f"NOT READY: select: {len(live[U1_METHOD])} {U1_METHOD} TS units are still held by live jobs {jobs} "
+              f"(U-1 item 1: scancel them first)", file=sys.stderr, flush=True)
+        return 2
+    for m, v in live.items():                                      # other methods: reported, never selected
+        print(f"warning: {len(v)} {m} TS units still held by live jobs {sorted({j for _, j in v})} (U-1 item 1)",
+              file=sys.stderr, flush=True)
+    record_decision("U-1a", DECISIONS["U-1a"])
+    pairs, n_all = u1_pairs(plan, res)
+    rxns = sorted({p[k] for p in pairs for k in ("a_rxn", "b_rxn")})
+    need = u1_needed_refs(plan, rxns)
+    known = {u["uid"] for u in plan["units"]}
+    if any(u not in known for u in need):
+        C.stop(f"needed references {sorted(set(need) - known)} are not plan units")
+    missing = [u for u in need if u not in res]
+    ts_fin = {m: _counts(r["status"] for r in res.values() if r.get("kind") == "ts" and r.get("method") == m)
+              for m in C.METHODS}
+    sel = dict(spec="D1G3 U-1 (user 2026-10-25, items 1 and 5)", decision="U-1a", method=U1_METHOD,
+               rule=f"S_pairs.csv pairs whose ts.{U1_METHOD}.<a_rxn> and ts.{U1_METHOD}.<b_rxn> unit.json status are "
+                    f"both 'ok'", plan_fingerprint=plan["fingerprint"], S_pairs_sha256=C.sha256(S_PAIRS),
+               n_pairs_sample=n_all, n_complete_pairs=len(pairs), n_by_class=_counts(p["class"] for p in pairs),
+               n_by_dipole=_counts(p["dipole"] for p in pairs), complete_pairs=pairs, n_selected_rxns=len(rxns),
+               selected_rxns=rxns, needed_refs=need, missing_refs=missing, ts_units_finished=ts_fin,
+               note=f"missing_refs / ts_units_finished = at 'written'; the file is kept while {list(U1_KEYS)} are "
+                    f"unchanged (U-1a); the refs missing now are in the refs_file",
+               refs_file=str(SEL_REFS.relative_to(HERE)))
+    new = json.loads(json.dumps(sel, default=C._jsonable))
+    old = _rj(U1_JSON)
+    if old is None or any(old.get(k) != new[k] for k in U1_KEYS):  # U-1a: same selection -> same file / sha256
+        C.write_json(U1_JSON, dict(new, written=_now()))
+    txt = ("# U-1a (opt.py select): ref.g3r units the selected reactions of results/U1_selection.json need that have "
+           "no unit.json now\n# run: opt.py work sel --only results/O_sel_refs.txt\n"
+           + "".join(f"{u}\n" for u in missing))
+    if not SEL_REFS.is_file() or SEL_REFS.read_text() != txt:
+        C.write_atomic(SEL_REFS, txt)
+    print(json.dumps(dict(n_complete_pairs=len(pairs), n_by_class=sel["n_by_class"], n_selected_rxns=len(rxns),
+                          n_needed_refs=len(need), missing_refs=missing, ts_units_finished=ts_fin,
+                          selection_sha256=C.sha256(U1_JSON)), indent=1), flush=True)
+    if not pairs:
+        print(f"STOP: select: no complete {U1_METHOD} pair (U-1a); nothing to carry to Phase F / E", file=sys.stderr,
+              flush=True)
+        return 3
+    return 0
+
+
+def u1_selection(plan, res):
+    """U-1b: results/U1_selection.json as 'opt.py select' wrote it -> (selection + rxns / needed / sha256, 0, '') or
+    (None, 2 | 3, why). The selection is read, not recomputed: the check only confirms that the file still describes
+    the finished units (the same pairs are complete now), so select and assemble cannot disagree."""
+    s = _rj(U1_JSON)
+    if s is None:
+        return None, 2, f"{U1_JSON} missing: run 'opt.py select' first (U-1)"
+    if (s.get("method") != U1_METHOD or s.get("plan_fingerprint") != plan["fingerprint"]
+            or s.get("S_pairs_sha256") != C.sha256(S_PAIRS)):
+        return None, 2, f"{U1_JSON} was written for another plan / S_pairs.csv / method: rerun 'opt.py select'"
+    cp = s.get("complete_pairs") or []
+    got, now = [p["pair_id"] for p in cp], [p["pair_id"] for p in u1_pairs(plan, res)[0]]
+    if now != got:
+        return None, 2, (f"complete {U1_METHOD} pairs changed since 'opt.py select' (file {len(got)}, now {len(now)}: "
+                         f"{sorted(set(got) ^ set(now))[:10]}): rerun 'opt.py select'")
+    rxns = sorted(int(r) for r in s.get("selected_rxns") or [])
+    need = sorted(s.get("needed_refs") or [])
+    if (not rxns or rxns != sorted({int(p[k]) for p in cp for k in ("a_rxn", "b_rxn")})
+            or not set(rxns) <= set(plan["part_a"]) or need != u1_needed_refs(plan, rxns)):
+        return None, 3, (f"{U1_JSON}: no complete pair (U-1a STOP), or selected_rxns / needed_refs do not follow from "
+                         f"its complete_pairs and the plan")
+    return dict(s, rxns=set(rxns), needed=set(need), sha256=C.sha256(U1_JSON)), 0, ""
+
+
 # ================================================================ assemble (G3ENV=d1)
 def g2a_module(D):
     """g2_autode.remap with g2_refinalize's fixed _graph (import-time patches of g2_autode undone afterwards)."""
@@ -1676,15 +1854,30 @@ def _marker(d):
     return f[0] if f else None
 
 
-def assemble_a(D, GA, plan, res, m, rid, force):
+def assemble_a(D, GA, plan, res, m, rid, force, selected=True):
     R = plan["rxns"][str(rid)]
     dest = FINAL[m] / str(rid)
     uts = res.get(f"ts.{m}.{rid}")
+    mk = _marker(dest)
+    if not selected:                                               # U-1b: outside U1_selection.json -> marker only
+        if mk == STOPPED_MARK and not force:
+            return dict(status=STOPPED, reason="U-1", result=_rj(dest / "result.json") or {}, kept=True)
+        u = uts or {}
+        core = dict(ts=float(u.get("core_h") or 0)) if uts else {}
+        res_json = dict(rxn_id=rid, job_id=R["job_id"], method=m, level=METHOD_LEVEL[m], status=STOPPED, reason="U-1",
+                        u1=f"user decision 2026-10-25 (U-1b): not a reaction of a complete {U1_METHOD} pair of "
+                           f"{U1_JSON.relative_to(HERE)}; no geometry goes on to Phase F / E",
+                        ts_unit=f"ts.{m}.{rid}", ts_finished=uts is not None, ts_status=u.get("status"),
+                        ts_reason=u.get("reason"), attempt_used=u.get("attempt_used"), shape_kept=u.get("shape_kept"),
+                        rmsd_g2_A=u.get("rmsd_g2_A"), dform_g2_A=u.get("dform_g2_A"), e_ts_eh=u.get("e_ts_eh"),
+                        core_h=core, core_h_total=sum(core.values()), fail_reasons=[STOPPED], assembled=_now(),
+                        code=CODE_VERSION)
+        _write_folder(dest, {}, res_json, [STOPPED])               # a folder with another marker moves to _prev
+        return dict(status=STOPPED, reason="U-1", result=res_json, kept=False)
     urs = [res.get(f"ref.{m}.{R['mid1']}"), res.get(f"ref.{m}.{R['mid2']}")]
     if uts is None or any(r is None for r in urs):
         return dict(status="incomplete", reason="units missing")
-    mk = _marker(dest)
-    if mk and not force:
+    if mk and mk != STOPPED_MARK and not force:                    # U-1b: a stopped marker is rebuilt once selected
         r = _rj(dest / "result.json") or {}
         return dict(status=r.get("status", "ok" if mk == ".done" else "fail"),
                     reason=(r.get("fail_reasons") or [""])[0], result=r, kept=True)
@@ -1784,19 +1977,41 @@ def _q(v):
     return dict(n=len(v), median=float(np.median(v)), mean=float(np.mean(v)), p90=float(np.quantile(v, 0.9)))
 
 
+def _killed_ts(uids):
+    """U-1b: TS units without unit.json -> (killed, killed_in_retry, core-h): killed = the unit folder exists (an ORCA
+    step started; no unit.json = the U-1 scancel), in retry = attempt 1 finished without passing its gate (a2/ exists or
+    a1/step.json gate not ok); core-h = their finished ORCA steps only (the step running at the kill left no record)."""
+    killed, retry, core = [], [], 0.0
+    for x in uids:
+        if not (UNITS / x).is_dir():
+            continue
+        killed.append(x)
+        s1 = _rj(UNITS / x / "a1" / "step.json")
+        if (UNITS / x / "a2").is_dir() or (s1 is not None and not (s1.get("gate") or {}).get("ok")):
+            retry.append(x)
+        core += sum(float((_rj(p) or {}).get("core_h") or 0) for p in (UNITS / x).glob("a*/step.json"))
+    return killed, retry, core
+
+
 def cmd_assemble(force=False):
     D, plan = d1(), load_plan()
     code, why = t_gate()                                           # O-20: no O results from a stopped / unstarted O
     if code:
         print(f"{'STOP' if code == 3 else 'NOT READY'}: assemble: {why}", file=sys.stderr, flush=True)
         return code
-    GA = g2a_module(D)
     res = load_results(plan)
+    u1, code, why = u1_selection(plan, res)                        # U-1b: read (never recomputed) before any write
+    if code:
+        print(f"{'STOP' if code == 3 else 'NOT READY'}: assemble: {why}", file=sys.stderr, flush=True)
+        return code
+    record_decision("U-1b", DECISIONS["U-1b"])
+    GA = g2a_module(D)
     rows, refrows, incomplete = [], [], []
     for m in C.METHODS:
         for rid in plan["part_a"]:
             R = plan["rxns"][str(rid)]
-            a = assemble_a(D, GA, plan, res, m, rid, force)
+            sel = m == U1_METHOD and rid in u1["rxns"]
+            a = assemble_a(D, GA, plan, res, m, rid, force, sel)
             r, uts = a.get("result") or {}, res.get(f"ts.{m}.{rid}") or {}
             gt = uts.get("gate") or {}
             if a["status"] == "incomplete":
@@ -1807,22 +2022,25 @@ def cmd_assemble(force=False):
                              shape_kept=uts.get("shape_kept"), rmsd_start_A=uts.get("rmsd_g2_A"),
                              dform_start_A=uts.get("dform_g2_A"), core_h=uts.get("core_h"),
                              core_h_refs=(r.get("core_h") or {}).get("ref1", 0) + (r.get("core_h") or {}).get("ref2", 0)
-                             if r else None, attempt_used=uts.get("attempt_used"), n_atoms=R["n_atoms"],
-                             dipole=R["dipole"], classes=";".join(R.get("classes") or []),
+                             if r and a["status"] != STOPPED else None, attempt_used=uts.get("attempt_used"),
+                             n_atoms=R["n_atoms"], dipole=R["dipole"], classes=";".join(R.get("classes") or []),
                              phase="t1" if rid == plan["t1_rxn"] else "pilot" if rid in plan["pilot_rxns"] else "main",
                              part="A", converged_to_label=None, dE_kcal=None, e_sp_eh=None, e_label_eh=None,
-                             sp_mode=None))
+                             sp_mode=None, u1_selected=sel))
         for mid, M in plan["mols"].items():
-            r = res.get(f"ref.{m}.{mid}")
+            uid = f"ref.{m}.{mid}"
+            r, need = res.get(uid), uid in u1["needed"]
             refrows.append(dict(mid=mid, method=m, key=M["key"], unit_key=M["unit_key"], constrained=M["constrained"],
                                 frag=M["frag"], n_atoms=M["n_atoms"], n_members=len(M["members"]),
-                                start_rxn=M["start_rxn"], status=None if r is None else r["status"],
-                                reason=None if r is None else r.get("reason"),
+                                start_rxn=M["start_rxn"],
+                                status=(None if need else STOPPED) if r is None else r["status"],
+                                reason=(None if need else "U-1") if r is None else r.get("reason"),
                                 neg_cm=None if r is None else json.dumps(r.get("neg_cm")),
                                 attempt_used=None if r is None else r.get("attempt_used"),
-                                core_h=None if r is None else r.get("core_h"), e_eh=None if r is None else r.get("e_eh")))
-            if r is None:
-                incomplete.append(f"ref.{m}.{mid}")
+                                core_h=None if r is None else r.get("core_h"), e_eh=None if r is None else r.get("e_eh"),
+                                u1_needed=need))
+            if r is None and need:                                 # U-1b: an unneeded ref never run is not missing
+                incomplete.append(uid)
     for rid in plan["part_b"]:
         R = plan["rxns"][str(rid)]
         b = assemble_b(D, plan, res, rid, force)
@@ -1838,7 +2056,8 @@ def cmd_assemble(force=False):
                          dipole=R["dipole"], classes=";".join(R.get("classes") or []),
                          phase="pilot" if rid in plan["pilot_b"] else "main", part="B",
                          converged_to_label=ub.get("converged_to_label"), dE_kcal=ub.get("dE_kcal"),
-                         e_sp_eh=ub.get("e_sp_eh"), e_label_eh=ub.get("e_label_eh"), sp_mode=ub.get("sp_mode")))
+                         e_sp_eh=ub.get("e_sp_eh"), e_label_eh=ub.get("e_label_eh"), sp_mode=ub.get("sp_mode"),
+                         u1_selected=None))
     S = pd.DataFrame(rows)
     C.write_atomic(STATUS_CSV, lambda t: S.to_csv(t, index=False))
     C.write_atomic(REFS_CSV, lambda t: pd.DataFrame(refrows).to_csv(t, index=False))
@@ -1849,14 +2068,23 @@ def cmd_assemble(force=False):
         rfr = [res[u["uid"]] for u in plan["units"] if u["kind"] == "ref" and u["method"] == m and u["uid"] in res]
         ok = [r for r in tsr if r["status"] == "ok"]
         sub = S[(S.method == m)]
+        nr = [u["uid"] for u in plan["units"] if u["kind"] == "ts" and u["method"] == m and u["uid"] not in res]
+        kl, kr, kc = _killed_ts(nr)                                # U-1b: n_ts_not_run = killed + never started
         by[m] = dict(n_ts=len(tsr), n_ts_ok=len(ok), ts_success=len(ok) / len(tsr) if tsr else None,
+                     ts_success_lower_bound=len(ok) / (len(tsr) + len(kr)) if tsr or kr else None,
                      shape_kept=(sum(bool(r.get("shape_kept")) for r in ok) / len(ok)) if ok else None,
                      ts_core_h=_q([r.get("core_h") for r in tsr]), ref_core_h=_q([r.get("core_h") for r in rfr]),
                      n_refs=len(rfr), n_refs_ok=sum(r["status"] == "ok" for r in rfr),
                      final_done=int((sub.status == "ok").sum()), final_status=sub.status.value_counts().to_dict(),
                      retry_used=sum((r.get("attempt_used") or 1) == 2 for r in tsr),
                      fail_reasons=pd.Series([r.get("reason") for r in tsr if r["status"] != "ok"],
-                                            dtype=object).value_counts().to_dict())
+                                            dtype=object).value_counts().to_dict(),
+                     n_selected=int(sub.u1_selected.astype(bool).sum()),                    # U-1b
+                     n_stopped_user=int((sub.status == STOPPED).sum()),
+                     n_stopped_user_ts_finished=int(((sub.status == STOPPED) & sub.ts_status.notna()).sum()),
+                     n_ts_not_run=len(nr), n_ts_killed=len(kl), n_ts_never_started=len(nr) - len(kl),
+                     n_ts_killed_in_retry=len(kr), ts_killed_in_retry=kr, ts_killed_core_h_finished_steps=kc,
+                     n_refs_stopped_user=sum(x["method"] == m and x["status"] == STOPPED for x in refrows))
     br = [res[f"B.{rid}"] for rid in plan["part_b"] if f"B.{rid}" in res]
     dE = [r.get("dE_kcal") for r in br if r.get("dE_kcal") is not None]
     partb = dict(n=len(br), n_ok=sum(r["status"] == "ok" for r in br),
@@ -1887,18 +2115,51 @@ def cmd_assemble(force=False):
                  stopped_methods=sorted(stopped_methods())),
         O19=dict(rule="steps started twice without finishing -> fail wall_clipped (decision O-19)",
                  n_wall_clipped=sum(r.get("reason") == "wall_clipped" for r in res.values())))
+    done = set(S.rxn_id[(S.method == U1_METHOD) & (S.status == "ok")].astype(int))   # U-1b: selected and .done
+    pd_ = [p for p in u1["complete_pairs"] if int(p["a_rxn"]) in done and int(p["b_rxn"]) in done]
+    u1_rep = dict(decision="U-1a / U-1b (user 2026-10-25, items 1 and 5)", text=DECISIONS["U-1b"], method=U1_METHOD,
+                  selection=str(U1_JSON), selection_sha256=u1["sha256"], selection_written=u1.get("written"),
+                  n_complete_pairs=len(u1["complete_pairs"]), n_by_class=u1.get("n_by_class"),
+                  n_selected_rxns=len(u1["rxns"]), n_selected_done=len(done & u1["rxns"]),
+                  n_pairs_both_done=len(pd_), pairs_both_done_by_class=_counts(p["class"] for p in pd_),
+                  n_needed_refs=len(u1["needed"]), needed_refs_missing=sorted(x for x in u1["needed"] if x not in res),
+                  stopped_user={m: dict(rxns=by[m]["n_stopped_user"], ts_finished=by[m]["n_stopped_user_ts_finished"],
+                                        ts_not_run=by[m]["n_ts_not_run"], ts_killed=by[m]["n_ts_killed"],
+                                        ts_never_started=by[m]["n_ts_never_started"],
+                                        ts_killed_in_retry=by[m]["ts_killed_in_retry"],
+                                        ts_killed_core_h_finished_steps=by[m]["ts_killed_core_h_finished_steps"],
+                                        ts_success=by[m]["ts_success"],
+                                        ts_success_lower_bound=by[m]["ts_success_lower_bound"],
+                                        refs_not_run=by[m]["n_refs_stopped_user"])
+                                for m in C.METHODS},
+                  first20={m: dict(n=f["n"], n_ok=f["n_ok"], judged=f["n"] == FIRST_N, stop=f["stop"])
+                           for m, f in st["first20"].items()},
+                  note="units without unit.json (never run, or killed by the U-1 scancel) are neither pipeline errors "
+                       "nor missing; o_stats / the O STOP rules count finished units only; ts_success / shape_kept in "
+                       "'methods' are over every finished TS unit of the method, not the selected subset (which is "
+                       "TS-ok by construction); ts_not_run = ts_killed (unit folder, no unit.json: killed by the "
+                       "scancel) + ts_never_started; ts_killed_in_retry = killed after attempt 1 failed its gate; "
+                       "ts_success_lower_bound = n_ts_ok / (n_ts + n killed in retry) (those counted as fails); "
+                       "ts_killed_core_h_finished_steps = finished ORCA steps of killed units only (lower bound)")
+    retro = _rj(EST_RETRO) or {}                                   # U-3a (report only)
     rep = dict(spec="D1G3.md 4, 12 O", written=_now(), code=CODE_VERSION, plan_fingerprint=plan["fingerprint"],
                complete=not incomplete, n_incomplete=len(incomplete), incomplete=incomplete[:50], methods=by,
                partB=partb, o_stats=st, estimate=dict(total_core_h=est.get("total_core_h"), go=est.get("go")),
+               estimate_retro=dict(file=str(EST_RETRO), total_core_h=retro.get("total_core_h"),
+                                   stop_reasons=retro.get("stop_reasons")) if retro else None,
                t1=(_rj(T1_JSON) or {}).get("pass"), t5=dict(passed=(_rj(T5_JSON) or {}).get("pass"), mode=t5_mode()),
-               measured_core_h=sum(float(r.get("core_h") or 0) for r in res.values()), deviations=dev,
+               measured_core_h=sum(float(r.get("core_h") or 0) for r in res.values()), deviations=dev, u1=u1_rep,
                stop=bool(reasons), stop_reasons=reasons, decisions=DECISIONS,
                outputs={str(p): C.sha256(p) for p in (STATUS_CSV, REFS_CSV)})
     C.write_json(REPORT, rep)
     print(json.dumps({k: rep[k] for k in ("complete", "n_incomplete", "stop", "stop_reasons")}, indent=1), flush=True)
     for m, v in by.items():
-        print(f"  {m}: TS {v['n_ts_ok']}/{v['n_ts']} ok, shape kept {v['shape_kept']}, final .done {v['final_done']}",
-              flush=True)
+        print(f"  {m}: TS {v['n_ts_ok']}/{v['n_ts']} ok (lower bound {v['ts_success_lower_bound']}; killed "
+              f"{v['n_ts_killed']}, {v['n_ts_killed_in_retry']} in retry), shape kept {v['shape_kept']}, final .done "
+              f"{v['final_done']}, selected {v['n_selected']}, stopped_user {v['n_stopped_user']}", flush=True)
+    print(f"  U-1: {u1_rep['n_complete_pairs']} complete pairs {u1_rep['n_by_class']}, both ends .done "
+          f"{u1_rep['n_pairs_both_done']} {u1_rep['pairs_both_done_by_class']}, needed refs missing "
+          f"{len(u1_rep['needed_refs_missing'])}", flush=True)
     print(f"  partB: {partb['n_ok']}/{partb['n']} ok, converged_to_label {partb['converged_to_label']}, dE n {partb['n_dE']}",
           flush=True)
     if reasons:
@@ -1951,6 +2212,8 @@ def main(argv=None):
         return cmd_work("sel", a.nprocs, a.only)
     if a.cmd == "estimate":
         return cmd_estimate(a.arg == "retro")
+    if a.cmd == "select":
+        return cmd_select()
     if a.cmd == "assemble":
         return cmd_assemble(a.force)
     if a.cmd == "status":
