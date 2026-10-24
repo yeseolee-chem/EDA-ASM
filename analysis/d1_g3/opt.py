@@ -141,6 +141,7 @@ FINAL = {m: C.G3 / f"{m}_final" for m in C.METHODS}
 PARTB = C.G3 / "partB"
 S_PAIRS, S_RXNS = C.RES / "S_pairs.csv", C.RES / "S_rxns.csv"
 RES_PLAN, T1_JSON, T5_JSON = C.RES / "O_plan.csv", C.RES / "T_1.json", C.RES / "T_5.json"
+EST_RETRO = C.RES / "O_estimate_retro.json"                       # U-3a
 EST_JSON, STATUS_CSV, REFS_CSV, REPORT = (C.RES / "O_estimate.json", C.RES / "O_status.csv", C.RES / "O_refs.csv",
                                           C.RES / "O_report.json")
 G2_FINAL = C.G2 / "g2_final"
@@ -1546,10 +1547,13 @@ def _fam(rows, all_n):
                 est=max(e_mean, e_n3))
 
 
-def cmd_estimate():
+def cmd_estimate(retro=False):
     # O-23 (user 2026-10-24): no cost estimate and no 3,000 core-h limit; writes nothing and never writes an O STOP
-    print("estimate: skipped (decision O-23); main does not wait for it", flush=True)
-    return 0
+    if not retro:
+        print("estimate: skipped (decision O-23); main does not wait for it", flush=True)
+        return 0
+    # U-3a (user 2026-10-25): 'estimate retro' = the spec 7 / O-13 estimate the cancelled job would have written, from
+    # the pilot units, report only -> results/O_estimate_retro.json (never an O STOP; the work is already stopped)
     plan = load_plan()
     code, why = t_gate()                                           # O-20: nothing is written while T has not passed
     if code:
@@ -1563,7 +1567,7 @@ def cmd_estimate():
                missing=missing, go=False, stop=False, stop_reasons=[], families={})
     if missing:
         rep["complete"] = False
-        C.write_json(EST_JSON, rep)
+        C.write_json(EST_RETRO, rep)
         print(f"estimate: {len(missing)} pilot units missing: {missing[:10]}", file=sys.stderr)
         return 2
     rep["complete"] = True
@@ -1612,13 +1616,13 @@ def cmd_estimate():
         rep["stop_reasons"].append(f"O STOP files present: {sorted(stopped_methods())} {STOP_FILE.is_file()}")
     rep["stop"] = bool(rep["stop_reasons"])
     rep["go"] = not rep["stop"]
-    C.write_json(EST_JSON, rep)
-    if rep["stop"] and not STOP_FILE.is_file():
-        write_stop("estimate: " + "; ".join(rep["stop_reasons"]))
+    rep["retro"] = ("U-3a: computed after the fact (2026-10-25); the estimate job 1044263 was cancelled before it ran "
+                    "(O-23); measured_core_h counts every finished unit at this time, not only the pilot")
+    C.write_json(EST_RETRO, rep)
     print(json.dumps({k: rep[k] for k in ("total_core_h", "go", "stop_reasons")}, indent=1, default=str), flush=True)
     for k, v in fam.items():
         print(f"  {k}: {None if v is None else round(v['est'], 1)}", flush=True)
-    return 0 if rep["go"] else 3
+    return 0
 
 
 # ================================================================ assemble (G3ENV=d1)
@@ -1946,7 +1950,7 @@ def main(argv=None):
     if a.cmd == "work" and a.arg == "sel" and a.only:
         return cmd_work("sel", a.nprocs, a.only)
     if a.cmd == "estimate":
-        return cmd_estimate()
+        return cmd_estimate(a.arg == "retro")
     if a.cmd == "assemble":
         return cmd_assemble(a.force)
     if a.cmd == "status":
