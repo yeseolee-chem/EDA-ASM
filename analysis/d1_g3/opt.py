@@ -1461,7 +1461,10 @@ def t1_record(D, res, uid, m):
     body = RE_ECHO.sub("", txt)
     d3 = (D["OD"].level_checks(txt).get("d3") or {}) if txt else {}
     method_ok = sj.get("method") == [want["method"]]
-    basis_ok = sj.get("basis") == want["basis"]
+    # O-22 (2026-10-24, after T-1 failed on g3r only for this): the orbital basis (first basis line) must equal the
+    # wanted one and every wanted line must be printed; extra auxiliary lines (r2SCAN-3c prints def2-mTZVPP/J) are fine
+    bl = sj.get("basis") or []
+    basis_ok = bool(bl) and bl[0] == want["basis"][0] and all(b in bl for b in want["basis"])
     d3_ok = (len(d3) == 4) if want["d3bj"] else True               # = orca_direct.level_ok d3_present (D1 L0)
     func_ok = want["functional"] is None or re.search(want["functional"], body, re.I) is not None
     out.update(attempt_used=r.get("attempt_used"), terminated=sj.get("terminated"), converged=sj.get("converged"),
