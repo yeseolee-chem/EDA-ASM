@@ -1268,15 +1268,22 @@ def ready(plan, phase):
     return 0, ""
 
 
-def cmd_work(phase, nprocs):
-    if phase not in ("pilot", "main"):
+def cmd_work(phase, nprocs, only=None):
+    if phase not in ("pilot", "main", "sel"):
         raise SystemExit(__doc__)
     D, plan = d1(), load_plan()
     code, why = ready(plan, phase)
     if code:
         print(f"{'STOP' if code == 3 else 'NOT READY'}: work {phase}: {why}", file=sys.stderr, flush=True)
         return code
-    units = [u for u in plan["units"] if phase == "main" or u["phase"] in ("t1", "pilot")]
+    if phase == "sel":                                             # U-1 (user 2026-10-25): only the listed plan units
+        want = {ln.split()[0] for ln in Path(only).read_text().splitlines() if ln.strip() and not ln.startswith("#")}
+        units = [u for u in plan["units"] if u["uid"] in want]
+        if len(units) != len(want):
+            print(f"STOP: work sel: {sorted(want - {u['uid'] for u in units})} are not plan units", file=sys.stderr)
+            return 3
+    else:
+        units = [u for u in plan["units"] if phase == "main" or u["phase"] in ("t1", "pilot")]
     local = _local()
     W = Worker(D, plan, units, nprocs, local)
     k = max(1, _cpus() // SLOT_CORES)
@@ -1919,6 +1926,7 @@ def main(argv=None):
     ap.add_argument("arg", nargs="?")
     ap.add_argument("--nprocs", type=int, default=SLOT_CORES)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--only", default=None)                        # work sel: file of plan unit ids (U-1)
     try:
         a = ap.parse_args(argv)
     except SystemExit:
@@ -1935,6 +1943,8 @@ def main(argv=None):
         return cmd_tests(a.nprocs)
     if a.cmd == "work" and a.arg in ("pilot", "main"):
         return cmd_work(a.arg, a.nprocs)
+    if a.cmd == "work" and a.arg == "sel" and a.only:
+        return cmd_work("sel", a.nprocs, a.only)
     if a.cmd == "estimate":
         return cmd_estimate()
     if a.cmd == "assemble":
