@@ -55,3 +55,4 @@
 - **O-18**: Part A 최종 폴더: TS ok이고 두 기준 구조 ok일 때만 .done; 아니면 첫 이유로 .fail_<ts_|ref1_|ref2_|pipeline_...>. xyz는 .done 폴더에만 쓴다(G2 finalize와 같음; 실패 구조는 units/에 남음).
 - **O-T5**: T-5 통과 방식 = 'sp' (Part B SP가 이 방식을 쓴다; results/T_5.json)
 - **O-22**: T-1 기저 확인 완화(2026-10-24, T-1이 g3r에서 이것 하나로 실패한 뒤; 고치기 전에 사용자에게 보고): 출력의 기저 줄 목록이 ["def2-mTZVPP"]와 정확히 같아야 했으나 r2SCAN-3c는 보조 기저 def2-mTZVPP/J도 찍는다(계산 자체는 정상 종료, 허수 1개 -393 cm-1, SMD water eps 78.355, DFT(GTOs) + r2SCAN, TS gate ok). 추천안: 첫 기저 줄(궤도 기저)이 기대 기저와 같고 기대 기저가 모두 찍혀 있으면 통과, 보조 기저 줄은 허용. 다른 T-1 기준은 그대로.
+- **O-23**: 비용 예상과 3,000 코어시간 한도 생략(사용자 지시 2026-10-24: "비용추정도하지말고 3000core-h도 필요없음 그냥 본계산 10개 넣어줘"): estimate를 돌리지 않고(job 1044263 취소), work main은 check + T-1~T-5 통과 + STOP 파일 없음만 확인한다(O_estimate.json go 조건 삭제). 이미 돌던 pilot 4 task(1044262)는 main 단위의 일부라 그대로 둔다(결과는 main이 다시 계산하지 않음). O-13의 "> 3,000 = STOP"은 적용하지 않는다.

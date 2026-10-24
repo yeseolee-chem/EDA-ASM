@@ -1739,8 +1739,9 @@ def cmd_summary():
           f"기준 구조 단위 {fi(o.get('n_refs_ok'))}/{fi(o.get('n_refs'))} 성공; TS 실패 이유 "
           f"{', '.join(f'{k} {v}' for k, v in fr.items()) if fr else '없음'}.")
     ost = orep.get("o_stats") or {}
-    w(f"- 파이프라인 오류 {fi(ost.get('n_error'))}/{fi(ost.get('n_finished'))} 단위; 예상 합계 "
-      f"{fm(oest.get('total_core_h'), 1)} 코어시간(한도 3,000, results/O_estimate.json), 측정 합계 "
+    est_txt = (f"예상 합계 {fm(oest.get('total_core_h'), 1)} 코어시간(한도 3,000, results/O_estimate.json)" if oest
+               else "비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)")
+    w(f"- 파이프라인 오류 {fi(ost.get('n_error'))}/{fi(ost.get('n_finished'))} 단위; {est_txt}, 측정 합계 "
       f"{fm(orep.get('measured_core_h'), 1)} 코어시간(results/O_report.json).")
     ob = orep.get("partB") or {}
     w(f"- Part B: {fi(ob.get('n_ok'))}/{fi(ob.get('n'))} 성공, converged_to_label {fi(ob.get('converged_to_label'))}, "
@@ -1931,8 +1932,9 @@ def cmd_summary():
     # 비용
     w("## 비용")
     w("")
-    w(f"- Phase O 예상 합계 {fm(oest.get('total_core_h'), 1)} 코어시간(spec 7 한도 3,000), 측정 합계 "
-      f"{fm(orep.get('measured_core_h'), 1)} 코어시간.")
+    est_txt = (f"Phase O 예상 합계 {fm(oest.get('total_core_h'), 1)} 코어시간(spec 7 한도 3,000)" if oest
+               else "Phase O 비용 예상·3,000 코어시간 한도는 사용자 지시로 생략(결정 O-23)")
+    w(f"- {est_txt}, 측정 합계 {fm(orep.get('measured_core_h'), 1)} 코어시간.")
     for m in C.METHODS:
         r = _row(E5, method=m, **{"class": "all"})
         fc = ((frep.get("methods") or {}).get(m) or {}).get("core_h") or {}

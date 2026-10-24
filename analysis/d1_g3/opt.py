@@ -264,6 +264,7 @@ DECISIONS = {
             "orca_direct.level_checks d3 = D1 L0 규칙); g3r = Method 'DFT(GTOs)', 기저 'def2-mTZVPP'(r2SCAN-3c 복합 기저), "
             "범함수 이름 r2SCAN이 출력 본문에 있음.",
     "O-22": "T-1 기저 확인 완화(2026-10-24, T-1이 g3r에서 이것 하나로 실패한 뒤; 고치기 전에 사용자에게 보고): 출력의 기저 줄 목록이 [\"def2-mTZVPP\"]와 정확히 같아야 했으나 r2SCAN-3c는 보조 기저 def2-mTZVPP/J도 찍는다(계산 자체는 정상 종료, 허수 1개 -393 cm-1, SMD water eps 78.355, DFT(GTOs) + r2SCAN, TS gate ok). 추천안: 첫 기저 줄(궤도 기저)이 기대 기저와 같고 기대 기저가 모두 찍혀 있으면 통과, 보조 기저 줄은 허용. 다른 T-1 기준은 그대로.",
+    "O-23": "비용 예상과 3,000 코어시간 한도 생략(사용자 지시 2026-10-24: \"비용추정도하지말고 3000core-h도 필요없음 그냥 본계산 10개 넣어줘\"): estimate를 돌리지 않고(job 1044263 취소), work main은 check + T-1~T-5 통과 + STOP 파일 없음만 확인한다(O_estimate.json go 조건 삭제). 이미 돌던 pilot 4 task(1044262)는 main 단위의 일부라 그대로 둔다(결과는 main이 다시 계산하지 않음). O-13의 \"> 3,000 = STOP\"은 적용하지 않는다.",
     "O-15": "작업 배치: 단위별 O_EXCL lock(SLURM job id; squeue에 없는 job의 lock은 인수), 32 CPU task에서 8 rank ORCA 4개 동시, "
             "OMPI_MCA_hwloc_base_binding_policy=none (여러 ORCA가 한 노드를 나눌 때의 d1_pair g_env.sh / r4_env.sh 설정; env.sh의 "
             "OpenMPI 4.1.8f는 XPMEM 없음), 44 h 뒤에는 새 단위를 받지 않음; pilot 4 task, main 10 task; node-local $TMPDIR; "
@@ -1264,10 +1265,7 @@ def ready(plan, phase):
         return code, why
     if STOP_FILE.is_file():
         return 3, f"{STOP_FILE} exists: {STOP_FILE.read_text().strip()}"
-    if phase == "main":
-        e = _rj(EST_JSON)
-        if not (e and e.get("go") and e.get("plan_fingerprint") == plan["fingerprint"]):
-            return 3, "results/O_estimate.json is not 'go' for this plan"
+    # O-23 (user 2026-10-24): main no longer waits for the cost estimate / 3,000 core-h limit (estimate not run)
     return 0, ""
 
 
