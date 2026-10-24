@@ -28,6 +28,8 @@ What is computed
        checked the same way -> results/T_5.json (mode used by Part B). Both fail = STOP.
   cost (spec 7): pilot = T-1 + 5 Part A reactions per method (+ their references) + 2 Part B reactions; estimate of
        all of section 7 (O-13); <= 3,000 core-h -> the main array runs (dependency chain), else STOP.
+       O-23 (user 2026-10-24): the estimate and the 3,000 core-h limit are dropped; `estimate` is a no-op and main runs
+       once check + T-1 .. T-5 have passed and there is no O STOP file (it may run alongside the pilot array).
 
 CLI (exit 0 = done / up to date, 2 = incomplete (resubmit) or usage, 3 = STOP; submit from analysis/d1_g3)
   plan                  G3ENV=reactot (pyarrow for Q_keys.parquet): $G3/O/plan.json + results/O_plan.csv (units,
@@ -36,8 +38,8 @@ CLI (exit 0 = done / up to date, 2 = incomplete (resubmit) or usage, 3 = STOP; s
                         $G3/O/check.json
   tests                 G3ENV=d1: T-1 + T-5 (needs check ok) -> results/T_1.json, results/T_5.json
   work <pilot|main>     G3ENV=d1, array: claims units (pilot: T-1 + pilot units; main: every unit) and runs
-                        $SLURM_CPUS_PER_TASK // 8 ORCA calculations at a time; main needs a 'go' estimate
-  estimate              G3ENV=d1: results/O_estimate.json (spec 7; exit 3 = > 3,000 core-h or an O STOP rule)
+                        $SLURM_CPUS_PER_TASK // 8 ORCA calculations at a time (O-23: main needs no estimate)
+  estimate              O-23: no-op (exit 0, writes nothing); before O-23: results/O_estimate.json (spec 7)
   assemble [--force]    G3ENV=d1: $G3/g3h_final/<rxn>/, $G3/g3r_final/<rxn>/, $G3/partB/<rxn>/, results/O_status.csv,
                         results/O_refs.csv, results/O_report.json (exit 3 = O STOP, 2 = units missing)
   status                counts per phase / kind / status and the O STOP statistics (writes nothing)
@@ -87,18 +89,15 @@ tasks (MaxSubmit 20, array elements count); -p cpu1,cpu2 lets SLURM take whichev
   JW=$(sbatch --parsable -p cpu1,cpu2 -J g3o_pilot --time=48:00:00 --cpus-per-task=32 --mem=128G --array=0-3 \
        --output=$L/%x_%A_%a.out --export=ALL,G3ENV=d1 --dependency=afterok:$JT:$JT2F:$JT3:$JT4 \
        --kill-on-invalid-dep=yes jobs/g3.slurm opt.py work pilot)
-  JE=$(sbatch --parsable -p cpu1,cpu2 -J g3o_est --time=48:00:00 --cpus-per-task=1 --mem=8G \
-       --export=ALL,G3ENV=d1 --dependency=afterany:$JW jobs/g3.slurm opt.py estimate)
-  (second batch, once JS .. JT4 have left the queue)
+  (O-23: no JE estimate job; JM waits only for JT and may run alongside JW; JA waits for both work arrays)
   JM=$(sbatch --parsable -p cpu1,cpu2 -J g3o_main --time=48:00:00 --cpus-per-task=32 --mem=128G --array=0-9 \
-       --output=$L/%x_%A_%a.out --export=ALL,G3ENV=d1 --dependency=afterok:$JE --kill-on-invalid-dep=yes \
+       --output=$L/%x_%A_%a.out --export=ALL,G3ENV=d1 --dependency=afterok:$JT --kill-on-invalid-dep=yes \
        jobs/g3.slurm opt.py work main)
   JA=$(sbatch --parsable -p cpu1,cpu2 -J g3o_asm --time=48:00:00 --cpus-per-task=2 --mem=16G \
-       --export=ALL,G3ENV=d1 --dependency=afterany:$JM jobs/g3.slurm opt.py assemble)
-  Resubmission (all idempotent): a work array that hit the wall or exited 2 -> the same JW / JM line without the
+       --export=ALL,G3ENV=d1 --dependency=afterany:$JM:$JW jobs/g3.slurm opt.py assemble)
+  Resubmission (all idempotent): a work array that hit the wall or exited 2 -> the same JM line without the
   dependency (finished units are skipped, dead jobs' locks are taken over; a step clipped twice closes its unit as
-  'wall_clipped', O-19), then JE / JA again. estimate exit 2 = pilot incomplete or T not passed (resubmit JW, then JE,
-  JM, JA); exit 3 = STOP (results/O_estimate.json stop_reasons, or a failed T). assemble exit 3 = O STOP
+  'wall_clipped', O-19), then JA again. work exit 3 = STOP (an O STOP file, or a failed T). assemble exit 3 = O STOP
   (results/O_report.json stop_reasons) or a failed T, exit 2 = units missing.
 """
 from __future__ import annotations
@@ -263,8 +262,8 @@ DECISIONS = {
             "Method 'Hartree-Fock(GTOs)', 'Your calculation utilizes the basis: 6-31G*', D3 매개변수 4줄(s6, a1, s8, a2; "
             "orca_direct.level_checks d3 = D1 L0 규칙); g3r = Method 'DFT(GTOs)', 기저 'def2-mTZVPP'(r2SCAN-3c 복합 기저), "
             "범함수 이름 r2SCAN이 출력 본문에 있음.",
-    "O-22": "T-1 기저 확인 완화(2026-10-24, T-1이 g3r에서 이것 하나로 실패한 뒤; 고치기 전에 사용자에게 보고): 출력의 기저 줄 목록이 [\"def2-mTZVPP\"]와 정확히 같아야 했으나 r2SCAN-3c는 보조 기저 def2-mTZVPP/J도 찍는다(계산 자체는 정상 종료, 허수 1개 -393 cm-1, SMD water eps 78.355, DFT(GTOs) + r2SCAN, TS gate ok). 추천안: 첫 기저 줄(궤도 기저)이 기대 기저와 같고 기대 기저가 모두 찍혀 있으면 통과, 보조 기저 줄은 허용. 다른 T-1 기준은 그대로.",
-    "O-23": "비용 예상과 3,000 코어시간 한도 생략(사용자 지시 2026-10-24: \"비용추정도하지말고 3000core-h도 필요없음 그냥 본계산 10개 넣어줘\"): estimate를 돌리지 않고(job 1044263 취소), work main은 check + T-1~T-5 통과 + STOP 파일 없음만 확인한다(O_estimate.json go 조건 삭제). 이미 돌던 pilot 4 task(1044262)는 main 단위의 일부라 그대로 둔다(결과는 main이 다시 계산하지 않음). O-13의 \"> 3,000 = STOP\"은 적용하지 않는다.",
+    "O-22": "T-1 기저 확인 완화(2026-10-24, T-1이 g3r에서 이것 하나로 실패한 뒤; 고치기 전에 사용자에게 보고했고, 사용자 상시 지시('모든 분기마다 너의 추천대로 진행')에 따라 답을 기다리지 않고 추천안으로 고침): 출력의 기저 줄 목록이 [\"def2-mTZVPP\"]와 정확히 같아야 했으나 r2SCAN-3c는 보조 기저 def2-mTZVPP/J도 찍는다(계산 자체는 정상 종료, 허수 1개 -393 cm-1, SMD water eps 78.355, DFT(GTOs) + r2SCAN, TS gate ok). 추천안: 첫 기저 줄(궤도 기저)이 기대 기저와 같고 기대 기저가 모두 찍혀 있으면 통과, 보조 기저 줄은 허용. 다른 T-1 기준은 그대로.",
+    "O-23": "비용 예상과 3,000 코어시간 한도 생략(사용자 지시 2026-10-24: \"비용추정도하지말고 3000core-h도 필요없음 그냥 본계산 10개 넣어줘\"): estimate를 돌리지 않고(job 1044263 취소), work main은 check + T-1~T-5 통과 + STOP 파일 없음만 확인한다(O_estimate.json go 조건 삭제). 이미 돌던 pilot 4 task(1044262)는 main 단위의 일부라 그대로 둔다(결과는 main이 다시 계산하지 않음); assemble(1044265)은 pilot과 main이 모두 끝난 뒤(afterany 1044262, 1044264). estimate 명령은 아무것도 쓰지 않는 no-op(O STOP을 만들지 않음). O-13의 \"> 3,000 = STOP\"은 적용하지 않는다.",
     "O-15": "작업 배치: 단위별 O_EXCL lock(SLURM job id; squeue에 없는 job의 lock은 인수), 32 CPU task에서 8 rank ORCA 4개 동시, "
             "OMPI_MCA_hwloc_base_binding_policy=none (여러 ORCA가 한 노드를 나눌 때의 d1_pair g_env.sh / r4_env.sh 설정; env.sh의 "
             "OpenMPI 4.1.8f는 XPMEM 없음), 44 h 뒤에는 새 단위를 받지 않음; pilot 4 task, main 10 task; node-local $TMPDIR; "
@@ -1541,6 +1540,9 @@ def _fam(rows, all_n):
 
 
 def cmd_estimate():
+    # O-23 (user 2026-10-24): no cost estimate and no 3,000 core-h limit; writes nothing and never writes an O STOP
+    print("estimate: skipped (decision O-23); main does not wait for it", flush=True)
+    return 0
     plan = load_plan()
     code, why = t_gate()                                           # O-20: nothing is written while T has not passed
     if code:
