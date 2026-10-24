@@ -263,6 +263,7 @@ DECISIONS = {
             "Method 'Hartree-Fock(GTOs)', 'Your calculation utilizes the basis: 6-31G*', D3 매개변수 4줄(s6, a1, s8, a2; "
             "orca_direct.level_checks d3 = D1 L0 규칙); g3r = Method 'DFT(GTOs)', 기저 'def2-mTZVPP'(r2SCAN-3c 복합 기저), "
             "범함수 이름 r2SCAN이 출력 본문에 있음.",
+    "O-22": "T-1 기저 확인 완화(2026-10-24, T-1이 g3r에서 이것 하나로 실패한 뒤; 고치기 전에 사용자에게 보고): 출력의 기저 줄 목록이 [\"def2-mTZVPP\"]와 정확히 같아야 했으나 r2SCAN-3c는 보조 기저 def2-mTZVPP/J도 찍는다(계산 자체는 정상 종료, 허수 1개 -393 cm-1, SMD water eps 78.355, DFT(GTOs) + r2SCAN, TS gate ok). 추천안: 첫 기저 줄(궤도 기저)이 기대 기저와 같고 기대 기저가 모두 찍혀 있으면 통과, 보조 기저 줄은 허용. 다른 T-1 기준은 그대로.",
     "O-15": "작업 배치: 단위별 O_EXCL lock(SLURM job id; squeue에 없는 job의 lock은 인수), 32 CPU task에서 8 rank ORCA 4개 동시, "
             "OMPI_MCA_hwloc_base_binding_policy=none (여러 ORCA가 한 노드를 나눌 때의 d1_pair g_env.sh / r4_env.sh 설정; env.sh의 "
             "OpenMPI 4.1.8f는 XPMEM 없음), 44 h 뒤에는 새 단위를 받지 않음; pilot 4 task, main 10 task; node-local $TMPDIR; "
