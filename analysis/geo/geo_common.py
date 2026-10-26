@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pickle
 import sys
 from pathlib import Path
 
@@ -143,6 +144,20 @@ def spd_matrix(B):
     for k in range(n):                          # Floyd-Warshall (n <= ~70)
         S = np.minimum(S, S[:, k:k + 1] + S[k:k + 1, :])
     return np.minimum(S, SPD_MAX).astype(np.int8)
+
+
+class _NumpyCompatUnpickler(pickle.Unpickler):
+    """decision U-0: records.pkl is written in the D1 run env (numpy 2.x: numpy._core) and read in the GPU env
+    (numpy 1.26: numpy.core); map the module names so either env can load it."""
+    def find_class(self, module, name):
+        if module.startswith("numpy._core") and not hasattr(np, "_core"):
+            module = "numpy.core" + module[len("numpy._core"):]
+        return super().find_class(module, name)
+
+
+def load_records():
+    with open(GEO / "data" / "records.pkl", "rb") as f:
+        return _NumpyCompatUnpickler(f).load()
 
 
 def write_json(path, obj):

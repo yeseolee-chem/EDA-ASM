@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Phase Z: D0-G2 = the D1-G2 protocol (analysis/d1_g2/g2_autode.py imported, compute unchanged) on the D0 reactions.
-sbatch only, D1 run env (jobs/d0g2.slurm).
+sbatch only, D1 run env (jobs/cpu.slurm).
 
   python d0g2.py manifest                        # $D0G2/d0_manifest.csv, $D0G2/G/labels_d0_g2.json, $D0G2/labjobs/
   python d0g2.py pilot_list                      # results/Z_pilot.csv
@@ -29,7 +29,9 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import g2_common as G  # noqa: E402
 import g2_autode as GA  # noqa: E402
+import g2_refinalize as GR  # noqa: E402  (decision Z-graph: sets GA._graph = GR._graph_fixed, the D1-G2 Phase G repair)
 
+assert GA._graph is GR._graph_fixed, "the D1-G2 _graph repair (g2_refinalize) is not active"
 assert G.G2 == GC.D0G2 and str(G.G2) != "/gpfs/tmp_cpu2/yeseo1ee/d1_g2", "D0G2 scratch must not be the D1-G2 scratch"
 MANIFEST = GC.D0G2 / "d0_manifest.csv"
 LABJOBS = GC.D0G2 / "labjobs"                       # <job_id>/{ts.xyz, ref_dipole.xyz, ref_dipolarophile.xyz} = Coley

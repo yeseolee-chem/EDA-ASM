@@ -68,8 +68,7 @@ def boot_diff(Fa, Fb, rng):
 
 
 def main():
-    with open(GC.GEO / "data" / "records.pkl", "rb") as f:
-        recs = pickle.load(f)
+    recs = GC.load_records()                              # decision U-0: numpy 2.x / 1.x compatible loader
     folds = [0, 1, 2, 3, 4]
     test = [r for r in recs if r["src"] == "D1" and r["fold"] in folds and r["xyz_g2"] is not None]
     by_fold = {k: [r for r in test if r["fold"] == k] for k in folds}

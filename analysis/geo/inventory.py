@@ -20,10 +20,14 @@ def chk(name, value, expected, ok):
     print(f"[{'ok' if ok else 'FAIL'}] {name}: {value} (expected {expected})", flush=True)
 
 
+PAIR_MAX_A = 4.5   # decision I-1: was 4.0; 11 valid asynchronous label TSs have their long forming bond at 4.02-4.36 A
+
+
 def pair_ok(xyz, pairs, A):
-    """each forming pair joins the two fragments and is 1.4-4.0 A long (0-based index check)."""
+    """each forming pair joins the two fragments and is 1.4-4.5 A long (0-based index check; decision I-1)."""
     A = set(A)
-    return all(((i in A) != (j in A)) and 1.4 <= float(np.linalg.norm(xyz[i] - xyz[j])) <= 4.0 for i, j in pairs)
+    return all(((i in A) != (j in A)) and 1.4 <= float(np.linalg.norm(xyz[i] - xyz[j])) <= PAIR_MAX_A
+               for i, j in pairs)
 
 
 def main():
@@ -95,7 +99,7 @@ def main():
     chk("D0 A_idx = dipole atoms", bad_meta[:20], [], not bad_meta)
     chk("D0 roles / reference files", sorted(set(bad_role))[:20], [], not bad_role)
     chk("D0 formed_d1/2 vs Coley TS (info)", dev0, "info only", True)
-    chk("forming pairs join the fragments, 1.4-4.0 A", bad_pair[:20], [], not bad_pair)
+    chk("forming pairs join the fragments, 1.4-4.5 A (I-1)", bad_pair[:20], [], not bad_pair)
     chk("element order input = label", bad_order[:20], [], not bad_order)
     chk("elements in ELEM", sorted(elems - set(GC.ELEM)), [], elems <= set(GC.ELEM))
     n_smi = sum(int(L["rxn_id"]) in smi for L in labs0)

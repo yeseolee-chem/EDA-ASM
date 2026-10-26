@@ -25,8 +25,7 @@ BS, LR, MAX_EP, PATIENCE, W_FORM, LOCAL_CUT = 16, 2e-4, 100, 15, 10.0, 4.0
 
 
 def load_records():
-    with open(GC.GEO / "data" / "records.pkl", "rb") as f:
-        return pickle.load(f)
+    return GC.load_records()                              # decision U-0: numpy 2.x / 1.x compatible loader
 
 
 def split(recs, k):

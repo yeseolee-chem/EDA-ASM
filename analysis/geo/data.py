@@ -18,8 +18,10 @@ import rmsd as rm  # noqa: E402
 bond_types, spd_matrix = GC.bond_types, GC.spd_matrix
 
 
-def canon_rxn(smi):
-    """map-free canonical reaction SMILES (explicit [H:n] atoms of the mapped D0 SMILES removed)."""
+def canon_rxn(smi, stereo=False):
+    """map-free canonical reaction SMILES (explicit H atoms removed). Decision D-1: stereo is removed by default
+    (as analysis/d1_pair/d1_split.py), because a mirror-image TS counts as the same TS here (kabsch reflect=True), so an
+    enantiomeric or differently stereo-encoded D0 copy of a D1 reaction must count as an overlap."""
     from rdkit import Chem
     out = []
     for side in smi.split(">>"):
@@ -31,6 +33,8 @@ def canon_rxn(smi):
             for a in m.GetAtoms():
                 a.SetAtomMapNum(0)
             m = Chem.RemoveHs(m)
+            if not stereo:
+                Chem.RemoveStereochemistry(m)
             ms.append(Chem.MolToSmiles(m))
         out.append(".".join(sorted(ms)))
     return ">>".join(out)
@@ -39,10 +43,15 @@ def canon_rxn(smi):
 def d0_overlap_ids():
     man = pd.read_csv(GC.D1_MANIFEST, keep_default_na=False)
     s1 = man[man.kind == "D1"].rxn_smiles
-    d1 = {c for c in (canon_rxn(s) for s in s1) if c is not None}
+    c1 = [canon_rxn(s) for s in s1]
+    d1 = {c for c in c1 if c is not None}
+    d1s = {c for c in (canon_rxn(s, stereo=True) for s in s1) if c is not None}
     smi = GC.load_d0_smiles()
     c0 = {rid: canon_rxn(s) for rid, s in smi.items()}
-    stats = dict(n_d1_smiles=int(len(s1)), n_d1_canon=len(d1), n_d0_canon_none=sum(v is None for v in c0.values()))
+    c0s = {rid: canon_rxn(s, stereo=True) for rid, s in smi.items()}
+    stats = dict(n_d1_smiles=int(len(s1)), n_d1_parsed=sum(c is not None for c in c1), n_d1_canon=len(d1),
+                 n_d1_canon_with_stereo=len(d1s), n_d0_canon_none=sum(v is None for v in c0.values()),
+                 n_overlap_with_stereo=sum(c is not None and c in d1s for c in c0s.values()))      # info (D-1)
     return {rid for rid, c in c0.items() if c is not None and c in d1}, stats
 
 
@@ -112,8 +121,8 @@ def main():
             recs.append(r)
     meta0 = GC.load_meta(GC.D0_META)
     ov, ov_stats = d0_overlap_ids()
-    if ov_stats["n_d1_canon"] < 9000:
-        print(f"STOP: only {ov_stats['n_d1_canon']} D1 reaction SMILES parsed for the overlap check", file=sys.stderr)
+    if ov_stats["n_d1_parsed"] < 9000:                 # D-1: count parsed SMILES (stereo-free canonical set is smaller)
+        print(f"STOP: only {ov_stats['n_d1_parsed']} D1 reaction SMILES parsed for the overlap check", file=sys.stderr)
         return 3
     for L in GC.load_d0_labels():
         rid = int(L["rxn_id"])
