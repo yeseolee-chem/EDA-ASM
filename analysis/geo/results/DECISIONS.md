@@ -1,0 +1,5 @@
+# GEO-1 결정 기록 (명령서 15절: 추천안을 고르고 적는다)
+
+- **0-base**: 명령서는 worktree를 `origin/d1-g3l`에서 만들라고 했으나, 그 브랜치는 2026-10-26 사용자 결정(D1-G3L-C 중단·생성 파일 전부 삭제)으로 로컬·원격 모두 지워졌다. d1-g3l = d1-g3(aa4399bf) + D1-G3L-C 명령서·코드·중간 결과뿐이고 GEO-1은 그중 아무것도 쓰지 않으므로, 추천안대로 `origin/d1-g3`(aa4399bf)을 기준으로 `geo1` worktree를 만들었다(`git -C $D1G3 worktree add -b geo1 .../eda-asm-prediction-geo1 origin/d1-g3`). d1g3 작업 트리는 건드리지 않았다.
+- **0-2**: D1-G3L-C의 DISK-C(job 1048058)는 한 번도 돌지 않았다. 2026-10-26 사용자 지시로 job을 취소했고 D1-G3L-C 자체를 중단·삭제했으므로 앞으로도 돌 수 없다. ① DISK 기록은 d1-g3l과 함께 지워졌으나 사본 `/gpfs/tmp_cpu2/yeseo1ee/disk_cleanup_20261025/DISK_actions.csv`에 DISK-C 행이 없다(DISK-A·B 행만 있음). ② `.done` 수는 Phase I에서 센다. ③ "DISK-C가 아직 안 돌았으면 STOP"은 DISK-C가 espley_xtb_g1을 지울 위험을 막는 조건인데 그 위험이 없어졌으므로 충족으로 본다(사용자 지시 "모든 분기마다 추천작업"). 참고: DISK-B가 espley_* 의 `*.out/*.log/*.hess/*.engrad/*.trj`를 gzip했으나 GEO-1이 읽는 `ts.xyz`·`.done`은 손대지 않았다(manifest_b.csv).
+- **0-mkdir**: scratch 폴더는 명령서의 sbatch 한 줄로 만들었고(job 1049405), 같은 job에서 `docs/specs/GEO1.md`의 코드 블록 11개를 순서대로 `analysis/geo/`에 그대로 추출했다(추출 스크립트 `/gpfs/home1/yeseo1ee/geo_extract_spec.py`, 블록마다 sha256 기록; Python 블록은 compile 통과).
