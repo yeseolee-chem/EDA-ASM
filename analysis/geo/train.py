@@ -31,6 +31,15 @@ def load_records():
     return GC.load_records()                              # decision U-0: numpy 2.x / 1.x compatible loader
 
 
+def dump_atomic(obj, path):
+    """decision R-atomic: predictions are written to <path>.<pid>.tmp and renamed, so a killed job never leaves a
+    truncated pkl that the R launcher would count as finished."""
+    tmp = path.with_name(f"{path.name}.{__import__('os').getpid()}.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(obj, f, protocol=4)
+    __import__("os").replace(tmp, path)
+
+
 def split(recs, k):
     inner = (k + 1) % 5
     test = [r for r in recs if r["src"] == "D1" and r["fold"] == k]
@@ -235,8 +244,7 @@ def main(a):
         seed = int(a[2])
         ema, arch, n_pass, _ = fit(train_items(full), None, cfg, seed, fixed_epochs=ep, tag=f"final_f{k}_s{seed}")
         P = predict(ema.model(arch), eval_items(te_r), n_pass)
-        with open(GC.GEO / "preds" / f"final_f{k}_s{seed}.pkl", "wb") as f:
-            pickle.dump(P, f, protocol=4)
+        dump_atomic(P, GC.GEO / "preds" / f"final_f{k}_s{seed}.pkl")
         return 0
     if cmd == "ablation":
         name = a[2]
@@ -244,8 +252,7 @@ def main(a):
         items = train_items(full, use_d0=kw.pop("use_d0", True))
         ema, arch, n_pass, _ = fit(items, None, cfg, 0, fixed_epochs=ep, tag=f"abl_{name}_f{k}", **kw)
         P = predict(ema.model(arch), eval_items(te_r), n_pass)
-        with open(GC.GEO / "preds" / f"abl_{name}_f{k}.pkl", "wb") as f:
-            pickle.dump(P, f, protocol=4)
+        dump_atomic(P, GC.GEO / "preds" / f"abl_{name}_f{k}.pkl")
         return 0
     raise SystemExit(__doc__)
 

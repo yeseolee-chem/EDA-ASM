@@ -101,19 +101,40 @@ def tasks(B):
 
 def submit(t):
     res = ["-p", GPU_P, "--gres=gpu:1"] if t["gpu"] else ["-p", CPU_P]
-    out = sh(["sbatch", "--parsable", *res, "-J", t["name"], "--time=48:00:00", "--cpus-per-task=4", "--mem=64G",
+    out = sh(["sbatch", "--parsable", *res, "-J", t["name"], "--time=48:00:00", "--cpus-per-task=4", "--mem=32G",
               f"--output={LOGS}/%x_%j.out", f"--export={t['env']}", "jobs/gpu.slurm", *t["args"]])
     return out.strip().split(";")[0]
 
 
 def hpc_csv(st):
-    ids = [v["jobid"] for v in st.values() if v.get("jobid")]
+    ids = sorted({j for v in st.values() for j in v.get("jobids", [])})        # every attempt (spec 14)
     if not ids:
         return
-    out = sh(["sacct", "-X", "-n", "-P", "-j", ",".join(ids), "-o", "JobID,JobName,State,Elapsed,ElapsedRaw,CPUTimeRAW,AllocTRES"])
+    try:
+        out = sh(["sacct", "-X", "-n", "-P", "-j", ",".join(ids), "-o",
+                  "JobID,JobName,State,Elapsed,ElapsedRaw,CPUTimeRAW,AllocTRES"])
+    except subprocess.CalledProcessError as e:
+        print(f"[r_launch] sacct failed, HPC_efficiency.csv not written: {e.stderr}", flush=True)
+        return
     tmp = RES / f"HPC_efficiency.csv.{os.getpid()}.tmp"
     tmp.write_text("job_id|job_name|state|elapsed|elapsed_s|cputime_raw_s|alloc_tres\n" + out)
     os.replace(tmp, RES / "HPC_efficiency.csv")
+
+
+RELAUNCH = ("source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh && conda activate reactot && "
+            f"cd {HERE} && PYTHONDONTWRITEBYTECODE=1 python r_launch.py")
+
+
+def relaunch():
+    """46 h: the same launcher again after this job ends (idempotent); never leaves the next waves unsubmitted."""
+    me = os.environ.get("SLURM_JOB_ID")
+    dep = [f"--dependency=afterany:{me}"] if me else []
+    try:
+        out = sh(["sbatch", "--parsable", "-p", CPU_P, "-J", "geo_rlaunch", "--time=48:00:00", "--cpus-per-task=1",
+                  "--mem=2G", f"--output={LOGS}/%x_%j.out", *dep, "--wrap", RELAUNCH])
+        print(f"[r_launch] relaunched as {out.strip()}", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[r_launch] relaunch failed (resubmit by hand): {e.stderr}", flush=True)
 
 
 def main():
@@ -127,25 +148,34 @@ def main():
     byname = {t["name"]: t for t in T}
     st = json.loads(STATE.read_text()) if STATE.is_file() else {}
     while True:
-        queued = [ln for ln in sh(["squeue", "-u", USER, "-h", "-r", "-o", "%j"]).splitlines() if ln.strip()]
-        active, nq, todo, blocked = set(queued), len(queued), [], []
-        for t in T:
+        try:
+            queued = [ln for ln in sh(["squeue", "-u", USER, "-h", "-r", "-o", "%j"]).splitlines() if ln.strip()]
+        except subprocess.CalledProcessError as e:                 # transient slurmctld error: try again later
+            print(f"[r_launch] squeue failed: {e.stderr}", flush=True)
+            time.sleep(POLL_S)
+            continue
+        active, nq, todo, dead = set(queued), len(queued), [], []
+        for t in T:                                                # T is in dependency order
             n, rec = t["name"], st.setdefault(t["name"], dict(tries=0))
             if t["out"].exists() or n in active:
                 continue
-            if rec.get("tries", 0) >= 2:
-                blocked.append(n)
+            if rec.get("tries", 0) >= 2 or any(d in dead for d in t["deps"]):
+                dead.append(n)                                     # lost twice, or depends on such a task
                 continue
             if any(not byname[d]["out"].exists() for d in t["deps"]):
-                if any(st.get(d, {}).get("tries", 0) >= 2 and not byname[d]["out"].exists() for d in t["deps"]):
-                    blocked.append(n)
                 continue
             todo.append(t)
         for t in todo:
             if nq >= MAX_SUBMIT:
                 break
-            jid = submit(t)
-            st[t["name"]].update(jobid=jid, tries=st[t["name"]].get("tries", 0) + 1, submitted=time.strftime("%F %T"))
+            try:
+                jid = submit(t)
+            except subprocess.CalledProcessError as e:             # e.g. MaxSubmit hit by another job: next round
+                print(f"[r_launch] sbatch {t['name']} failed: {e.stderr}", flush=True)
+                break
+            rec = st[t["name"]]
+            rec.update(jobid=jid, tries=rec.get("tries", 0) + 1, submitted=time.strftime("%F %T"))
+            rec.setdefault("jobids", []).append(jid)
             nq += 1
             print(f"[{time.strftime('%F %T')}] submitted {t['name']} -> {jid}", flush=True)
             wjson(STATE, st)
@@ -155,16 +185,16 @@ def main():
             hpc_csv(st)
             print("[r_launch] all R tasks and the evaluation finished", flush=True)
             return 0
-        if blocked and set(left) <= set(blocked) | {n for n in left if n in active}:
-            if not any(n in active for n in left):
-                (RES / "STOP_R.md").write_text("# STOP R: jobs lost twice without output\n\n" + "\n".join(f"- {b}"
-                                               for b in blocked) + "\n")
-                hpc_csv(st)
-                print(f"STOP R: blocked {blocked}", flush=True)
-                return 3
+        if dead and not any(n in active for n in left) and not todo:
+            (RES / "STOP_R.md").write_text("# STOP R: jobs lost twice without output (and their dependants)\n\n"
+                                           + "\n".join(f"- {b}" for b in dead) + "\n")
+            hpc_csv(st)
+            print(f"STOP R: dead {dead}", flush=True)
+            return 3
         if time.time() - t0 > STOP_AFTER_H * 3600:
             hpc_csv(st)
-            print("[r_launch] 46 h: resubmit this launcher (idempotent)", flush=True)
+            relaunch()
+            print("[r_launch] 46 h: relaunched (idempotent)", flush=True)
             return 2
         time.sleep(POLL_S)
 
