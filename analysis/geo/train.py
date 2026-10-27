@@ -22,6 +22,9 @@ DEV = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SIZE = dict(S=dict(L=6, dx=256, dp=64, H=8, do=16, dt=32))
 CFGS = {"c0": ("S", 0.05, 1), "c1": ("S", 0.05, 3), "c2": ("S", 0.20, 1), "c3": ("S", 0.20, 3)}
 BS, LR, MAX_EP, PATIENCE, W_FORM, LOCAL_CUT = 16, 2e-4, 100, 15, 10.0, 4.0
+# decision R-budget: the pre-approved 9-4 reduction (MAX_EP 60, PATIENCE 10) is applied through the environment
+MAX_EP = int(__import__("os").environ.get("GEO_MAX_EP", MAX_EP))
+PATIENCE = int(__import__("os").environ.get("GEO_PATIENCE", PATIENCE))
 
 
 def load_records():
