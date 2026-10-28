@@ -143,8 +143,10 @@ def relaunch(begin=False):
         out = sh(["sbatch", "--parsable", "-p", CPU_P, "-J", "geo_rlaunch", "--time=48:00:00", "--cpus-per-task=1",
                   "--mem=2G", f"--output={LOGS}/%x_%j.out", env, *dep, "--wrap", RELAUNCH])
         print(f"[r_launch] relaunched as {out.strip()}", flush=True)
+        return True
     except subprocess.CalledProcessError as e:
         print(f"[r_launch] relaunch failed (resubmit by hand): {e.stderr}", flush=True)
+        return False
 
 
 def main():
@@ -176,7 +178,7 @@ def main():
                 continue
             todo.append(t)
         for t in todo:
-            if nq >= MAX_SUBMIT:
+            if nq >= MAX_SUBMIT - ONCE:                            # R-once: nq counts this launcher; keep 1 for the next
                 break
             try:
                 jid = submit(t)
@@ -201,9 +203,8 @@ def main():
             hpc_csv(st)
             print(f"STOP R: dead {dead}", flush=True)
             return 3
-        if ONCE:                                           # R-once: next pass in ONCE_MIN min, no running slot meanwhile
-            relaunch(begin=True)
-            return 0
+        if ONCE and relaunch(begin=True):                  # R-once: next pass in ONCE_MIN min, no running slot meanwhile
+            return 0                                       # (if the resubmit failed, keep polling as before)
         if time.time() - t0 > STOP_AFTER_H * 3600:
             hpc_csv(st)
             relaunch()
