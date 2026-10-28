@@ -40,6 +40,16 @@ def dump_atomic(obj, path):
     __import__("os").replace(tmp, path)
 
 
+def smoothed_best(hist, w=11):
+    """decision R-select: centre epoch of the best w-epoch window of the inner-validation curve (primary share, then
+    rxn median), instead of the single-epoch maximum, which over 300 noisy evaluations (no patience) picks spikes."""
+    w = min(w, len(hist))
+    p = np.convolve([h["val_primary"] for h in hist], np.ones(w) / w, "valid")
+    m = np.convolve([h["val_rxn_median"] for h in hist], np.ones(w) / w, "valid")
+    i = max(range(len(p)), key=lambda j: (p[j], -m[j]))
+    return dict(ep=int(i + w // 2), key=[float(p[i]), -float(m[i])], window=w)
+
+
 def split(recs, k):
     inner = (k + 1) % 5
     test = [r for r in recs if r["src"] == "D1" and r["fold"] == k]
@@ -233,9 +243,12 @@ def main(a):
     if cmd == "select":
         H = {c: json.loads((GC.GEO / "runs" / f"tune_f{k}_{c}.history.json").read_text())
              for c in CFGS if (GC.GEO / "runs" / f"tune_f{k}_{c}.history.json").is_file()}
-        best = max(H, key=lambda c: tuple(H[c]["best"]))
+        S = {c: smoothed_best(H[c]["hist"]) for c in H}       # decision R-select
+        best = max(S, key=lambda c: tuple(S[c]["key"]))
         GC.write_json(GC.RES / f"R_select_f{k}.json",
-                      dict(fold=k, chosen=best, best_ep=H[best]["best_ep"], candidates={c: H[c]["best"] for c in H}))
+                      dict(fold=k, chosen=best, best_ep=S[best]["ep"], rule="R-select: 11-epoch window",
+                           candidates={c: S[c]["key"] for c in H},
+                           single_epoch={c: dict(best_ep=H[c]["best_ep"], best=H[c]["best"]) for c in H}))
         return 0
     sel = json.loads((GC.RES / f"R_select_f{k}.json").read_text())
     cfg, ep = sel["chosen"], sel["best_ep"] + 1
