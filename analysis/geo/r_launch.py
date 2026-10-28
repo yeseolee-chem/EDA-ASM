@@ -54,6 +54,12 @@ def budget():
     p = RES / "R_budget.json"
     if p.is_file():
         return json.loads(p.read_text())
+    if os.environ.get("GEO_R_MAX_EP"):                    # decision R-user (2026-10-28): the user's epochs / no patience
+        me, pa = int(os.environ["GEO_R_MAX_EP"]), int(os.environ.get("GEO_R_PATIENCE", "100000"))
+        B = dict(user_override=True, limit_gpu_h=None, stop=False,
+                 chosen=dict(step="user 2026-10-28", max_ep=me, patience=pa, abl_folds=list(FOLDS), gpu_h=None))
+        wjson(p, B)
+        return B
     t1, t3 = epoch_s("smoke_f0_c0"), epoch_s("smoke_f0_c1")
     est = lambda ep, n_abl: ep * (10 * t1 + 10 * t3 + 15 * t3 + n_abl * t3) / 3600.0   # noqa: E731  spec 9-4
     steps = [dict(step="none", max_ep=100, patience=15, abl_folds=list(FOLDS), gpu_h=est(100, 15)),
