@@ -129,15 +129,19 @@ def hpc_csv(st):
 
 RELAUNCH = ("source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh && conda activate reactot && "
             f"cd {HERE} && PYTHONDONTWRITEBYTECODE=1 python r_launch.py")
+ONCE = os.environ.get("GEO_R_ONCE") == "1"      # decision R-once: one pass, then again in ONCE_MIN min (frees the slot)
+ONCE_MIN = 10
 
 
-def relaunch():
-    """46 h: the same launcher again after this job ends (idempotent); never leaves the next waves unsubmitted."""
+def relaunch(begin=False):
+    """46 h (or ONCE mode after every pass): the same launcher again (idempotent); never leaves the next waves
+    unsubmitted. ONCE mode waits with --begin, so between passes it holds a submit slot but no running slot."""
     me = os.environ.get("SLURM_JOB_ID")
-    dep = [f"--dependency=afterany:{me}"] if me else []
+    dep = [f"--begin=now+{ONCE_MIN}minutes"] if begin else ([f"--dependency=afterany:{me}"] if me else [])
+    env = "--export=ALL,GEO_R_ONCE=1" if ONCE else "--export=ALL"
     try:
         out = sh(["sbatch", "--parsable", "-p", CPU_P, "-J", "geo_rlaunch", "--time=48:00:00", "--cpus-per-task=1",
-                  "--mem=2G", f"--output={LOGS}/%x_%j.out", *dep, "--wrap", RELAUNCH])
+                  "--mem=2G", f"--output={LOGS}/%x_%j.out", env, *dep, "--wrap", RELAUNCH])
         print(f"[r_launch] relaunched as {out.strip()}", flush=True)
     except subprocess.CalledProcessError as e:
         print(f"[r_launch] relaunch failed (resubmit by hand): {e.stderr}", flush=True)
@@ -197,6 +201,9 @@ def main():
             hpc_csv(st)
             print(f"STOP R: dead {dead}", flush=True)
             return 3
+        if ONCE:                                           # R-once: next pass in ONCE_MIN min, no running slot meanwhile
+            relaunch(begin=True)
+            return 0
         if time.time() - t0 > STOP_AFTER_H * 3600:
             hpc_csv(st)
             relaunch()
