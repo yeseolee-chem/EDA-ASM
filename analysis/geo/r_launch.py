@@ -131,6 +131,19 @@ RELAUNCH = ("source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh && conda a
             f"cd {HERE} && PYTHONDONTWRITEBYTECODE=1 python r_launch.py")
 ONCE = os.environ.get("GEO_R_ONCE") == "1"      # decision R-once: one pass, then again in ONCE_MIN min (frees the slot)
 ONCE_MIN = 10
+PEND_MAX = 2                                    # decision R-lpt: ONCE mode keeps <= 2 R tasks pending (see cost)
+NPASS = dict(c0=2, c1=4, c2=2, c3=4)            # train.py CFGS: n_pass = R + 1
+
+
+def cost(t):
+    """decision R-lpt: relative GPU cost of a ready final / ablation task, (best_ep + 1) x (passes + 2), x 0.5 without
+    D0, so the longest ready jobs are submitted first; select and evaluate go before everything."""
+    a = t["args"]
+    if len(a) < 3 or a[1] not in ("final", "ablation"):
+        return float("inf")
+    sel = json.loads((RES / f"R_select_f{a[2]}.json").read_text())
+    p = 1 if a[1] == "ablation" and a[3] == "r0" else NPASS[sel["chosen"]]
+    return (sel["best_ep"] + 1) * (p + 2) * (0.5 if a[1] == "ablation" and a[3] == "no_d0" else 1.0)
 
 
 def relaunch(begin=False):
@@ -161,11 +174,14 @@ def main():
     st = json.loads(STATE.read_text()) if STATE.is_file() else {}
     while True:
         try:
-            queued = [ln for ln in sh(["squeue", "-u", USER, "-h", "-r", "-o", "%j"]).splitlines() if ln.strip()]
+            rows = [ln.split("|") for ln in sh(["squeue", "-u", USER, "-h", "-r", "-o", "%j|%T"]).splitlines()
+                    if ln.strip()]
         except subprocess.CalledProcessError as e:                 # transient slurmctld error: try again later
             print(f"[r_launch] squeue failed: {e.stderr}", flush=True)
             time.sleep(POLL_S)
             continue
+        queued = [r[0] for r in rows]
+        npend = sum(1 for r in rows if r[0] in byname and r[-1] == "PENDING")      # R tasks only (not the launcher)
         active, nq, todo, dead = set(queued), len(queued), [], []
         for t in T:                                                # T is in dependency order
             n, rec = t["name"], st.setdefault(t["name"], dict(tries=0))
@@ -177,8 +193,12 @@ def main():
             if any(not byname[d]["out"].exists() for d in t["deps"]):
                 continue
             todo.append(t)
+        if ONCE:                                                   # R-lpt: longest ready job first
+            todo.sort(key=lambda t: -cost(t))
         for t in todo:
             if nq >= MAX_SUBMIT - ONCE:                            # R-once: nq counts this launcher; keep 1 for the next
+                break
+            if ONCE and npend >= PEND_MAX:                         # R-lpt: the launcher gets a slot every few job ends
                 break
             try:
                 jid = submit(t)
@@ -189,6 +209,7 @@ def main():
             rec.update(jobid=jid, tries=rec.get("tries", 0) + 1, submitted=time.strftime("%F %T"))
             rec.setdefault("jobids", []).append(jid)
             nq += 1
+            npend += 1
             print(f"[{time.strftime('%F %T')}] submitted {t['name']} -> {jid}", flush=True)
             wjson(STATE, st)
         wjson(STATE, st)
