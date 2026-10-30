@@ -48,3 +48,7 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
   - GEO2b: rung geo는 GEO1(G2c 입력)의 예측 구조에 G2c 폴더의 rel1/rel2를 쓴다(한 run에서 나온 TS·기준 구조, 명령서 5-1). 대체 구조도 G2c TS다.
     - 판정 비교 대상은 GEO2.md 10절 그대로 LADDER rung g2(단일 run G2)다. 따라서 판정은 "G2c + 구조 보정" 전체 파이프라인과 지금 G2를 비교한다.
     - G2c 자체만의 효과(rung g2c)는 따로 내지 않는다. 한계로 적는다.
+- **0-4 해결** (사용자 2026-10-30 14:2x "ams2026.103, ORCA 설치 압축본, d1_pair/g1, d1_pair/g1_rec, d1/d1_scratch 삭제"): 다섯 개를 지웠다(약 44 GB). 지우기 전에 지금 파이프라인이 읽지 않는 것을 확인했다(기록 /gpfs/home1/yeseo1ee/cleanup_20261030_b.txt).
+  - 할당량 254 → 210/300 GB, 여유 약 90 GB.
+  - 이제 G2c build는 명령서대로 byte copy로 해도 공간이 충분하다. 하드링크 이탈은 하지 않는다.
+  - 삭제는 job 자리가 모두 차 있어, 돌고 있는 job(1054056) 할당 안에서 srun --overlap으로 나눠 실행했다(각 10분 안, 계산 노드).
