@@ -37,3 +37,14 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
   - 남긴 것 5개는 GEO2b와 LADDER 코드가 쓴다: espley_rev6/env_espley(PYENV=espley), espley_rev5/venv(PYENV=venv5, F 단계), espley_xtb/xtb_features_g1.parquet(d1_features 열 순서), espley_rev6/xtb_r6, espley_rev6/S.
   - 지운 것: espley_xtb_g1_rev6(6.6 GB) 등 약 7.6 GB.
   - 확인한 것: 앞서 지운 d1_pair/g1_final(symlink)과 espley_xtb_g1은 GEO2b F 경로(d1_features runroot)에서 쓰지 않는다. runroot는 G1_ROOT를 geo 루트로 바꿔 넘긴다. check_env는 환경 변수 문자열만 비교하고, g1_geom은 import 때 G1_ROOT를 읽지 않는다. espley_xtb_g1은 cmd_f0check에서만 쓴다.
+- **A-G2c (사용자 결정 2026-10-30 13:4x, "2번으로 바꿔줘. 1번은 필요없음.")**: GEO1b의 입력 G2를 **G2c**로 바꾼다. G2c는 D1·D0 반응마다 autodE를 3번 돌린 결과(orig, r1, r2) 가운데 e_ts_freq_eh가 가장 낮은 것이고, 명령서 5-1 규칙 그대로다. 단일 run G2로 GEO1b를 학습하는 원래 A 트랙(①)은 하지 않는다.
+  - 지금 G2로 학습하려고 걸어 둔 연쇄 job을 취소했다: gb_data 1054062, gb_u_data 1054063, gb_rlaunch 1054064. 셋 다 시작 전이었다.
+  - GEO1b의 D, U, R, E는 G2c build(4개 root 완료 후 select_g2c.py build)가 끝난 뒤 시작한다.
+  - 슬롯: A 트랙이 G2c를 기다리므로 명령서 6절 표(R 동안 G2c 3개 등)는 이제 해당하지 않는다. G2c가 10자리를 모두 쓴다(D0 r1·r2 slice 0–2, job 1054187–92).
+  - 코드 바꿀 곳(G2c build 전에 고치고 검토한다):
+    - geo_common: D1_G2_FINAL → $G2C/d1/g2_final, D0G2 → $G2C/d0(data.py가 D0G2/g2_final을 읽음).
+    - tests.py U-8b와 geo_common G2RAW_PRIMARY: 명령서 값(1,667짝, 0.1338, 0.0218 Å, 시험 8,425반응)은 단일 run G2 값이다. G2c 그대로 기준값으로 바꾼다. 학습 전에 D 기록에서 계산해 고정하고 기록한다.
+    - U-8b 형성 거리 대 C_compare 검사는 orig가 뽑힌 반응에서만 그대로 적용한다.
+  - GEO2b: rung geo는 GEO1(G2c 입력)의 예측 구조에 G2c 폴더의 rel1/rel2를 쓴다(한 run에서 나온 TS·기준 구조, 명령서 5-1). 대체 구조도 G2c TS다.
+    - 판정 비교 대상은 GEO2.md 10절 그대로 LADDER rung g2(단일 run G2)다. 따라서 판정은 "G2c + 구조 보정" 전체 파이프라인과 지금 G2를 비교한다.
+    - G2c 자체만의 효과(rung g2c)는 따로 내지 않는다. 한계로 적는다.
