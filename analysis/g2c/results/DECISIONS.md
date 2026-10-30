@@ -27,3 +27,9 @@
   - D0 r2는 디스크 답(G1 삭제, 그 뒤 Espley rev 정리로 약 46 GB 여유) 뒤라 낸다.
   - 꼬리: D1 r2 slice 1은 32코어(4 lane)라 가장 늦다. D1 r1이 끝나 자리가 나면 64코어로 다시 낸다. 끝난 반응은 건너뛰고, 돌던 반응 몇 개만 다시 계산한다.
 - **0-disk 해결**: 사용자 요청 삭제로 할당량 210/300 GB(여유 약 90 GB, GEO1b DECISIONS 0-4 해결). D0 r2와 build를 명령서대로(byte copy) 진행한다.
+- **first-check 보완** (16:5x): d0_r2 첫 검사가 'DIFFERENT'로 나왔다. 실제 차이가 아니라 내 도우미 코드의 문제였다.
+  - 두 번째 반응 D0G2_0001은 원래 run이 autodE 예외로 ORCA 전에 실패해(Z_status 'fail:ts_autodE exception') 비교할 '!' 줄이 없었다.
+  - first_check.py를 두 run이 모두 TS 단계(.done_ts)까지 간 반응만 비교하도록 고쳤다. 다시 돌린 결과 d1_r1, d1_r2, d0_r1, d0_r2 모두 all_same이다. 명령서 STOP 아님.
+- **D0 orig 복구 완료** (17:0x): job 1054050 6개 모두 exit 0이다.
+  - 1,204반응 중 .done 1,028, .fail 176.
+  - D0 orig는 이제 5,260반응 모두 결과가 있고 .done은 4,491이다(GEO1 Z 때 4,488, 성공률 0.854 대 0.853).

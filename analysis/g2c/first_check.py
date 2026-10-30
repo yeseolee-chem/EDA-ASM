@@ -37,8 +37,8 @@ def check(rootname):
         a, b = root / "jobs" / T / "inputs.tar.gz", ORIG[src] / "jobs" / T / "inputs.tar.gz"
         if not b.is_file():
             continue
-        if not any((root / "jobs" / T).glob(".done_ts")):
-            continue
+        if not any((root / "jobs" / T).glob(".done_ts")) or not any((ORIG[src] / "jobs" / T).glob(".done_ts")):
+            continue                                       # both runs must have reached the TS stage (else no '!' lines)
         la, lb = bang(a), bang(b)
         rows.append(dict(job_id=T, same=la == lb, new=la, orig=lb))
         if len(rows) == 2:
