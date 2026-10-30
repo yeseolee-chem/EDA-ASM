@@ -33,3 +33,7 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
 - **0-job-size** (명령서 5-3 ② "노드 하나 전체"): 실행 불가. cpu2 QOS cpu2_limit가 job당 64 CPU로 막는다(128코어 job이 QOSMaxCpuPerNode로 대기). 계정 GrpTRES는 cpu=640, gpu=12, node=10이다. 그래서 CPU job은 64코어, pool 8 × 8코어로 낸다(10 job × 64 = 640 = 계정 상한).
   - D0 복구는 6 × 64(1054050), G2c 2–3 × 64로 냈다.
   - slice 수: D1 root n = 2(3,113코어시간 ÷ 64 ≈ 49 h → slice당 약 24 h), D0 root n = 3(7,201 ÷ 64 ≈ 113 h → slice당 약 38 h).
+- **0-4 추가 공간** (사용자 "11gb 폴더 전부 삭제" → 확인 질문 답 "필요한 5개만 남기고 삭제 (권장)"): 예전 Espley rev 폴더를 지웠다(job 1054107). 기록은 /gpfs/home1/yeseo1ee/espley_cleanup_20261030.txt.
+  - 남긴 것 5개는 GEO2b와 LADDER 코드가 쓴다: espley_rev6/env_espley(PYENV=espley), espley_rev5/venv(PYENV=venv5, F 단계), espley_xtb/xtb_features_g1.parquet(d1_features 열 순서), espley_rev6/xtb_r6, espley_rev6/S.
+  - 지운 것: espley_xtb_g1_rev6(6.6 GB) 등 약 7.6 GB.
+  - 확인한 것: 앞서 지운 d1_pair/g1_final(symlink)과 espley_xtb_g1은 GEO2b F 경로(d1_features runroot)에서 쓰지 않는다. runroot는 G1_ROOT를 geo 루트로 바꿔 넘긴다. check_env는 환경 변수 문자열만 비교하고, g1_geom은 import 때 G1_ROOT를 읽지 않는다. espley_xtb_g1은 cmd_f0check에서만 쓴다.
