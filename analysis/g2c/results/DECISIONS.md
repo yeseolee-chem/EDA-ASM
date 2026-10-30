@@ -6,7 +6,9 @@
   - job 1054036: manifest를 다시 만들고(5,260행) scan을 돌렸다.
     - 결과: kept_done 3,463, kept_fail 593, deleted 1,203, partial 1(rxn 5561, $D0G2/restore/partial로 옮김).
     - Z_status 불일치 0.
-  - 1,204반응만 GEO1 d0g2.py pool로 다시 계산한다(job 1054046, cpu2 128코어 × 2, pool 16 × 8코어; GEO1 때 1,653코어시간).
+  - 1,204반응만 GEO1 d0g2.py pool로 다시 계산한다(GEO1 때 1,653코어시간).
+    - 처음 낸 job 1054046(cpu2 128코어 × 2)은 QOS cpu2_limit(job당 최대 64 CPU) 때문에 시작하지 못해 취소했다.
+    - **job 1054050(cpu2 64코어 × 6, pool 8 × 8코어)**으로 다시 냈다.
   - 이 g2c worktree에서 돌린다. 명령서 5-2절 이유(job이 반응마다 코드를 다시 읽음)와 같다.
   - 다시 계산한 반응의 orig는 새 표본이다. 고르는 규칙(가장 낮은 e_ts_freq_eh)은 바뀌지 않는다.
 - **0-disk**: GEO1b DECISIONS 0-4 참고(여유 35 GB < 필요량). G2c root는 공간 순서대로 낸다: D1 r1, D1 r2, D0 r1. D0 r2와 build는 공간이 정리된 뒤 낸다.
