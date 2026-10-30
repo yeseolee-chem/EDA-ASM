@@ -25,3 +25,11 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
   - 그동안 공간에 맞는 단계(D0 복구, GEO1b, G2c D1 r1·r2, D0 r1)는 진행한다. D0 r2와 G2c build는 공간이 정리된 뒤에 낸다.
 - **2-1**: 복사(cp -r), 정리(rm), mkdir, 코드 블록 추출은 job 1054023(/gpfs/home1/yeseo1ee/geo1b_extract_spec.py)으로 했다. `git apply --check docs/specs/geo1b.patch` 통과 후 적용했다. G1 관련 grep 0줄. 모든 .py compile 통과(job 1054029).
 - **R-select-primary** (3-3): select의 주 지표는 이제 **모든 para P_main 짝** 비율이다(metrics.py primary_share, GEO1의 같은 형태 짝 840개가 아님). 11 epoch 창 규칙(R-select)은 그대로다.
+- **0-4 사용자 답** (2026-10-30 11:3x, AskUserQuestion): "G1 폴더 삭제 (권장)"만 골랐다. 하드링크 build와 tar 압축은 고르지 않았다.
+  - job 1054098: espley_xtb_g1(6.5 GB)과 d1_pair/g1_final(9.5 MB, d1_pair/g1/<rxn>을 가리키는 symlink 8,659개)을 지웠다. 기록: /gpfs/home1/yeseo1ee/g1_cleanup_20261030.txt.
+  - d1_pair/g1(실제 D1 G1 데이터)은 고르지 않았으므로 남겼다.
+  - 남는 부족분: 여유 약 41.5 GB 대 예상 약 48 GB. 마지막 G2c build 복사본(약 13 GB) 때 다시 부족해진다. 그 전(4개 root가 끝날 때)에 실제 사용량을 다시 재서 사용자에게 다시 묻는다.
+  - D0 r2는 G1 삭제로 생긴 공간에 들어가므로 낸다.
+- **0-job-size** (명령서 5-3 ② "노드 하나 전체"): 실행 불가. cpu2 QOS cpu2_limit가 job당 64 CPU로 막는다(128코어 job이 QOSMaxCpuPerNode로 대기). 계정 GrpTRES는 cpu=640, gpu=12, node=10이다. 그래서 CPU job은 64코어, pool 8 × 8코어로 낸다(10 job × 64 = 640 = 계정 상한).
+  - D0 복구는 6 × 64(1054050), G2c 2–3 × 64로 냈다.
+  - slice 수: D1 root n = 2(3,113코어시간 ÷ 64 ≈ 49 h → slice당 약 24 h), D0 root n = 3(7,201 ÷ 64 ≈ 113 h → slice당 약 38 h).
