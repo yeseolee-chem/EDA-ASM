@@ -149,6 +149,25 @@ LADDER <= 4 jobs while D1-G2 runs) and `sinfo -p cpu1,cpu2 -o "%.9P %.6t %C"`)
   (E1 already run on the same dft units: the same line with -J lad_e2 and only `../d1_ladder/evaluate.py e2`.) Do not
   rerun E1 after E2: it rewrites figL1-L3 with the stage-1 versions (then rerun e2).
 
+GEO2 Phase E, model part (docs/specs/GEO2.md 9-2, 10; added 2026-10-30, role LADB; decisions E3-1 .. E3-8 + E3-2b in
+DECISIONS3, also in analysis/geo2/results/DECISIONS_tests.md; nothing was run). e1 / e2 / their selftests are unchanged.
+  python evaluate.py e3 [--labels P]
+        the E2 computation on rung geo: rungs dft (pair set P_023), g2 (own P_g2, P_23, P_023), geo (own P_geo, P_23,
+        P_023); inputs = the LADDER E2 inputs + train_atoms.py collect --stage 3 --with-xgb (results/
+        L_predictions_geo.parquet, L_report_geo.json, L_val_geo.csv) + train_xgb.py check --stage 3
+        (L_xgb_report_geo.json) + the GEO2 Phase P files (P_build_geo.json, P_geo_report.json, P_geo_sets.json,
+        $GEO2/inputs/geo.parquet) + PREREG_GEO2 -> analysis/geo2/results/E3_metrics.csv (E2_metrics.csv format; AW, GNN,
+        TF, XGB, REP, ENS4, LINE, null), E3_goal.csv (LADDER 13-2 incl. the bend part + REP8 rows + bend_passed),
+        E3_bends.csv, E3_bend_rates.json, E3_compare.csv, E3_report.json (provenance, REP / REP8, 'goal_reached' =
+        GEO2 10-1, E2 / eval_geo2 cross-checks). Exit 2 = an input missing / stale, 3 = STOP (pair lists, sets,
+        pre-registration, the E2 cross-check E3-7).
+  python evaluate.py e3-selftest
+        the same pipeline with geo := a copy of g2 (needs no GEO2 output) -> analysis/geo2/results/e3_selftest/
+        (E3_* + E3_selftest.json with the checks); exit 3 when a check fails.
+  sbatch (from analysis/d1_pair): sbatch -p cpu1,cpu2 -J geo2_e3 --time=48:00:00 --cpus-per-task=4 --mem=32G \
+         --output=/gpfs/tmp_cpu2/yeseo1ee/geo2/logs/%x_%j.out --export=ALL,PYENV=espley \
+         jobs/py.slurm ../d1_ladder/evaluate.py e3        (or e3-selftest; analysis/geo2/RUNBOOK_tests.md)
+
 What E2 computes (spec 12, 13; decisions E2-1 .. E2-15 in DECISIONS2, recorded in E2_report.json)
   the E1 pipeline (REP, ENS4, LINE, null; val_table, pick_rep, line_frames, derived_frames, metrics_e1, bends_e1, goal_e1
   reused unchanged) on rungs dft, g1, g2 with pair sets own and P_012; + 13-3 a / b / c (exact sentences, checked
@@ -2629,10 +2648,842 @@ def cmd_selftest_e2(figures=True):
     return 0 if ok else 3
 
 
+# ================================================================ Phase E3 (GEO2 docs/specs/GEO2.md 9-2, 10): rung geo
+GEO2_RES = L.REPO / "analysis" / "geo2" / "results"           # the E3 write root (E3-1)
+E3_SELFTEST_DIR = GEO2_RES / "e3_selftest"
+GEO2_SCR = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2"))   # = geo2_common.GEO2 (read only here)
+GEO_TABLE = GEO2_SCR / "inputs" / "geo.parquet"               # feat_geo.py p (= train_atoms.inputs_path('geo'))
+P_BUILD_GEO = GEO2_RES / "P_build_geo.json"
+P_GEO_REPORT = GEO2_RES / "P_geo_report.json"
+P_GEO_SETS = GEO2_RES / "P_geo_sets.json"
+PREREG_GEO2_MD = GEO2_RES / "PREREG_GEO2.md"
+PREREG_GEO2_JSON = GEO2_RES / "prereg_geo2.json"
+PRED_GEO = L.RES / "L_predictions_geo.parquet"                # train_atoms.py collect --stage 3 --with-xgb (GA-3)
+L_REPORT_GEO = L.RES / "L_report_geo.json"
+L_VAL_GEO = L.RES / "L_val_geo.csv"
+L_XGB_REPORT_GEO = L.RES / "L_xgb_report_geo.json"            # train_xgb.py check --stage 3
+E2_REPORT_F, E2_METRICS_F = L.RES / "E2_report.json", L.RES / "E2_metrics.csv"
+E2_GOAL_F, E2_RATES_F = L.RES / "E2_goal.csv", L.RES / "E2_bend_rates.json"
+EVAL_GEO2_REPORT = GEO2_RES / "E_report.json"                 # eval_geo2.py run (cross-check, record only)
+EVAL_GEO2_SELFTEST = GEO2_RES / "selftest" / "E_report.json"  # eval_geo2.py selftest
+E3_LADDER_RUNGS = ("dft", "g2")
+E3_RUNGS = ("dft", "g2", "geo")
+E3_LAYOUT = {"dft": ("P_023",), "g2": ("own", "P_23", "P_023"), "geo": ("own", "P_23", "P_023")}   # E3-3
+E3_COMMON = {"P_23": ("g2", "geo"), "P_023": ("dft", "g2", "geo")}
+E3_GOAL_RUNGS = ("g2", "geo")
+GEO_SET_NAMES = ("P_geo", "P_23", "P_023", "P_g2", "P_dft")   # = feat_geo.py SET_NAMES (P_geo_sets.json keys)
+REP8_ARMS = ("SH", "S")                                        # GEO2 9-1: REP8 ties SH before S, then MODELS4 order
+E3_PAIRS = (("g2", "geo", "P_23", "g2 vs geo (what the refined TS changes against the G2 TS)"),
+            ("dft", "geo", "P_023", "dft vs geo (what the refined TS still loses against the label TS)"))
+E3_NUM = ("n", "mae", "rmse", "mae_null", "mae_rel_null", "n_cores", "mae_ci_lo", "mae_ci_hi", "n_fam", "r2_fam_median",
+          "r2_fam_q1", "r2_fam_q3", "rho_err_median")
+E3_TOL = 1e-12
+DECISIONS3 = {
+    "E3-1": "new commands e3 / e3-selftest; e1 / e2 / their selftests unchanged (no existing function edited; E3 reuses "
+            "fu2_eval, label_info, add3_check, val_table, pick_rep, check_l_report, real_inputs, load_predictions, "
+            "model_frames, check_pair_attrs, line_frames, derived_frames, check_line, metrics_e1, met_index, bends_e1, "
+            "goal_e1, common_lists, _cmp, ref_set as they are); outputs under analysis/geo2/results (GEO2 write root; "
+            "nothing in analysis/d1_ladder/results is written); no figures (GEO2 11 makes figG2_*)",
+    "E3-2": "LADDER rungs dft / g2: inputs.p_report() without a rung and every Phase P read with that report (the "
+            "P_build fingerprints hold the d1ladder worktree paths and the pre-GEO2 inputs.py sha256, D1-G3 F-13); the "
+            "builds are checked by table sha256 = P_build_<rung>.json outputs = P_report rungs table_sha256",
+    "E3-2b": "(review fix 2026-10-30) results/P_report.json 'inputs' is keyed by the absolute path of the worktree that "
+             "ran inputs.py pairs (d1ladder), while real_inputs / inputs.pairs_frame look S_folds.csv up by this "
+             "worktree's inputs.S_FOLDS: cmd_e3 hands them a copy of the report whose S_folds entry is re-keyed to "
+             "str(inputs.S_FOLDS) when a recorded key has the same repo-relative part (_repo_rel, D1-G3 F-13) and its "
+             "sha256 = the current file, else STOP; results/P_report.json, real_inputs and e1 / e2 are unchanged",
+    "E3-3": "rungs dft (P_023 only), g2 (own = P_g2, P_23, P_023), geo (own = P_geo, P_23, P_023); P_geo / P_23 / P_023 "
+            "from results/P_geo_sets.json (sha256 = P_geo_report outputs and per-list sha256; P_g2 / P_dft = the LADDER "
+            "set files; P_23 = P_g2 & P_geo; P_023 = P_dft & P_23; P_geo = both ends usable in the geo table), else STOP",
+    "E3-4": "geo: predictions = results/L_predictions_geo.parquet (rung geo only, LADDER columns); REP / REP8 from the "
+            "geo unit jsons (val_table, before any prediction is read), = L_report_geo.json / L_val_geo.csv, XGB units = "
+            "L_xgb_report_geo.json, every geo unit fingerprint prereg_geo2 = PREREG_GEO2.md sha256 (committed, "
+            "unchanged, LADDER result snapshot unchanged), else STOP; geo LINE = line_beta on the T1 outer-train pairs "
+            "of P_geo with dH from the geo table H_<t>, checked = the SH units' baseline (E1-5)",
+    "E3-5": "the E2 computation per rung x arm x model x pair set (metrics_e1 incl. the para CI, bends_e1, goal_e1 13-2 on "
+            "the own set: REP primary, ENS4 secondary, single models descriptive) + REP8 rows (GEO2 9-1: per rung x "
+            "target the lowest 5-fold mean val_kcal_mae over 2 arms x 4 models, ties SH before S, then AW, GNN, TF, XGB) "
+            "+ column bend_passed (sensitivity >= 0.7 and FPR <= 0.1): the bend part of LADDER 13-2 that GEO2 10-1 "
+            "'목표 도달' takes from E3 (the MAE part is eval_geo2 goal_mae; E3 reports both)",
+    "E3-6": "E3_compare (descriptive, FU2 compare): SH vs S (geo own), g2 vs geo on P_23, dft vs geo on P_023 (per arm x "
+            "AW / GNN / TF / XGB / REP / ENS4 + LINE; b = the first named, d = MAE(x) - MAE(b)), REP vs LINE (geo own)",
+    "E3-7": "E2 cross-check: the g2 own rows of E3_metrics = results/E2_metrics.csv (every number, 1e-12 relative), g2 "
+            "bend rates = E2_bend_rates.json, g2 goal rows = E2_goal.csv, dft / g2 REP = E2_report.json (STOP in e3, a "
+            "check in e3-selftest); eval_geo2 E_report.json REP8 / goal_mae REP8 compared when present (record only)",
+    "E3-8": "e3-selftest: geo := a copy of g2 (predictions, validation records, P_geo = P_g2, folds, dH) -> "
+            "analysis/geo2/results/e3_selftest/; checks: geo rows = g2 rows (metrics on own / P_23 / P_023, goal, REP, "
+            "REP8, bend rates), g2 vs geo compare d = 0, the E2 cross-check, REP8 / goal_mae = eval_geo2 selftest",
+}
+
+
+def _log3(t0, msg):
+    print(f"[e3 {time.time() - t0:7.0f}s] {msg}", flush=True)
+
+
+def _assert_e3(p):
+    q = Path(os.path.abspath(p))
+    root = Path(os.path.abspath(GEO2_RES))
+    if not (q == root or root in q.parents):
+        L.stop(f"E3 write path {q} outside {root} (E3-1)")
+    return q
+
+
+def _write_e3(path, fn):
+    """atomic write under analysis/geo2/results only (per-process temporary name)."""
+    path = _assert_e3(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        fn(tmp)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return path
+
+
+def _csv3(path, df):
+    return _write_e3(path, lambda t: df.to_csv(t, index=False))
+
+
+def _json3(path, obj):
+    text = json.dumps(_clean(obj), indent=1)
+    return _write_e3(path, lambda t: Path(t).write_text(text))
+
+
+def _list_sha(ids):
+    """= feat_geo.py list_sha / the GEO2 interface: sha256 of '\\n'.join(sorted pair ids)."""
+    import hashlib
+    return hashlib.sha256("\n".join(sorted(str(x) for x in ids)).encode()).hexdigest()
+
+
+def _nanf(v):
+    """float (NaN for None / ''), or None when v is not a number (then compared as text)."""
+    if v is None:
+        return float("nan")
+    if isinstance(v, str):
+        if v == "":
+            return float("nan")
+        try:
+            return float(v)
+        except ValueError:
+            return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _num_close(a, b, tol=E3_TOL):
+    x, y = _nanf(a), _nanf(b)
+    if x is None or y is None:
+        return str(a) == str(b)
+    if np.isnan(x) or np.isnan(y):
+        return bool(np.isnan(x) and np.isnan(y))
+    return abs(x - y) <= tol * max(1.0, abs(y))
+
+
+def _same_obj(a, b, tol=E3_TOL, path="", out=None):
+    """differences (list of str) between two json-like objects; numbers within tol, NaN = None."""
+    out = [] if out is None else out
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b), key=str):
+            if k not in a or k not in b:
+                out.append(f"{path}/{k}: key only on one side")
+            else:
+                _same_obj(a[k], b[k], tol, f"{path}/{k}", out)
+    elif isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if len(a) != len(b):
+            out.append(f"{path}: length {len(a)} != {len(b)}")
+        else:
+            for i, (x, y) in enumerate(zip(a, b)):
+                _same_obj(x, y, tol, f"{path}[{i}]", out)
+    elif not _num_close(a, b, tol):
+        out.append(f"{path}: {a} != {b}")
+    return out
+
+
+# ---------------------------------------------------------------- E3 inputs and gates
+def ladder_builds(IN, rep_p, rungs):
+    """E3-2: LADDER rung builds by sha256 (P_build_<rung>.json all_pass, outputs = the table = P_report table_sha256)."""
+    out = {}
+    for r in rungs:
+        bp, tp = IN.build_report_path(r), IN.table_path(r)
+        br = json.loads(bp.read_text()) if bp.is_file() else {}
+        sha = L.sha256(tp) if tp.is_file() else None
+        want = ((rep_p.get("rungs") or {}).get(r) or {}).get("table_sha256")
+        if not br.get("all_pass") or br.get("stop") or (br.get("outputs") or {}).get(str(tp)) != sha or want != sha:
+            L.stop(f"{tp}: sha256 {sha} != {bp.name} outputs / results/P_report.json rungs.{r} (LADDER Phase P changed)")
+        out[r] = dict(table=str(tp), table_sha256=sha, build_report=str(bp), build_report_sha256=L.sha256(bp),
+                      rule=DECISIONS3["E3-2"])
+    return out
+
+
+def f13_inputs(IN, rep_p):
+    """E3-2b: (copy of rep_p, record). The P_report 'inputs' entry of S_folds.csv as real_inputs / inputs._read_s_folds
+    look it up (key str(IN.S_FOLDS)): native key -> rep_p as it is; otherwise the recorded key(s) whose repo-relative
+    part equals that of IN.S_FOLDS must all carry the sha256 of the current file, and the copy gets that sha256 under
+    str(IN.S_FOLDS); no such key or another sha256 = STOP. rep_p itself is not modified."""
+    k0 = str(IN.S_FOLDS)
+    inp = dict(rep_p.get("inputs") or {})
+    cur = L.sha256(IN.S_FOLDS) if Path(IN.S_FOLDS).is_file() else None
+    if k0 in inp:
+        return rep_p, dict(native_key=True, key=k0, sha256=inp[k0], rule=DECISIONS3["E3-2b"])
+    rel = _repo_rel(k0)
+    hits = {k: v for k, v in inp.items() if rel is not None and _repo_rel(k) == rel}
+    vals = sorted({str(v) for v in hits.values()})
+    if not hits or cur is None or vals != [cur]:
+        L.stop(f"results/P_report.json inputs: no entry for {k0} and the repo-relative entries {sorted(hits)} "
+               f"(sha256 {vals}) do not equal the current file (sha256 {cur}) (E3-2b, D1-G3 F-13)")
+    rep = dict(rep_p, inputs=dict(inp, **{k0: cur}))
+    return rep, dict(native_key=False, key=k0, repo_relative=rel, recorded_keys=sorted(hits), sha256=cur,
+                     rule=DECISIONS3["E3-2b"])
+
+
+def e2_record():
+    """E3-7: the LADDER E2 outputs (read only), evaluated on the current results/L_predictions.parquet."""
+    for p in (E2_REPORT_F, E2_METRICS_F, E2_GOAL_F, E2_RATES_F, PRED, L_REPORT):
+        if not p.is_file():
+            _not_ready(f"{p} missing (LADDER E2 outputs)")
+    r = json.loads(E2_REPORT_F.read_text())
+    if r.get("phase") != "E2":
+        L.stop(f"{E2_REPORT_F}: phase {r.get('phase')} (not an E2 report)")
+    if (r.get("l_report") or {}).get("predictions_sha256") != L.sha256(PRED):
+        L.stop("results/L_predictions.parquet differs from the one E2 evaluated (E2_report.json l_report)")
+    return dict(report=r, sha256={str(p): L.sha256(p) for p in (E2_REPORT_F, E2_METRICS_F, E2_GOAL_F, E2_RATES_F)})
+
+
+def prereg_geo2_check():
+    """E3-4: PREREG_GEO2.md + prereg_geo2.json committed and unchanged, md sha256 = json, rungs ['geo'], and every
+    LADDER result file of the json snapshot unchanged (GEO2 14 R·M3: an existing LADDER result changed = STOP)."""
+    bad = []
+    for p in (PREREG_GEO2_MD, PREREG_GEO2_JSON):
+        if not p.is_file():
+            bad.append(f"{p.name} missing")
+        else:
+            st = _git_state(p)
+            if st:
+                bad.append(f"{p.name} {st}")
+    if bad:
+        L.stop("PREREG_GEO2 (GEO2 8-3): " + "; ".join(bad))
+    rec = json.loads(PREREG_GEO2_JSON.read_text())
+    md = L.sha256(PREREG_GEO2_MD)
+    if rec.get("md_sha256") != md:
+        L.stop(f"{PREREG_GEO2_MD.name} sha256 != {PREREG_GEO2_JSON.name} md_sha256")
+    if list(rec.get("rungs") or []) != ["geo"]:
+        L.stop(f"{PREREG_GEO2_JSON.name} rungs {rec.get('rungs')} != ['geo']")
+    snap = rec.get("ladder_results_sha256") or {}
+    if not isinstance(snap, dict) or not snap:
+        L.stop(f"{PREREG_GEO2_JSON.name} has no ladder_results_sha256 snapshot")
+    changed = sorted(k for k, s in snap.items() if not (L.REPO / k).is_file() or L.sha256(L.REPO / k) != s)
+    if changed:
+        L.stop(f"LADDER result files changed since the GEO2 pre-registration (GEO2 14): {changed[:8]}")
+    return dict(md=str(PREREG_GEO2_MD), md_sha256=md, json=str(PREREG_GEO2_JSON), json_sha256=L.sha256(PREREG_GEO2_JSON),
+                n_ladder_snapshot=len(snap), ladder_results_unchanged=True)
+
+
+def e3_ready():
+    """E3-4: the stage-3 collect outputs present and current, else exit 2 (= E2-3 for the geo files)."""
+    for p in (PRED_GEO, L_REPORT_GEO, L_VAL_GEO, L_XGB_REPORT_GEO):
+        if not p.is_file():
+            _not_ready(f"{p} missing (train_xgb.py check --stage 3, then train_atoms.py collect --stage 3 --with-xgb)")
+    rep = json.loads(L_REPORT_GEO.read_text())
+    why = []
+    if int(rep.get("stage") or 0) != 3:
+        why.append(f"L_report_geo.json stage {rep.get('stage')} (not a stage-3 collect)")
+    if list(rep.get("rungs") or []) != ["geo"]:
+        why.append(f"L_report_geo.json rungs {rep.get('rungs')}")
+    if "XGB" not in (rep.get("models") or []):
+        why.append("collected without --with-xgb")
+    if rep.get("predictions_sha256") != L.sha256(PRED_GEO):
+        why.append("L_predictions_geo.parquet differs from L_report_geo.json")
+    if rep.get("val_csv_sha256") != L.sha256(L_VAL_GEO):
+        why.append("L_val_geo.csv differs from L_report_geo.json")
+    t_rep = L_REPORT_GEO.stat().st_mtime
+    newer = [x for a in ARMS for m in MODELS4 for k in range(NF) for x in [unit_name("geo", a, m, k)]
+             if (UNITS / f"{x}.json").is_file() and (UNITS / f"{x}.json").stat().st_mtime > t_rep]
+    if newer:
+        why.append(f"{len(newer)} geo unit jsons newer than L_report_geo.json (e.g. {newer[:3]}): rerun the collect")
+    if why:
+        _not_ready("stage-3 collect output missing or stale: " + "; ".join(why))
+    return dict(l_report_geo_stage=rep.get("stage"), l_report_geo_rungs=rep.get("rungs"), l_report_geo_mtime=t_rep)
+
+
+def geo_unit_prereg(units, md_sha):
+    """E3-4 / GA-8: every geo unit json records the current PREREG_GEO2.md sha256 (key prereg_geo2) and is no smoke."""
+    bad, n = [], 0
+    for x, u in units.items():
+        if u["key"][0] != "geo":
+            continue
+        n += 1
+        rec = json.loads((UNITS / f"{x}.json").read_text())
+        if (rec.get("fingerprint") or {}).get("prereg_geo2") != md_sha or rec.get("smoke"):
+            bad.append(x)
+    if n != len(ARMS) * len(MODELS4) * NF or bad:
+        L.stop(f"geo units: {n} found (need {len(ARMS) * len(MODELS4) * NF}); without the current PREREG_GEO2 md "
+               f"sha256 or smoke: {bad[:6]} (GEO2 8-4: every unit trained under the pre-registration)")
+    return dict(n_units=n, prereg_geo2_md_sha256=md_sha, rule="unit fingerprint prereg_geo2 = PREREG_GEO2.md sha256")
+
+
+def check_l_report_geo(units, labels, md_sha):
+    """E3-4: L_report_geo.json / L_val_geo.csv / L_xgb_report_geo.json agree with the geo unit jsons (= check_l_report
+    for the stage-3 collect; read before the predictions)."""
+    rep = json.loads(L_REPORT_GEO.read_text())
+    bad = []
+    if rep.get("labels") != str(labels):
+        bad.append(f"labels {rep.get('labels')} != {labels}")
+    if (rep.get("geo2") or {}).get("prereg_geo2_md_sha256") != md_sha:
+        bad.append("L_report_geo.json geo2.prereg_geo2_md_sha256 != PREREG_GEO2.md")
+    ru = rep.get("units") or {}
+    if set(ru) != set(units):
+        bad.append(f"L_report_geo.json units ({len(ru)}) != the geo unit jsons ({len(units)})")
+    for x, u in units.items():
+        got = (ru.get(x) or {}).get("val_kcal_mae") or {}
+        if any(got.get(t) != u["val"][t] for t in TARGETS):
+            bad.append(f"{x}: val_kcal_mae differs from L_report_geo.json")
+    Lv = pd.read_csv(L_VAL_GEO)
+    vd = {(r, a, m, int(k), t): float(v) for r, a, m, k, t, v in
+          zip(Lv.rung, Lv.arm, Lv.model, Lv.fold, Lv.target, Lv.val_kcal_mae)}
+    for x, u in units.items():
+        r, a, m, k = u["key"]
+        for t in TARGETS:
+            w = vd.get((r, a, m, k, t))
+            if w is None or abs(w - u["val"][t]) > 1e-12 * max(1.0, abs(u["val"][t])):
+                bad.append(f"{x} {t}: L_val_geo.csv {w} != unit json {u['val'][t]}")
+                break
+    xr = json.loads(L_XGB_REPORT_GEO.read_text())
+    if not xr.get("ok"):
+        bad.append(f"L_xgb_report_geo.json ok {xr.get('ok')}")
+    if xr.get("labels") != str(labels):
+        bad.append(f"L_xgb_report_geo.json labels {xr.get('labels')} != {labels}")
+    xu = xr.get("units") or {}
+    for x, u in units.items():
+        if u["key"][2] != "XGB":
+            continue
+        e = xu.get(x) or {}
+        if e.get("json_sha256") != u["json_sha256"] or e.get("parquet_sha256") != u["parquet_sha256"]:
+            bad.append(f"{x}: not in L_xgb_report_geo.json or changed since")
+    if bad:
+        L.stop("L_report_geo.json / L_val_geo.csv / L_xgb_report_geo.json disagree with the geo unit jsons:\n  "
+               + "\n  ".join(bad[:8]))
+    return dict(l_report_geo_sha256=L.sha256(L_REPORT_GEO), l_val_geo_sha256=L.sha256(L_VAL_GEO),
+                l_xgb_report_geo_sha256=L.sha256(L_XGB_REPORT_GEO), predictions_geo_sha256=L.sha256(PRED_GEO),
+                n_units=len(units), models=rep.get("models"))
+
+
+def load_predictions_geo():
+    G = pd.read_parquet(PRED_GEO)
+    miss = [c for c in PRED_COLS if c not in G.columns]
+    if miss:
+        L.stop(f"{PRED_GEO} lacks columns {miss}")
+    if set(G.rung.astype(str)) != {"geo"}:
+        L.stop(f"{PRED_GEO} holds rungs {sorted(set(G.rung.astype(str)))}, not geo only")
+    G = G[PRED_COLS].copy()
+    G["pair_id"] = G.pair_id.astype(str)
+    G["fold"] = G.fold.astype(int)
+    return G.reset_index(drop=True)
+
+
+def geo_inputs(IN, rep_p, S, ladder_sets):
+    """E3-3 / E3-4: the GEO2 Phase P files of the geo rung (read only) -> sets P_geo / P_23 / P_023, the T1 test and
+    outer-train lists restricted to P_geo (fold copies, sha256 = P_report), dH (geo table H_<t>, h = cr)."""
+    for p in (P_BUILD_GEO, P_GEO_REPORT, P_GEO_SETS, GEO_TABLE):
+        if not p.is_file():
+            _not_ready(f"{p} missing (GEO2 Phase P: feat_geo.py p / p_report)")
+    b = json.loads(P_BUILD_GEO.read_text())
+    tsha = L.sha256(GEO_TABLE)
+    if not b.get("all_pass") or b.get("stop") or (b.get("outputs") or {}).get(str(GEO_TABLE)) != tsha:
+        L.stop(f"{GEO_TABLE} sha256 {tsha[:12]} != {P_BUILD_GEO.name} outputs, or the build did not pass")
+    pr = json.loads(P_GEO_REPORT.read_text())
+    ssha = L.sha256(P_GEO_SETS)
+    bad = []
+    if pr.get("stop"):
+        bad.append(f"{P_GEO_REPORT.name} stop: {pr.get('stop_reasons')}")
+    if (pr.get("outputs") or {}).get(str(P_GEO_SETS)) != ssha:
+        bad.append(f"{P_GEO_SETS.name} sha256 != {P_GEO_REPORT.name} outputs")
+    J = json.loads(P_GEO_SETS.read_text())
+    lists = {}
+    for k in GEO_SET_NAMES:
+        if not isinstance(J.get(k), list):
+            L.stop(f"{P_GEO_SETS.name} lacks the list {k}")
+        lists[k] = [str(x) for x in J[k]]
+        if len(set(lists[k])) != len(lists[k]):
+            bad.append(f"{k}: duplicated pair ids")
+        want = (pr.get("sha256") or {}).get(k)
+        if want is not None and want != _list_sha(lists[k]):
+            bad.append(f"{k}: sha256 != {P_GEO_REPORT.name} sha256.{k}")
+    sets = {k: set(v) for k, v in lists.items()}
+    for k in ("P_g2", "P_dft"):
+        if sets[k] != ladder_sets[k]:
+            bad.append(f"{k} of {P_GEO_SETS.name} ({len(sets[k])}) != the LADDER set file ({len(ladder_sets[k])})")
+    if sets["P_23"] != sets["P_g2"] & sets["P_geo"]:
+        bad.append("P_23 != P_g2 & P_geo")
+    if sets["P_023"] != sets["P_dft"] & sets["P_23"]:
+        bad.append("P_023 != P_dft & P_g2 & P_geo")
+    T = pd.read_parquet(GEO_TABLE)
+    T = T.assign(rxn_id=T.rxn_id.astype(int))
+    if T.rxn_id.duplicated().any():
+        bad.append(f"{GEO_TABLE}: duplicated rxn_id")
+    usable = set(T.rxn_id[T.usable.astype(bool)].tolist())
+    ar, br_ = S.a_rxn.astype(int).to_numpy(), S.b_rxn.astype(int).to_numpy()
+    pg = {p for p, x, y in zip(S.index, ar, br_) if int(x) in usable and int(y) in usable}
+    if pg != sets["P_geo"]:
+        bad.append(f"P_geo ({len(sets['P_geo'])}) != pairs with both ends usable in {GEO_TABLE.name} ({len(pg)})")
+    if bad:
+        L.stop("GEO2 pair sets / geo table inconsistent (E3-3):\n  " + "\n  ".join(bad))
+    files = (rep_p.get("folds") or {}).get("files") or {}
+    tests, trains = {}, {}
+    for k in range(NF):
+        p = IN.SPLITS_COPY / f"T1__f{k}.json"
+        want = files.get(str(p))
+        if not p.is_file() or want is None or L.sha256(p) != want:
+            L.stop(f"{p}: missing or sha256 != results/P_report.json folds")
+        rec = json.loads(p.read_text())
+        tests[k] = [str(q) for q in rec["test"] if str(q) in sets["P_geo"]]
+        trains[k] = [str(q) for q in rec["train"] if str(q) in sets["P_geo"]]
+    Ti = T.set_index("rxn_id")
+    ids = [p for p in S.index if p in sets["P_geo"]]
+    a = S.loc[ids, "a_rxn"].astype(int).to_numpy()
+    b_ = S.loc[ids, "b_rxn"].astype(int).to_numpy()
+    D = pd.DataFrame(index=pd.Index(ids, name="pair_id"))
+    for t in TARGETS:
+        D[t] = (Ti.loc[a, f"H_{t}"].to_numpy(float) - Ti.loc[b_, f"H_{t}"].to_numpy(float)) if t in H_TARGETS else 0.0
+    if not np.isfinite(D.to_numpy(float)).all():
+        L.stop("non-finite dH in P_geo (geo input table)")
+    info = dict(table=str(GEO_TABLE), table_sha256=tsha, p_build_geo_sha256=L.sha256(P_BUILD_GEO),
+                p_geo_report_sha256=L.sha256(P_GEO_REPORT), p_geo_sets_sha256=ssha,
+                n={k: len(v) for k, v in sets.items()}, sha256={k: _list_sha(v) for k, v in lists.items()},
+                rule=DECISIONS3["E3-3"])
+    return dict(sets={k: sets[k] for k in ("P_geo", "P_23", "P_023")}, tests=tests, trains=trains, dH=D, info=info)
+
+
+# ---------------------------------------------------------------- E3 selections, frames, tables
+def pick_rep8(V, rungs):
+    """GEO2 9-1 REP8: per rung x target the (arm, model) of the 8 with the lowest mean over the 5 outer folds of
+    val_kcal_mae (pick_rep's mean); ties SH before S, then AW, GNN, TF, XGB. Validation records only."""
+    rep8, means8 = {}, {}
+    for (r, t), g in V[V.rung.isin(list(rungs))].groupby(["rung", "target"], sort=False):
+        mm = {}
+        for (a, m), h in g.groupby(["arm", "model"], sort=False):
+            h = h.sort_values("fold")
+            v = h.val_kcal_mae.to_numpy(float)
+            if h.fold.astype(int).tolist() != list(range(NF)) or not np.isfinite(v).all():
+                L.stop(f"REP8: {r} {a} {m} {t}: validation MAE not finite or folds {h.fold.tolist()}")
+            mm[(a, m)] = float(np.mean(v))
+        if set(mm) != {(a, m) for a in ARMS for m in MODELS4}:
+            L.stop(f"REP8: {r} {t}: arm x model {sorted(mm)} incomplete")
+        rep8[(r, t)] = sorted(mm, key=lambda q: (mm[q], REP8_ARMS.index(q[0]), MODEL_ORDER[q[1]]))[0]
+        means8[(r, t)] = mm
+    return rep8, means8
+
+
+def rep8_json(rep8, means8):
+    return {f"{r}|{t}": dict(arm=v[0], model=v[1], mean_val_kcal_mae={f"{a}|{m}": x for (a, m), x in means8[(r, t)].items()})
+            for (r, t), v in rep8.items()}
+
+
+def gate_pairs_e3(EV, fr, ref, Y, sets, rungs):
+    """spec 16 E / E2-5 on E3: per rung every model / arm has exactly the rung's test pairs; on P_23 and P_023 the
+    rungs' lists are identical and every frame has exactly that list."""
+    out = {r: EV.pair_sets_gate({f"{r}|{a}|{m}": fr[(r, a, m)] for a in ARMS for m in MODELS_E1}, ref[r], Y)
+           for r in rungs}
+    for name, rr in E3_COMMON.items():
+        rc = common_lists(ref, sets[name], rr, name=name)
+        frames = {f"{r}|{a}|{m}|{name}": f[f.pair_id.isin(sets[name])] for (r, a, m), f in fr.items() if r in rr}
+        out[name] = EV.pair_sets_gate(frames, rc, Y)
+    return out
+
+
+def annotate_e3(EV, fr, S, sets):
+    """{(rung, arm, model, pair_set): annotated frame} on the E3_LAYOUT pair sets; LINE / null once (arm S, E1-4)."""
+    A = {}
+    for (r, a, m), f in fr.items():
+        if m in ARM_FREE and a != ARMS[0]:
+            continue
+        d = EV.annotate(f, S)
+        for ps in E3_LAYOUT[r]:
+            A[(r, a, m, ps)] = d if ps == "own" else d[d.pair_id.isin(sets[ps])]
+    return A
+
+
+def add_bend_passed(G):
+    """E3-5: bend_passed = sensitivity >= 0.7 and FPR <= 0.1 (target rows); rung_arm rows: oi and cpcm both."""
+    G = G.copy()
+    key = {}
+    for r in G.itertuples(index=False):
+        if r.level == "target":
+            key[(r.rung, r.arm, r.model, r.target)] = bool(r.crit_sens) and bool(r.crit_fpr)
+    bp = []
+    for r in G.itertuples(index=False):
+        if r.level == "target":
+            bp.append(key[(r.rung, r.arm, r.model, r.target)])
+        elif r.level == "rung_arm":
+            bp.append(all(key.get((r.rung, r.arm, r.model, t), False) for t in GOAL_TARGETS))
+        else:
+            bp.append(None)
+    G["bend_passed"] = bp
+    return G
+
+
+def goal_rep8(MI, rates, rep8, rungs):
+    """E3-5: LADDER 13-2 on the REP8 choice per target (GEO2 10-1 '목표 도달' = passed for oi and cpcm)."""
+    rows, verdict = [], {}
+    for r in rungs:
+        per, detail = {}, {}
+        for t in PRIMARY9:
+            a, m = rep8[(r, t)]
+            pp = MI[(r, a, m, "own", t, "P_main", "p")]
+            pa = MI[(r, a, m, "own", t, "P_main", "all")]
+            br = rates[f"{r}|{a}|{m}|own"]["all"][t]
+            mae, hi, sens, fpr = pp["mae"], pp["mae_ci_hi"], br["sens"], br["fpr"]
+            c_mae = bool(_fin(mae) and mae <= GOAL["mae"])
+            c_sens = bool(_fin(sens) and sens >= GOAL["sens"])
+            c_fpr = bool(_fin(fpr) and fpr <= GOAL["fpr"])
+            ok = bool(c_mae and c_sens and c_fpr)
+            sure = bool(ok and _fin(hi) and hi <= GOAL["mae"])
+            per[t] = dict(passed=ok, surely=sure, bend=bool(c_sens and c_fpr), mae=c_mae)
+            detail[t] = dict(arm=a, model=m, para_mae=mae, para_mae_ci_lo=pp["mae_ci_lo"], para_mae_ci_hi=hi, n_para=pp["n"],
+                             sens=sens, n_bent_dft=br["n_bent_dft"], fpr=fpr, n_straight_dft=br["n_straight_dft"])
+            r2 = pa["r2_fam_median"]
+            rows.append(dict(
+                level="target", rung=r, arm=a, model="REP8", role="primary (GEO2 9-1 / 10-1)", source=m, target=t,
+                judged=bool(t in GOAL_TARGETS), pair_set_name=f"P_{r}", n_para=pp["n"], para_mae=mae,
+                para_mae_ci_lo=pp["mae_ci_lo"], para_mae_ci_hi=hi, n_cores=pp["n_cores"], n_fam=br["n_fam"],
+                n_bent_dft=br["n_bent_dft"], sens=sens, sens_ci_lo=br["sens_ci"][0], sens_ci_hi=br["sens_ci"][1],
+                n_straight_dft=br["n_straight_dft"], fpr=fpr, fpr_ci_lo=br["fpr_ci"][0], fpr_ci_hi=br["fpr_ci"][1],
+                crit_mae=c_mae, crit_sens=c_sens, crit_fpr=c_fpr, passed=ok, surely_passed=sure, mae_all=pa["mae"],
+                mae_null_all=pa["mae_null"],
+                beats_null_point=bool(_fin(pa["mae"]) and _fin(pa["mae_null"]) and pa["mae"] < pa["mae_null"]),
+                r2_fam_median=r2, stage1_descriptive=(bool(r2 >= STAGE1_R2) if _fin(r2) else None),
+                stage0_rev9=STAGE0_NOTE, conclusion=None, bend_passed=bool(c_sens and c_fpr)))
+        v = dict(passed=all(per[t]["passed"] for t in GOAL_TARGETS), surely_passed=all(per[t]["surely"] for t in GOAL_TARGETS),
+                 bend_passed=all(per[t]["bend"] for t in GOAL_TARGETS), mae_passed=all(per[t]["mae"] for t in GOAL_TARGETS),
+                 choices={t: list(rep8[(r, t)]) for t in PRIMARY9}, detail={t: detail[t] for t in GOAL_TARGETS})
+        verdict[f"{r}|REP8"] = v
+        rows.append(dict(level="rung", rung=r, arm="; ".join(f"{t}: {rep8[(r, t)][0]}" for t in GOAL_TARGETS),
+                         model="REP8", role="primary (GEO2 9-1 / 10-1)",
+                         source="; ".join(f"{t}: {rep8[(r, t)][1]}" for t in GOAL_TARGETS), target="+".join(GOAL_TARGETS),
+                         judged=True, pair_set_name=f"P_{r}", passed=v["passed"], surely_passed=v["surely_passed"],
+                         crit_mae=v["mae_passed"], bend_passed=v["bend_passed"],
+                         conclusion=("GEO2 10-1 목표 도달" if v["passed"] else "GEO2 10-1 목표 미도달")
+                         + f" (MAE part {v['mae_passed']}, bend part {v['bend_passed']})"))
+    return pd.DataFrame(rows), verdict
+
+
+def compare_e3(EV, fr, S, ref, sets, rep):
+    """E3_compare (E3-6, descriptive): FU2 compare, d = MAE(x) - MAE(b) (E1-9 sign)."""
+    rows = []
+
+    def evalsets(rf):
+        return {"P_main": EV.eval_pairs(S, rf), "P_main_para": EV.eval_pairs(S, rf, para=True)}
+    own = evalsets(ref["geo"])
+    for m in CMP_MODELS:
+        _cmp(EV, fr, rep, rows, "SH vs S (what HF adds)", ("geo", "SH", m), ("geo", "S", m), "own", "P_geo", own)
+    for b, x, ps, label in E3_PAIRS:
+        com = evalsets(common_lists(ref, sets[ps], E3_COMMON[ps], name=ps))
+        for a in ARMS:
+            for m in CMP_MODELS:
+                _cmp(EV, fr, rep, rows, label, (b, a, m), (x, a, m), ps, ps, com)
+        _cmp(EV, fr, rep, rows, label, (b, "S", "LINE"), (x, "S", "LINE"), ps, ps, com, arm_label="-")
+    for a in ARMS:
+        _cmp(EV, fr, rep, rows, "REP vs LINE (what the model adds on the calibration line)", ("geo", a, "REP"),
+             ("geo", a, "LINE"), "own", "P_geo", own)
+    out = pd.DataFrame(rows)
+    out.insert(1, "sign", "d = MAE(x) - MAE(b); d > 0: b better (FU2 D5: b = the first named)")
+    return out
+
+
+def model_table(MI):
+    """oi / cpcm / barrier para MAE + CI per rung (g2, geo) x pair set (own, P_23) x arm x model (GEO2 11 sentence 4)."""
+    rows = []
+    for r in E3_GOAL_RUNGS:
+        for ps in ("own", "P_23"):
+            for a in ARMS:
+                for m in MODELS4 + ("REP", "ENS4"):
+                    for t in ("oi", "cpcm", "barrier"):
+                        x = MI.get((r, a, m, ps, t, "P_main", "p"))
+                        if x:
+                            rows.append(dict(rung=r, pair_set=ps, pair_set_name=x["pair_set_name"], arm=a, model=m,
+                                             source=x["source"], target=t, n=x["n"], para_mae=x["mae"],
+                                             ci_lo=x["mae_ci_lo"], ci_hi=x["mae_ci_hi"]))
+    return rows
+
+
+def run_e3(EV, ctx, P, rep, rep8):
+    """gates -> frames -> metrics -> bends -> 13-2 (REP, ENS4, models, REP8) -> compare; nothing is written here."""
+    t0 = time.time()
+    rungs, S, Y, sets = ctx["rungs"], ctx["S"], ctx["Y"], ctx["sets"]
+    ref = {r: ref_set(ctx["tests"][r], r) for r in rungs}
+    fr = model_frames(P, rungs)
+    gm = {r: EV.pair_sets_gate({f"{r}|{a}|{m}": fr[(r, a, m)] for a in ARMS for m in MODELS4}, ref[r], Y)
+          for r in rungs}
+    check_pair_attrs(P, S)
+    lines = line_frames(ctx)
+    fr = derived_frames(fr, lines, rep, rungs)
+    ga = gate_pairs_e3(EV, fr, ref, Y, sets, rungs)
+    lchk = check_line(fr, lines, rungs)
+    _log3(t0, "gates passed: test-pair lists per rung and on P_23 / P_023 (spec 16 E), LINE = SH baseline (E1-5)")
+    A = annotate_e3(EV, fr, S, sets)
+    Mt = metrics_e1(EV, A)
+    MI = met_index(Mt)
+    _log3(t0, f"metrics: {len(Mt)} rows")
+    Bd, rates, fams = bends_e1(EV, A, S, rep)
+    _log3(t0, f"bends: {len(Bd)} rows")
+    goal, verdict, _ = goal_e1(MI, rates, E3_GOAL_RUNGS)
+    g8, verdict8 = goal_rep8(MI, rates, rep8, E3_GOAL_RUNGS)
+    goal = pd.concat([add_bend_passed(goal), g8], ignore_index=True)
+    Cmp = compare_e3(EV, fr, S, ref, sets, rep)
+    _log3(t0, f"compare: {len(Cmp)} rows")
+    gates = dict(models=gm, all=ga, n_test_pairs={r: len(ref[r]) for r in rungs},
+                 n_common_test_pairs={n: len(common_lists(ref, sets[n], rr, name=n)) for n, rr in E3_COMMON.items()},
+                 n_pairs_in_sets={n: len(v) for n, v in sets.items()})
+    return dict(fr=fr, Mt=Mt, MI=MI, Bd=Bd, rates=rates, fams=fams, goal=goal, verdict=verdict, verdict8=verdict8,
+                Cmp=Cmp, gates=gates, line_check=lchk, line_betas={r: lines[r][1] for r in rungs}, ref=ref,
+                seconds=time.time() - t0)
+
+
+# ---------------------------------------------------------------- E3 cross-checks and selftest checks
+def e2_crosscheck_e3(res, rep, e2):
+    """E3-7: E3's g2 own rows = the LADDER E2 outputs; dft / g2 REP = E2_report.json."""
+    bad, rec = [], {}
+    R = e2["report"].get("representatives") or {}
+    for (r, a, t), m in sorted(rep.items()):
+        if r in E3_LADDER_RUNGS:
+            m2 = (((R.get(r) or {}).get(a) or {}).get(t) or {}).get("model")
+            if m2 != m:
+                bad.append(f"REP {r}|{a}|{t}: E3 {m} != E2 {m2}")
+    keycols = {c: str for c in MET_KEY + ["source", "pair_set_name"]}
+    X = pd.read_csv(E2_METRICS_F, dtype=keycols, keep_default_na=False, na_values=[""], float_precision="round_trip")
+    X = X[(X.rung == "g2") & (X.pair_set == "own")]
+    Mt = res["Mt"]
+    mine = Mt[(Mt.rung == "g2") & (Mt.pair_set == "own")]
+    J = mine.merge(X, on=MET_KEY, how="outer", suffixes=("", "_e2"), indicator=True)
+    n_only = int((J["_merge"] != "both").sum())
+    if n_only:
+        bad.append(f"E2_metrics g2 own: {n_only} rows not in both E3 and E2")
+    Jb = J[J["_merge"] == "both"]
+    ncol = {}
+    for c in E3_NUM + ("source",):
+        nb = int(sum(not _num_close(x, y) for x, y in zip(Jb[c].tolist(), Jb[f"{c}_e2"].tolist())))
+        ncol[c] = nb
+        if nb:
+            bad.append(f"E2_metrics g2 own column {c}: {nb} rows differ")
+    rec["metrics"] = dict(n_rows_e3=int(len(mine)), n_rows_e2=int(len(X)), n_not_in_both=n_only, n_differing=ncol)
+    BR = json.loads(E2_RATES_F.read_text()).get("rates") or {}
+    keys = sorted(k for k in res["rates"] if k.startswith("g2|") and k.endswith("|own"))
+    rb = []
+    for k in keys:
+        if k not in BR:
+            rb.append(f"{k}: not in E2_bend_rates.json")
+            continue
+        rb += _same_obj(_clean(res["rates"][k]), BR[k], path=k)
+    bad += rb[:20]
+    rec["bend_rates"] = dict(n_keys=len(keys), n_problems=len(rb))
+    gk = ["level", "rung", "arm", "model", "target"]
+    G2 = pd.read_csv(E2_GOAL_F, dtype={c: str for c in gk}, keep_default_na=False, na_values=[""],
+                     float_precision="round_trip")
+    G2 = G2[(G2.rung == "g2") & G2.level.isin(["target", "rung_arm"])]
+    G3 = res["goal"]
+    G3 = G3[(G3.rung == "g2") & G3.level.isin(["target", "rung_arm"]) & (G3.model != "REP8")]    # REP8: E3 only
+    JG = G3.merge(G2, on=gk, how="outer", suffixes=("", "_e2"), indicator=True)
+    gb = [f"goal rows not in both: {int((JG['_merge'] != 'both').sum())}"] if (JG["_merge"] != "both").any() else []
+    JGb = JG[JG["_merge"] == "both"]
+    for c in ("passed", "surely_passed", "para_mae", "para_mae_ci_hi", "sens", "fpr"):
+        for x, y, lv, ar, mo, tg in zip(JGb[c], JGb[f"{c}_e2"], JGb.level, JGb.arm, JGb.model, JGb.target):
+            if not _num_close(x, y):
+                gb.append(f"goal {lv} {ar} {mo} {tg} {c}: E3 {x} != E2 {y}")
+    bad += gb[:20]
+    rec["goal"] = dict(n_rows_e3=int(len(G3)), n_rows_e2=int(len(G2)), n_problems=len(gb))
+    return dict(ok=not bad, problems=bad[:40], **rec, rule=DECISIONS3["E3-7"])
+
+
+def eval_geo2_crosscheck(path, rep8, MI, rung="geo"):
+    """E3-7 (record only): eval_geo2.py E_report.json rep8 and goal_mae REP8 = E3's REP8 choice and its para MAE."""
+    if not path.is_file():
+        return dict(status=f"{path} absent: not compared", equal=None)
+    E = json.loads(path.read_text())
+    r8 = E.get("rep8") or {}
+    diff = [f"{r}|{t}: E3 {list(v)} != eval_geo2 {r8.get(f'{r}|{t}')}" for (r, t), v in sorted(rep8.items())
+            if list(r8.get(f"{r}|{t}") or []) != list(v)]
+    gm = (E.get("goal_mae") or {}).get("REP8") or {}
+    dm = {}
+    for t in GOAL_TARGETS:
+        a, m = rep8[(rung, t)]
+        mine = MI[(rung, a, m, "own", t, "P_main", "p")]["mae"]
+        other = gm.get(t)
+        dm[t] = dict(e3=mine, eval_geo2=other, abs_diff=(abs(mine - float(other)) if other is not None else None))
+    eq = bool(not diff and all(v["abs_diff"] is not None and v["abs_diff"] <= 1e-9 for v in dm.values()))
+    return dict(status="compared", file=str(path), sha256=L.sha256(path), rep8_differences=diff, goal_mae_REP8=dm,
+                equal=eq)
+
+
+def selftest_e3_checks(res, rep, rep8, e2x, egx):
+    """E3-8: with geo = a copy of g2 every geo number must equal the g2 one."""
+    checks = {}
+    Mt = res["Mt"]
+    k = ["arm", "model", "pair_set", "target", "set", "pos"]
+    bad = []
+    for ps in ("own", "P_23", "P_023"):
+        a = Mt[(Mt.rung == "geo") & (Mt.pair_set == ps)]
+        b = Mt[(Mt.rung == "g2") & (Mt.pair_set == ps)]
+        J = a.merge(b, on=k, how="outer", suffixes=("", "_g2"), indicator=True)
+        if (J["_merge"] != "both").any() or not len(a):
+            bad.append(f"{ps}: rows not in both ({int((J['_merge'] != 'both').sum())}) or empty")
+        for c in E3_NUM + ("source",):
+            nb = int(sum(not _num_close(x, y) for x, y in zip(J[c].tolist(), J[f"{c}_g2"].tolist())))
+            if nb:
+                bad.append(f"{ps} {c}: {nb} rows differ")
+    checks["metrics_geo_equal_g2"] = not bad
+    checks["rep_geo_equal_g2"] = all(rep[("geo", a_, t)] == rep[("g2", a_, t)] for a_ in ARMS for t in TARGETS)
+    checks["rep8_geo_equal_g2"] = all(rep8[("geo", t)] == rep8[("g2", t)] for t in TARGETS)
+    rb = []
+    for key, v in res["rates"].items():
+        if key.startswith("geo|"):
+            other = "g2|" + key[len("geo|"):]
+            rb += [f"{key}: no {other}"] if other not in res["rates"] else \
+                _same_obj(_clean(v), _clean(res["rates"][other]), tol=0.0, path=key)
+    checks["bend_rates_geo_equal_g2"] = not rb
+    G = res["goal"]
+    gk = ["level", "arm", "model", "target"]
+    Ga, Gb = G[G.rung == "geo"], G[G.rung == "g2"]
+    JG = Ga.merge(Gb, on=gk, how="outer", suffixes=("", "_g2"), indicator=True)
+    gbad = int((JG["_merge"] != "both").sum())
+    for c in ("passed", "surely_passed", "bend_passed", "para_mae", "sens", "fpr", "source"):
+        gbad += int(sum(not _num_close(x, y, 0.0) for x, y in zip(JG[c].tolist(), JG[f"{c}_g2"].tolist())))
+    checks["goal_geo_equal_g2"] = bool(gbad == 0 and len(Ga) > 0)
+    checks["goal_rep8_rung_rows"] = bool(((G.level == "rung") & (G.model == "REP8")).sum() == len(E3_GOAL_RUNGS))
+    C = res["Cmp"]
+    c = C[C.comparison == E3_PAIRS[0][3]]
+    checks["compare_g2_vs_geo_zero"] = bool(len(c) > 0 and (c.d.abs() == 0).all() and (c.ci_lo == 0).all()
+                                            and (c.ci_hi == 0).all())
+    checks["e2_crosscheck"] = bool(e2x.get("ok"))
+    checks["eval_geo2_selftest_equal"] = bool(egx.get("equal"))
+    return checks, dict(metrics_problems=bad[:20], bend_rate_problems=rb[:20], goal_problems=gbad)
+
+
+# ---------------------------------------------------------------- the E3 command
+def cmd_e3(labels, selftest=False):
+    """E3 (GEO2 9-2): the E2 computation on rung geo (+ dft / g2 on the common sets) -> analysis/geo2/results/E3_*;
+    selftest: geo = a copy of g2 -> analysis/geo2/results/e3_selftest/ (E3-8)."""
+    t0 = time.time()
+    EV, info = fu2_eval()
+    import inputs as IN
+    lab = label_info(labels)
+    labels = Path(lab["path"])
+    rep_p = IN.p_report()                                # E3-2: no rung argument (cross-worktree build fingerprints)
+    rep_p, f13 = f13_inputs(IN, rep_p)                   # E3-2b: S_folds entry by repo-relative path (copy)
+    builds = ladder_builds(IN, rep_p, E3_LADDER_RUNGS)
+    add3 = add3_check()
+    e2 = e2_record()
+    tables = {r: builds[r]["table_sha256"] for r in E3_LADDER_RUNGS}
+    pre = ready = None
+    if not selftest:
+        pre = prereg_geo2_check()
+        ready = e3_ready()
+        if not GEO_TABLE.is_file():
+            _not_ready(f"{GEO_TABLE} missing")
+        tables["geo"] = L.sha256(GEO_TABLE)
+    with no_test_scores([PRED, PRED_GEO, UNITS]):        # E1-3 / E3-4: REP and REP8 from validation records only
+        V, units = val_table(E3_LADDER_RUNGS if selftest else E3_RUNGS, lab["sha256"], add3["md_sha256"], tables)
+        if selftest:
+            V = pd.concat([V, V[V.rung == "g2"].assign(rung="geo")], ignore_index=True)
+            gfp = dict(status="e3-selftest: geo = a copy of g2 (no geo units)")
+        else:
+            gfp = geo_unit_prereg(units, pre["md_sha256"])
+        rep, means = pick_rep(V)
+        rep8, means8 = pick_rep8(V, E3_GOAL_RUNGS)
+    _log3(t0, "REP8: " + ", ".join(f"{r}·{t}={a}/{m}" for (r, t), (a, m) in rep8.items()))
+    lad_units = {x: u for x, u in units.items() if u["key"][0] in E3_LADDER_RUNGS}
+    geo_units = {x: u for x, u in units.items() if u["key"][0] == "geo"}
+    lrep = check_l_report(lad_units, E3_LADDER_RUNGS, labels)
+    lrep_geo = None if selftest else check_l_report_geo(geo_units, labels, pre["md_sha256"])
+    ctx = real_inputs(IN, rep_p, E3_LADDER_RUNGS, labels, set_names=("P_dft", "P_g2"))
+    if selftest:
+        sg = set(ctx["sets"]["P_g2"])
+        geo = dict(sets=dict(P_geo=sg, P_23=sg & ctx["sets"]["P_g2"], P_023=ctx["sets"]["P_dft"] & sg),
+                   tests={k: list(v) for k, v in ctx["tests"]["g2"].items()},
+                   trains={k: list(v) for k, v in ctx["trains"]["g2"].items()}, dH=ctx["dH"]["g2"].copy(),
+                   info=dict(mode="e3-selftest: geo = a copy of g2 (E3-8)", n=len(sg)))
+    else:
+        geo = geo_inputs(IN, rep_p, ctx["S"], ctx["sets"])
+    ctx = dict(ctx, rungs=E3_RUNGS, sets=dict(ctx["sets"], **geo["sets"]), tests=dict(ctx["tests"], geo=geo["tests"]),
+               trains=dict(ctx["trains"], geo=geo["trains"]), dH=dict(ctx["dH"], geo=geo["dH"]))
+    P = load_predictions(E3_LADDER_RUNGS)
+    G = P[P.rung == "g2"].assign(rung="geo") if selftest else load_predictions_geo()
+    P = pd.concat([P, G], ignore_index=True)
+    res = run_e3(EV, ctx, P, rep, rep8)
+    e2x = e2_crosscheck_e3(res, rep, e2)
+    egx = eval_geo2_crosscheck(EVAL_GEO2_SELFTEST if selftest else EVAL_GEO2_REPORT, rep8, res["MI"])
+    if not selftest and not e2x["ok"]:
+        L.stop("E3 is not the E2 computation on the LADDER g2 rung (E3-7):\n  " + "\n  ".join(e2x["problems"][:10]))
+    out = E3_SELFTEST_DIR if selftest else GEO2_RES
+    outputs = {}
+    for name, df in (("E3_metrics.csv", res["Mt"]), ("E3_bends.csv", res["Bd"]), ("E3_goal.csv", res["goal"]),
+                     ("E3_compare.csv", res["Cmp"])):
+        p = _csv3(out / name, df)
+        outputs[str(p)] = L.sha256(p)
+    p = _json3(out / "E3_bend_rates.json", dict(
+        key="rung|arm|model|pair_set (pair_set own = P_<rung>, P_23, P_023)", rates=res["rates"], families=res["fams"],
+        representatives=rep_json(rep, means), rep8=rep8_json(rep8, means8),
+        note="d1_eval.bend_rates on FU2 bends_tab rows (as E2_bend_rates.json); null = zero denominator (E1-7)"))
+    outputs[str(p)] = L.sha256(p)
+    v8 = res["verdict8"].get("geo|REP8") or {}
+    me = Path(__file__).resolve()
+    ins = [PRED, L_REPORT, L_VAL, labels, ORIG_LABELS, IN.S_FOLDS, IN.P_REPORT, ADD3_MD, ADD3_JSON, E2_REPORT_F,
+           E2_METRICS_F, E2_GOAL_F, E2_RATES_F, Path(info["source"]), Path(info["e_tests"])] + \
+        [Path(rep_p["sets"][n]["file"]) for n in ("P_dft", "P_g2")] + [IN.table_path(r) for r in E3_LADDER_RUNGS]
+    if not selftest:
+        ins += [PRED_GEO, L_REPORT_GEO, L_VAL_GEO, L_XGB_REPORT_GEO, PREREG_GEO2_MD, PREREG_GEO2_JSON, P_BUILD_GEO,
+                P_GEO_REPORT, P_GEO_SETS, GEO_TABLE]
+    doc = dict(
+        phase="E3-selftest" if selftest else "E3", spec="docs/specs/GEO2.md 9-2, 10", rungs=list(E3_RUNGS),
+        layout={r: list(v) for r, v in E3_LAYOUT.items()}, command=" ".join(sys.argv[1:]), date=time.strftime("%F %T"),
+        evaluate_py=dict(path=str(me), sha256=L.sha256(me), git_state=_git_state(me) or "committed, unchanged",
+                         line_source_sha256=line_source_sha256()),
+        fu2_evaluate=info, labels=lab, add3=add3, ladder_builds=builds, p_report_inputs=f13, e2=e2["sha256"],
+        prereg_geo2=pre, ready=ready,
+        geo_unit_prereg=gfp, l_report=lrep, l_report_geo=lrep_geo, geo_inputs=geo["info"],
+        inputs_sha256={str(p): L.sha256(p) for p in ins if Path(p).is_file()},
+        representatives=rep_json(rep, means), rep8=rep8_json(rep8, means8),
+        rep_rule="spec 13-1 (REP) and GEO2 9-1 (REP8): lowest mean over the 5 outer folds of the unit json val_kcal_mae; "
+                 "REP ties AW -> GNN -> TF -> XGB, REP8 ties SH before S then that order; validation records only "
+                 "(E1-3)",
+        gates=res["gates"], line_check=res["line_check"], line_betas=res["line_betas"], verdict=res["verdict"],
+        verdict_rep8=res["verdict8"],
+        goal_reached=dict(rule="GEO2 10-1 '목표 도달' (shown separately from the main verdict): geo REP8 oi and cpcm "
+                               "para MAE <= 0.13 (own P_geo, point estimate; = eval_geo2 goal_mae) and the E3 bend "
+                               "criteria sensitivity >= 0.7, FPR <= 0.1 (LADDER 13-2) for both",
+                          reached=v8.get("passed"), mae_part=v8.get("mae_passed"), bend_part=v8.get("bend_passed"),
+                          surely=v8.get("surely_passed"), detail=v8.get("detail")),
+        model_table=model_table(res["MI"]), e2_crosscheck=e2x, eval_geo2_crosscheck=egx, outputs=outputs,
+        goal_rule=dict(targets=list(GOAL_TARGETS), para_mae_max=GOAL["mae"], sens_min=GOAL["sens"], fpr_max=GOAL["fpr"],
+                       set="own pair set (P_<rung>), P_main reference para pairs, point estimate; surely = CI upper <= "
+                           "0.13; REP primary, ENS4 secondary, single models descriptive; REP8 = the GEO2 10-1 goal",
+                       bend_population="d1_eval.bend_rates 'all' (no family filter; ADD3 5-2 / PR-15)"),
+        env=_env(), decisions=DECISIONS3, decisions_e1_reused=DECISIONS, seconds=time.time() - t0)
+    if selftest:
+        checks, detail = selftest_e3_checks(res, rep, rep8, e2x, egx)
+        ok = all(checks.values())
+        doc.update(ok=ok, checks=checks, check_detail=detail,
+                   note="e3-selftest: geo = a copy of g2; the geo numbers are g2's, not results (E3-8)")
+        _json3(out / "E3_selftest.json", doc)
+        for kk, v in checks.items():
+            print(f"[e3-selftest] {kk}: {'ok' if v else 'FAIL'}", flush=True)
+        print(f"[e3-selftest] {'all checks passed' if ok else 'FAILED'} ({time.time() - t0:.0f} s) -> {out}", flush=True)
+        return 0 if ok else 3
+    _json3(out / "E3_report.json", doc)
+    for kk, v in res["verdict"].items():
+        if v["role"] != "descriptive":
+            print(f"[E3] 13-2 {kk}: passed {v['passed']} surely {v['surely_passed']}", flush=True)
+    print(f"[E3] REP8 geo: {v8.get('choices')} passed {v8.get('passed')} (MAE {v8.get('mae_passed')}, bends "
+          f"{v8.get('bend_passed')}); E2 cross-check ok {e2x['ok']}; eval_geo2 cross-check {egx.get('equal')}", flush=True)
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="D1-LADDER evaluation (docs/specs/D1LADDER.md 11, 12): e1 | e1-selftest | "
-                                             "e2 | e2-selftest")
-    ap.add_argument("cmd", choices=("e1", "e1-selftest", "e2", "e2-selftest"))
+                                             "e2 | e2-selftest; GEO2 (docs/specs/GEO2.md 9-2): e3 | e3-selftest")
+    ap.add_argument("cmd", choices=("e1", "e1-selftest", "e2", "e2-selftest", "e3", "e3-selftest"))
     ap.add_argument("--stage", type=int, default=1)
     ap.add_argument("--labels", default=str(DEFAULT_LABELS))
     ap.add_argument("--no-figures", action="store_true")
@@ -2644,6 +3495,8 @@ def main(argv=None):
         return cmd_e2(a.labels, figures=not a.no_figures)
     if a.cmd == "e2-selftest":
         return cmd_selftest_e2(figures=not a.no_figures)
+    if a.cmd in ("e3", "e3-selftest"):                  # GEO2 9-2 (E3-1): no figures
+        return cmd_e3(a.labels, selftest=a.cmd == "e3-selftest")
     return cmd_selftest(figures=not a.no_figures)
 
 

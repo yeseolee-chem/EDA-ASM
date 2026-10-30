@@ -155,6 +155,14 @@ Review fixes 2026-10-23 (FIXER; every judgment = the recommended option, user 20
   P23 L-4 roots (review P-4): the FU2 T1 fold files + FU2 S_splits.json + V_report / Q_report are 'shared'; the DFT-only
       phase results (G0_*, F0_*, Q_audit, Q6, labels_d1_cr*.parquet, V_* but V_report) are 'dft'; check_paths ok also
       needs no unclassified path.
+GEO2 additions 2026-10-30 (docs/specs/GEO2.md 8-1; role LADA; analysis/geo2/results/DECISIONS_lad.md)
+  PG-1 RUNGS["geo"] is fixed here (= analysis/geo2/feat_geo.py rung_cfg("geo"): geom g2, fu2_res / h_parquet under
+       analysis/geo2/results, tokens / x182 / hf_runs / hf_inputs under $GEO2 = $GEO2_SCRATCH (default
+       /gpfs/tmp_cpu2/yeseo1ee/geo2), versions fu2-*-3-geo, refs min), so feat_geo.py p finds the same entry and
+       train_atoms / train_xgb / tests see it. RUNG_ORDER, the CLI and every dft / g1 / g2 rule are unchanged; the geo
+       table is $GEO2/inputs/geo.parquet (feat_geo.py p), not table_path("geo").
+  PG-2 rung_roots: $GEO2 and analysis/geo2/results form the column 'geo' (L-4 for the geo rung; for the other rungs a
+       path there was unclassified before and is foreign now: check_paths ok stays false either way).
 """
 from __future__ import annotations
 
@@ -227,6 +235,9 @@ F0_REPORT = L.RES / "F0_report.json"
 G0_REPORT = L.RES / "G0_report.json"
 Q_KEYS = L.LAD / "Q_keys.parquet"                # = refs_q.LAD_KEYS
 G2_RES = L.G2_DIR / "results"
+# GEO2 (docs/specs/GEO2.md 6-1, 8-1; read only here): $GEO2 scratch and analysis/geo2/results of the geo rung
+GEO2 = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2"))    # = analysis/geo2/geo2_common.GEO2
+GEO2_RES = L.REPO / "analysis" / "geo2" / "results"
 
 RUNGS = {
     "dft": dict(geom="dft", fu2_res=L.RES / "fu2", tokens=L.LAD / "fu2" / "tokens",
@@ -239,6 +250,13 @@ RUNGS = {
     "g2": dict(geom="g2", fu2_res=G2_RES / "fu2", tokens=L.G2 / "fu2" / "tokens", x182=L.G2 / "X182_d1_g2.parquet",
                h_parquet=G2_RES / "labels_d1_hf_g2.parquet", hf_runs=L.G2 / "runs", hf_inputs=L.G2 / "inputs",
                atom_version="fu2-atoms-3-g2", token_version="fu2-tokens-3-g2", refs="min"),
+    # GEO2 8-1: = analysis/geo2/feat_geo.py rung_cfg("geo") (the D1-G3 feat.py rung_cfg rule on the geo paths: 'g2'
+    # geometry slot of the D1-HF runner, F / H outputs of feat_geo.py, refs min); fixed here instead of registered at
+    # run time. Not in RUNG_ORDER: build / pa / pairs / the loader CLI keep dft, g1, g2 (GEO2 tables: feat_geo.py p).
+    "geo": dict(geom="g2", fu2_res=GEO2_RES / "fu2_geo", tokens=GEO2 / "fu2_geo" / "tokens",
+                x182=GEO2 / "X182_d1_geo.parquet", h_parquet=GEO2_RES / "hf_geo" / "labels_d1_hf_g2.parquet",
+                hf_runs=GEO2 / "hf_geo" / "runs", hf_inputs=GEO2 / "hf_geo" / "inputs",
+                atom_version="fu2-atoms-3-geo", token_version="fu2-tokens-3-geo", refs="min"),
 }
 
 DECISIONS = {
@@ -460,6 +478,8 @@ def rung_roots():
         (set_path("P_g1"), "g1"),
         # g2 column
         (L.G2, "g2"), (G2_RES, "g2"), (table_path("g2"), "g2"), (set_path("P_g2"), "g2"),
+        # geo column (GEO2 8-1 / 8-2 L-4): every geo input lives under $GEO2 or analysis/geo2/results
+        (GEO2, "geo"), (GEO2_RES, "geo"),
         # files holding more than one rung
         (L.D1HF_LABELS, "dft+g1"), (L.HF_SCR / "inputs", "dft+g1"), (L.HF_SCR / "labels_d1_hf.json", "dft+g1"),
         (set_path("P_01"), "dft+g1"), (set_path("P_012"), "dft+g1+g2"),
