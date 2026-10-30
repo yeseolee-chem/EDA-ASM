@@ -1,0 +1,9 @@
+# GEO2 결정 기록
+
+- **0-spec** (2026-10-30 07:05): 명령서를 docs/specs/GEO2.md로 그대로 저장했다. 코드 블록 4개는 job 1053809(/gpfs/home1/yeseo1ee/geo2_extract_spec.py)로 그대로 뽑았다: geo2_common.py, build_geo.py, eval_geo2.py, analysis/geo/train_m1.py. 모두 compile 통과. 같은 job이 $GEO2/logs를 만들었다(로그인 노드 mkdir 금지).
+- **0-6** (07:09): `eval_geo2.py selftest`를 job 1053810(d1_pair py.slurm, PYENV=espley)으로 돌렸다. exit 0, all_pass true, E2 40행 비교. g2 oi 1.0375 / cpcm 0.3154 = 명령서 0-4절.
+- **T-pre** (07:10): LADDER 코드를 고치기 전 상태를 남겼다(job 1053812). `git archive HEAD analysis` → $GEO2/pristine_head (HEAD 707e1a47), `train_atoms.py list --stage 1 / 2` → $GEO2/regress/list_stage{1,2}.before.txt (60 / 30 unit). 회귀 검사 1의 기준이다.
+- **Y-early** (사용자 지시 2026-10-30 07:5x "지금 시작해도 되는 것 아닌가? … Y부터 지금 시작"): 명령서 1절은 GEO1이 끝난 뒤 시작하라고 하지만, Y는 R_select_f0–4(모두 확정)와 GEO1 학습 코드만 쓰고 GEO1 평가 결과와는 관계가 없으므로 앞당겼다. 그때 GEO1은 마지막 ablation 1개(abl_r0_f3)와 평가만 남아 있었다. 나머지 단계(Z 이후)는 1절대로 GEO1이 끝나 commit·push된 뒤에 낸다(Z는 E_rxn.csv가 필요하다).
+- **Y-1** (명령서 3절 "현재 train.py의 final 명령이 부르는 방식과 똑같이"): GEO1 final job은 launcher가 `GEO_MAX_EP=300, GEO_PATIENCE=100000`을 넘겨 돌렸다(GEO1 결정 R-user). train.py는 MAX_EP를 LR 일정 길이(total = MAX_EP × step 수)로 쓰므로, train_m1.py final도 같은 환경 변수로 돌린다(job 1053846–48, `--export=ALL,GEO_MAX_EP=300,GEO_PATIENCE=100000`). train_m1.py 코드는 그대로다.
+- **Y-2**: train.fit이 tag로 $GEO/runs/final_fm1_s{seed}.final.pt와 .history.json을 쓴다(train.py를 바꾸지 않으므로 생기는 부수 파일, GEO1 scratch). 명령서 13절 쓰기 목록의 $GEO/preds/final_fm1_*와 같은 성격의 Y 출력으로 본다.
+- **Y-cost** (계획 단계 예상): 설정은 R_select 최다 선택(c0 2회, c3 2회 → 동률, 이름 순 c0), epoch는 floor(median(196, 287, 203, 133, 146)) = 196. 학습 항목 수는 fold ≥ 0 D1 + D0 ≈ 18,950개다. GEO1 tune의 항목당 시간(3090 6.29 ms, A10 8.47 ms)으로 seed 하나에 6.5(3090)–8.7(A10) GPU시간, 3개에 약 20–26 GPU시간이다. 상한 30 이내다. 실제 값은 Y_plan.json과 job 시간으로 확인한다.
