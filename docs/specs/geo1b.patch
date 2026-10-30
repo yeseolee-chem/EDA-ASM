@@ -1,0 +1,314 @@
+--- a/analysis/geo1b/geo_common.py
++++ b/analysis/geo1b/geo_common.py
+@@ -1,4 +1,4 @@
+-"""GEO-1 common paths and helpers (docs/specs/GEO1.md). Python 3.9 compatible (D1 run env) and the GPU env (env_d1fu2)."""
++"""GEO1b common paths and helpers (docs/specs/GEO1B.md; copied from analysis/geo/geo_common.py, G1 removed). Python 3.9 compatible (D1 run env) and the GPU env (env_d1fu2)."""
+ from __future__ import annotations
+ 
+ import hashlib
+@@ -15,7 +15,7 @@
+ HERE = Path(__file__).resolve().parent
+ REPO = HERE.parents[1]
+ RES = HERE / "results"
+-GEO = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo"))
++GEO = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo1b"))
+ D0G2 = Path(os.environ.get("D0G2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/d0_g2"))
+ 
+ # ---- D1 (read only)
+@@ -25,7 +25,6 @@
+ D1_META_G2 = D1_G2_ROOT / "G" / "input_meta_d1_g2.csv"     # rxn_id, A_idx (frag1 = dipole, 0-based)
+ D1_PAIR = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_pair")
+ D1_JOBS = D1_PAIR / "d1_jobs"
+-D1_G1_FINAL = D1_PAIR / "g1_final"
+ D1_MANIFEST = Path("/gpfs/tmp_cpu2/yeseo1ee/d1/d1_run/d1_manifest.csv")
+ C_COMPARE = REPO / "analysis" / "d1_g2" / "results" / "C_compare.csv"
+ S_FOLDS = REPO / "analysis" / "d1_pair" / "results" / "S_folds.csv"
+@@ -36,12 +35,11 @@
+ D0_PROF = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/extracted/full_dataset_profiles")
+ D0_SMILES = Path("/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv")
+ D0_META = Path("/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/label_true/work/input_meta.csv")
+-D0_G1_ROOT = Path("/gpfs/tmp_cpu2/yeseo1ee/espley_xtb_g1")
+ D0_EXCLUDE = {3090, 3766, 4252, 3400, 5783}                # labels_all non-ok (= g1_geom.EXCLUDE)
+ 
+ RMSD_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/EDA-ASM/D1_build/validation/analysis")
+ D1_FOLD_COUNTS = {0: 1874, 1: 1879, 2: 1503, 3: 1435, 4: 2195, -1: 380}   # C_compare rows per T1 fold (checked in I)
+-G2RAW_PRIMARY = dict(n=840, share=0.1595, median=0.0155)                  # C_compare d_g2 vs d_dft, label-length rule
++G2RAW_PRIMARY = dict(n=1667, share=0.1338, median=0.0218)   # GEO1b: ALL para P_main pairs, test folds 0-4, G2 raw
+ ELEM = ["H", "B", "C", "N", "O", "F", "Si", "P", "S", "Cl", "As", "Se", "Br", "I"]   # type index = position
+ TYPE = {e: i for i, e in enumerate(ELEM)}
+ 
+@@ -185,13 +183,9 @@
+ 
+ 
+ def d1_core_table():
+-    """C_compare (all 9,266 D1 rows): rxn_id -> (core 'dipole/skeleton', T1 fold, same_ts_g1 as True/False/None)."""
+-    C = pd.read_csv(C_COMPARE, usecols=["rxn_id", "dipole", "skeleton", "same_ts_g1"])
++    """C_compare (all 9,266 D1 rows): rxn_id -> (core 'dipole/skeleton', T1 fold, None). GEO1b reads no G1-derived
++    column (same_ts_g1 is never read); the third slot stays None so the record layout is unchanged."""
++    C = pd.read_csv(C_COMPARE, usecols=["rxn_id", "dipole", "skeleton"])
+     fm = core_fold_map()
+-    out = {}
+-    for r in C.itertuples():
+-        core = f"{r.dipole}/{r.skeleton}"
+-        s = r.same_ts_g1
+-        s = True if s in (True, "True") else (False if s in (False, "False") else None)
+-        out[int(r.rxn_id)] = (core, int(fm.get(core, -9)), s)
+-    return out
++    return {int(r.rxn_id): (f"{r.dipole}/{r.skeleton}", int(fm.get(f"{r.dipole}/{r.skeleton}", -9)), None)
++            for r in C.itertuples()}
+--- a/analysis/geo1b/train.py
++++ b/analysis/geo1b/train.py
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env python3
+-"""Phase R: GEO-1 training.
+-  python train.py smoke <k> | tune <k> <cfg> | select <k> | final <k> <seed> | ablation <k> <no_d0|q1_only|r0>"""
++"""Phase R: GEO1b training (docs/specs/GEO1B.md 3; = analysis/geo/train.py except train_items: all G2, no G1, no ablation).
++  python train.py smoke <k> | tune <k> <cfg> | select <k> | final <k> <seed>"""
+ from __future__ import annotations
+ 
+ import json
+@@ -64,10 +64,8 @@
+     for r in recs:
+         if r["src"] == "D0" and not use_d0:
+             continue
+-        if r["xyz_g2"] is not None and r["same"] is True:
++        if r["xyz_g2"] is not None:                       # GEO1b: every G2 input, no form filter, no G1
+             S.append((r, "g2"))
+-        if r["xyz_g1"] is not None:
+-            S.append((r, "g1"))
+     return S
+ 
+ 
+@@ -259,14 +257,6 @@
+         P = predict(ema.model(arch), eval_items(te_r), n_pass)
+         dump_atomic(P, GC.GEO / "preds" / f"final_f{k}_s{seed}.pkl")
+         return 0
+-    if cmd == "ablation":
+-        name = a[2]
+-        kw = dict(no_d0=dict(use_d0=False), q1_only=dict(q_mode="q1"), r0=dict(n_pass_override=1))[name]
+-        items = train_items(full, use_d0=kw.pop("use_d0", True))
+-        ema, arch, n_pass, _ = fit(items, None, cfg, 0, fixed_epochs=ep, tag=f"abl_{name}_f{k}", **kw)
+-        P = predict(ema.model(arch), eval_items(te_r), n_pass)
+-        dump_atomic(P, GC.GEO / "preds" / f"abl_{name}_f{k}.pkl")
+-        return 0
+     raise SystemExit(__doc__)
+ 
+ 
+--- a/analysis/geo1b/tests.py
++++ b/analysis/geo1b/tests.py
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env python3
+-"""Phase U: GEO-1 unit tests (GPU env).  python tests.py synth   (U-1..U-6, U-7s; no records needed)
+-                                          python tests.py data    (U-0, U-7, U-8, U-9; needs records.pkl)
++"""Phase U: GEO1b unit tests (GPU env).  python tests.py synth   (U-1..U-6, U-7s; no records needed)
++                                          python tests.py data    (U-0, U-7, U-8b, U-9b, U-10; needs records.pkl)
+ Writes results/U_tests_<mode>.json; exit 3 if any test fails."""
+ from __future__ import annotations
+ 
+@@ -34,8 +34,8 @@
+     return dict(uid=uid, src="D1", src_id=0, rxn_id=rid, core="fake/A", fold=0, n=n,
+                 types=np.array([GC.TYPE[s] for s in syms]), lab=x + rng.normal(0, 0.05, x.shape),
+                 frag=np.array([1] * (n // 2) + [2] * (n - n // 2)), form=np.array([1, 1, 1, 1] + [0] * (n - 4)),
+-                pairs=pairs, charge=0, same=True, overlap=False, xyz_g2=x, lab_on_g2=x + 0.03, bond_g2=B,
+-                spd_g2=GC.spd_matrix(B), xyz_g1=None)
++                pairs=pairs, charge=0, same=None, overlap=False, xyz_g2=x, lab_on_g2=x + 0.03, bond_g2=B,
++                spd_g2=GC.spd_matrix(B), xyz_g1=None, map_rmsd_g2=0.1)
+ 
+ 
+ def batch_of(exs, double=True):
+@@ -107,8 +107,8 @@
+     for i in range(32):
+         r = fake_rec(int(rng.integers(12, 30)), rng, f"D1_{100 + i}", 100 + i)
+         x = r["xyz_g2"]
+-        r.update(xyz_g1=x, lab_on_g1=x.mean(0) + 1.03 * (x - x.mean(0)), bond_g1=r["bond_g2"], spd_g1=r["spd_g2"])
+-        items.append((r, "g1"))
++        r.update(lab_on_g2=x.mean(0) + 1.03 * (x - x.mean(0)))
++        items.append((r, "g2"))
+     start, end = overfit(items, 600)
+     check("U-7s", end < 0.3 * start, start_L1=start, end_L1=end)
+ 
+@@ -138,13 +138,14 @@
+ def data():
+     recs = T.load_records()
+     rep = json.loads((GC.RES / "D_dataset_report.json").read_text())
+-    check("U-0", len(recs) == rep["n"], n=len(recs))
+-    # U-7 overfit
++    check("U-0", len(recs) == rep["n"] and rep.get("g1_used") is False, n=len(recs))
++    # U-7 overfit (report only, as GEO1 decision U-7): 32 D1 training G2 samples
+     tr, _, _ = T.split(recs, 0)
+-    items = [(r, "g1") for r in tr if r["src"] == "D1" and r["xyz_g1"] is not None][:32]
++    items = [(r, "g2") for r in tr if r["src"] == "D1" and r["xyz_g2"] is not None][:32]
+     start, end = overfit(items, 2000)
+-    check("U-7", end < 0.5 * start, start_L1=start, end_L1=end)
+-    # U-8 metric regression on the G2-raw baseline
++    RES["U-7"] = dict(ok=True, report_only=True, start_L1=start, end_L1=end, ratio=end / start)
++    print(f"[REPORT] U-7 start {start:.4f} end {end:.4f} ratio {end / start:.3f}", flush=True)
++    # U-8b metric regression on the G2-raw baseline, ALL para P_main pairs
+     test = [r for r in recs if r["src"] == "D1" and r["fold"] in (0, 1, 2, 3, 4) and r["xyz_g2"] is not None]
+     mt = evaluate_preds({r["uid"]: r["xyz_g2"] for r in test}, test, with_rmsd=False)
+     ex = GC.G2RAW_PRIMARY
+@@ -156,11 +157,14 @@
+         c = C.loc[r["rxn_id"]]
+         dev = max(dev, float(np.abs(np.array(dl) - np.sort([c.d_dft_1, c.d_dft_2])).max()),
+                   float(np.abs(np.array(dg) - np.sort([c.d_g2_1, c.d_g2_2])).max()))
+-    check("U-8", mt["n_primary"] == ex["n"] and abs(mt["primary_share"] - ex["share"]) <= 0.005
+-          and abs(mt["pair_pe_median_same_para"] - ex["median"]) <= 0.001 and dev <= 1e-4,
+-          n=mt["n_primary"], share=mt["primary_share"], median=mt["pair_pe_median_same_para"], max_dist_dev=dev)
+-    # U-9 leakage
++    check("U-8b", mt["n_primary"] == ex["n"] and abs(mt["primary_share"] - ex["share"]) <= 0.005
++          and abs(mt["pair_pe_median_para"] - ex["median"]) <= 0.001 and dev <= 1e-4 and len(test) == 8425,
++          n=mt["n_primary"], share=mt["primary_share"], median=mt["pair_pe_median_para"], max_dist_dev=dev,
++          n_test=len(test))
++    # U-9b leakage + G1-free + every G2 input used
+     bad = []
++    if any(r.get("xyz_g1") is not None or r.get("same") is not None for r in recs):
++        bad.append("a record carries G1 data (xyz_g1 / same)")
+     for k in range(5):
+         tr, va, te = T.split(recs, k)
+         tr_ids = {r["uid"] for r in tr}
+@@ -168,8 +172,11 @@
+             bad.append(f"fold {k}: test/inner-val reaction in train")
+         if any(r["src"] == "D0" and r["overlap"] for r in tr):
+             bad.append(f"fold {k}: overlapping D0 in train")
+-        if any(kind == "g2" and r["same"] is not True for r, kind in T.train_items(tr)):
+-            bad.append(f"fold {k}: non-same G2 sample in train")
++        it = T.train_items(tr)
++        if any(kind != "g2" for _, kind in it):
++            bad.append(f"fold {k}: a non-G2 training sample")
++        if len(it) != sum(r["xyz_g2"] is not None for r in tr):
++            bad.append(f"fold {k}: train items {len(it)} != train records with G2")
+         for r, kind in T.eval_items(te)[:200]:
+             e = T.make_example((r, kind), False, 0.0, "mix", np.random.default_rng(0))
+             if not np.allclose(e["x0"] + e["center"], r["xyz_g2"], atol=1e-10, rtol=0):
+@@ -177,7 +184,11 @@
+             syms = [GC.ELEM[t] for t in r["types"]]
+             if not np.array_equal(GC.bond_types(syms, r["xyz_g2"], r["pairs"]), r["bond_g2"]):
+                 bad.append(f"fold {k}: bond graph not from the input for {r['uid']}")
+-    check("U-9", not bad, problems=bad[:20])
++    check("U-9b", not bad, problems=bad[:20])
++    # U-10 mapped RMSD defined for >= 95 % of D1 G2 inputs (descriptive bins only)
++    v = np.array([r["map_rmsd_g2"] for r in recs if r["src"] == "D1" and r["xyz_g2"] is not None], float)
++    check("U-10", np.isfinite(v).mean() >= 0.95, finite=float(np.isfinite(v).mean()),
++          median=float(np.nanmedian(v)), n=int(len(v)))
+ 
+ 
+ if __name__ == "__main__":
+--- a/analysis/geo1b/r_launch.py
++++ b/analysis/geo1b/r_launch.py
+@@ -6,7 +6,7 @@
+ file exists or whose job name is queued is never submitted again; a job that ended without its output is resubmitted
+ once (infra), a second loss blocks its dependants and writes results/STOP_R.md.
+   sbatch -p cpu1,cpu2 --time=48:00:00 --cpus-per-task=1 --mem=2G --dependency=afterok:<smoke> \
+-         --wrap "source .../conda.sh; conda activate reactot; cd analysis/geo; python r_launch.py"
++         --wrap "source .../conda.sh; conda activate reactot; cd analysis/geo1b; python r_launch.py"
+ Writes results/R_budget.json, results/HPC_efficiency.csv, $GEO/run_r/state.json."""
+ from __future__ import annotations
+ 
+@@ -19,11 +19,11 @@
+ 
+ HERE = Path(__file__).resolve().parent
+ RES = HERE / "results"
+-GEO = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo"))
++GEO = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo1b"))
+ RUNS, PREDS, LOGS, STATE = GEO / "runs", GEO / "preds", GEO / "logs", GEO / "run_r" / "state.json"
+ GPU_P, CPU_P = "gpu1,gpu2,gpu3,gpu5,gpu6", "cpu1,cpu2"
+ MAX_SUBMIT, GPU_H_MAX, POLL_S, STOP_AFTER_H = 20, 200.0, 120, 46.0
+-FOLDS, CFGS, SEEDS, ABL = (0, 1, 2, 3, 4), ("c0", "c1", "c2", "c3"), (0, 1, 2), ("no_d0", "q1_only", "r0")
++FOLDS, CFGS, SEEDS, ABL = (0, 1, 2, 3, 4), ("c0", "c1", "c2", "c3"), (0, 1, 2), ()   # GEO1b: no ablation
+ USER = os.environ.get("USER", "yeseo1ee")
+ 
+ 
+@@ -87,21 +87,21 @@
+     T = []
+     for k in FOLDS:
+         for cfg in CFGS:
+-            T.append(dict(name=f"geo_tune_f{k}_{cfg}", gpu=True, args=["train.py", "tune", str(k), cfg], env=env,
++            T.append(dict(name=f"gb_tune_f{k}_{cfg}", gpu=True, args=["train.py", "tune", str(k), cfg], env=env,
+                           out=RUNS / f"tune_f{k}_{cfg}.history.json", deps=[]))
+     for k in FOLDS:
+-        T.append(dict(name=f"geo_sel_f{k}", gpu=False, args=["train.py", "select", str(k)], env=env,
+-                      out=RES / f"R_select_f{k}.json", deps=[f"geo_tune_f{k}_{cfg}" for cfg in CFGS]))
++        T.append(dict(name=f"gb_sel_f{k}", gpu=False, args=["train.py", "select", str(k)], env=env,
++                      out=RES / f"R_select_f{k}.json", deps=[f"gb_tune_f{k}_{cfg}" for cfg in CFGS]))
+     for k in FOLDS:
+         for s in SEEDS:
+-            T.append(dict(name=f"geo_final_f{k}_s{s}", gpu=True, args=["train.py", "final", str(k), str(s)], env=env,
+-                          out=PREDS / f"final_f{k}_s{s}.pkl", deps=[f"geo_sel_f{k}"]))
++            T.append(dict(name=f"gb_final_f{k}_s{s}", gpu=True, args=["train.py", "final", str(k), str(s)], env=env,
++                          out=PREDS / f"final_f{k}_s{s}.pkl", deps=[f"gb_sel_f{k}"]))
+         if k in c["abl_folds"]:
+             for a in ABL:
+-                T.append(dict(name=f"geo_abl_{a}_f{k}", gpu=True, args=["train.py", "ablation", str(k), a], env=env,
+-                              out=PREDS / f"abl_{a}_f{k}.pkl", deps=[f"geo_sel_f{k}"]))
+-    T.append(dict(name="geo_eval", gpu=False, args=["evaluate.py"], env=env, out=RES / "E_report.json",
+-                  deps=[t["name"] for t in T if t["name"].startswith(("geo_final", "geo_abl"))]))
++                T.append(dict(name=f"gb_abl_{a}_f{k}", gpu=True, args=["train.py", "ablation", str(k), a], env=env,
++                              out=PREDS / f"abl_{a}_f{k}.pkl", deps=[f"gb_sel_f{k}"]))
++    T.append(dict(name="gb_eval", gpu=False, args=["evaluate.py"], env=env, out=RES / "E_report.json",
++                  deps=[t["name"] for t in T if t["name"].startswith(("gb_final", "gb_abl"))]))
+     return T
+ 
+ 
+@@ -153,7 +153,7 @@
+     dep = [f"--begin=now+{ONCE_MIN}minutes"] if begin else ([f"--dependency=afterany:{me}"] if me else [])
+     env = "--export=ALL,GEO_R_ONCE=1" if ONCE else "--export=ALL"
+     try:
+-        out = sh(["sbatch", "--parsable", "-p", CPU_P, "-J", "geo_rlaunch", "--time=48:00:00", "--cpus-per-task=1",
++        out = sh(["sbatch", "--parsable", "-p", CPU_P, "-J", "gb_rlaunch", "--time=48:00:00", "--cpus-per-task=1",
+                   "--mem=2G", f"--output={LOGS}/%x_%j.out", env, *dep, "--wrap", RELAUNCH])
+         print(f"[r_launch] relaunched as {out.strip()}", flush=True)
+         return True
+--- a/analysis/geo1b/jobs/gpu.slurm
++++ b/analysis/geo1b/jobs/gpu.slurm
+@@ -1,10 +1,10 @@
+ #!/bin/bash
+-#SBATCH --job-name=geo_gpu
++#SBATCH --job-name=gb_gpu
+ #SBATCH --time=48:00:00
+ #SBATCH --cpus-per-task=4
+ #SBATCH --mem=32G
+-#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/geo/logs/%x_%j.out
+-# submit from analysis/geo/:  sbatch -p gpu1,gpu2,gpu3,gpu4,gpu5,gpu6 --gres=gpu:1 jobs/gpu.slurm <script.py> <args...>
++#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/geo1b/logs/%x_%j.out
++# submit from analysis/geo1b/:  sbatch -p gpu1,gpu2,gpu3,gpu4,gpu5,gpu6 --gres=gpu:1 jobs/gpu.slurm <script.py> <args...>
+ # CPU-only use (select / evaluate):  sbatch -p <cpu partition> jobs/gpu.slurm <script.py> <args...>
+ set -uo pipefail
+ cd "${SLURM_SUBMIT_DIR:?}" || exit 2
+@@ -14,9 +14,9 @@
+ [ -f "$ENV/.d1fu2_env_ok" ] || { echo "STOP: env_d1fu2 not built ($ENV/.d1fu2_env_ok missing)"; exit 2; }
+ export PY=$ENV/bin/python PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONWARNINGS=ignore
+ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+-export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo D0G2_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/d0_g2
++export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo1b D0G2_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/d0_g2
+ gpu=$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+-echo "[geo_gpu] host=$(hostname) job=${SLURM_JOB_ID:-?} git=$(git rev-parse --short HEAD 2>/dev/null)" \
++echo "[gb_gpu] host=$(hostname) job=${SLURM_JOB_ID:-?} git=$(git rev-parse --short HEAD 2>/dev/null)" \
+      "$($PY --version 2>&1) gpu=${gpu:-none} $(date '+%F %T')"
+ "$PY" "$@"; rc=$?
+ echo "=== exit $rc $(date '+%F %T')"
+--- a/analysis/geo1b/jobs/cpu.slurm
++++ b/analysis/geo1b/jobs/cpu.slurm
+@@ -1,18 +1,18 @@
+ #!/bin/bash
+-#SBATCH --job-name=geo_cpu
++#SBATCH --job-name=gb_cpu
+ #SBATCH --time=48:00:00
+ #SBATCH --cpus-per-task=4
+ #SBATCH --mem=16G
+-#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/geo/logs/%x_%j.out
+-# submit from analysis/geo/:  sbatch [-p ... --cpus-per-task=N --mem=M -J name --array=...] jobs/cpu.slurm <script.py> <args...>
++#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/geo1b/logs/%x_%j.out
++# submit from analysis/geo1b/:  sbatch [-p ... --cpus-per-task=N --mem=M -J name --array=...] jobs/cpu.slurm <script.py> <args...>
+ # "@I" -> $SLURM_ARRAY_TASK_ID.  D1G2_SCRATCH: $D0G2 unless GEO_D1G2_SCRATCH is exported (only for check Z-1).
+ set -uo pipefail
+ cd "${SLURM_SUBMIT_DIR:?}" || exit 2
+ source /gpfs/tmp_cpu2/yeseo1ee/d1/d1_run/nurion/env.sh
+ PY="${D1_PY:?}"
+-export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo D0G2_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/d0_g2
++export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo1b D0G2_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/d0_g2
+ export D1G2_SCRATCH="${GEO_D1G2_SCRATCH:-$D0G2_SCRATCH}" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 D1G2_JOB_T0=$(date +%s)
+-echo "[geo_cpu] host=$(hostname) job=${SLURM_JOB_ID:-?} task=${SLURM_ARRAY_TASK_ID:-none} cpus=${SLURM_CPUS_PER_TASK:-?}" \
++echo "[gb_cpu] host=$(hostname) job=${SLURM_JOB_ID:-?} task=${SLURM_ARRAY_TASK_ID:-none} cpus=${SLURM_CPUS_PER_TASK:-?}" \
+      "git=$(git rev-parse --short HEAD 2>/dev/null) D1G2_SCRATCH=$D1G2_SCRATCH $($PY -V 2>&1) $(date '+%F %T')"
+ args=(); for a in "$@"; do args+=("${a//@I/${SLURM_ARRAY_TASK_ID:-0}}"); done
+ "$PY" "${args[@]}"; rc=$?
