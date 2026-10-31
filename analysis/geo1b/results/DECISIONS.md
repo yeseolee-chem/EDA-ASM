@@ -52,3 +52,12 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
   - 할당량 254 → 210/300 GB, 여유 약 90 GB.
   - 이제 G2c build는 명령서대로 byte copy로 해도 공간이 충분하다. 하드링크 이탈은 하지 않는다.
   - 삭제는 job 자리가 모두 차 있어, 돌고 있는 job(1054056) 할당 안에서 srun --overlap으로 나눠 실행했다(각 10분 안, 계산 노드).
+- **D0D1 (사용자 2026-10-31 "모든 데이터를 사용하게 바꿔서 학습해줘. 비교 모델은 필요없음. 그냥 D0+D1 모두 4개 모델로 학습해서 결과를 내는 것으로 해줘. geo1에서 사용된 모든 데이터를 가지고 최종까지 사용되도록 해줘")**: 읽기만 하는 조사 workflow(에이전트 5개, 기록 results/D0D1_design_investigation.json)의 추천 설계를 따른다. 비교 판정(GEO2.md 10절 geo 대 g2)은 하지 않는다.
+  - **D0 fold (기본값 적용, 추가 GPU 없음)**: D0 반응(5,260 − 겹침 5)에 fold 0–4를 준다. 명령서 GEO1B는 D0를 시험 fold로 두지 않는다고 했다. 이 규칙을 바꿔 GEO1b final_f{k}가 D0 fold k를 빼고 학습한 뒤 D1 fold k와 D0 fold k를 예측한다. 그래야 D0 보정 구조도 그 반응을 본 적 없는 모델에서 나온다. 같은 fold를 에너지 단계에도 쓴다.
+  - **D0 라벨**: labels_all.json(D1과 같은 정의·수준; c_ghost = bsse_shift_kcal). d1, d2, barrier는 LADDER Q 규칙(분자 key별 가장 낮은 기준 구조, 0.05 kcal/mol 초과 시 교체; refs_q.py)으로 다시 묶어 D1 cr2와 맞춘다. D0 Phase V(DFT 형태 탐색)는 하지 않는다(이탈 기록). 나머지 7개 타깃은 그대로 쓴다. 전하가 있는 260반응은 남긴다.
+  - **D0 짝**: dipole 분자별 묶음 안에서 anchor 트리를 만든다(regio·stereo 형제 → 형제 묶음 anchor → 묶음 anchor; 고립 dipole은 같은 dipolarophile 반응에 붙임). 같은 전하끼리만 잇고, 짝 하나는 한 fold 안에 둔다. 약 3,000–3,500짝으로 예상한다. D1 반응과 반응물이 같은 D0 반응(twin)은 그 D1 반응의 fold를 따른다.
+  - **에너지 학습**: F_pairs_cr2.csv(D1, 그대로)에 D0 짝을 더한다. 분할 T1D0: D1 목록은 FU2 T1과 똑같고, 다른 fold의 D0 짝은 학습에, fold k의 D0 짝은 시험에 넣는다. inner_val은 D1만이다. 4 모델 × 2 arm × 5 fold = 40 unit. 모델 코드, grid, 규칙은 바꾸지 않는다.
+  - **결과**: D1과 D0을 따로 보고하고 합치지 않는다. 모델·arm별, REP, REP8, ENS4, core(D0는 묶음) bootstrap CI, LADDER 목표(oi·cpcm para MAE ≤ 0.13).
+  - **상한 조정**: H 4,000코어시간(D0 HF 추가, 예상 약 3,300), M3 160 GPU시간.
+  - **한계(기록)**: 비교 모델이 없어 D0가 D1 정확도에 도움이 되는지는 잴 수 없다. D1 시험 core와 같은 유형의 D0 반응이 학습에 들어간다(데이터셋 간 전이, 라벨 누수 아님). D0 TS는 Gaussian, D1은 ORCA.
+  - **순서**: ① d0_labels.py, d0_pairs.py, GEO1b 패치(D0 fold, G2c 입력 경로, G2c 기준값)를 G2c build 전에 끝내고 검토한다 → ② G2c build 뒤 GEO1b D → U → R → E → ③ GEO2b(D0 포함 입력, T1D0 학습, 평가).
