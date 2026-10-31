@@ -1,0 +1,110 @@
+# GEO1b D0 라벨(LADDER Q 규칙) 결정 기록 (역할 LAB, analysis/geo1b/d0_labels.py; 설계 D0D1_design_investigation.json step 1)
+
+모든 분기는 추천안(사용자 0-user, D0D1). 줄 번호는 analysis/geo1b/d0_labels.py(CODE_VERSION geo1b-d0q-2) 기준. 검토 반영(rev 2)으로 바뀐 항목에는 (rev 2)를 붙였다. 이 역할은 코드만 고쳤고 계산·job 제출은 하지 않았다. 단, rev 2 작업 중 login node에서 아무 일도 하지 않는 python 명령을 두 번 실행했다(`python3 -c "print(1)"` 한 번, 빈 입력의 `python3 -` 한 번; 계산·파일 읽기·쓰기 없음). CLAUDE.md 규칙 위반으로 기록한다.
+
+- **L-reuse** (d0_labels.py:81-84, 212-351, 394-439, 713-758): refs_q.py는 import만 하고 고치거나 복사하지 않는다. 그대로 부르는 함수: mirror_min, _formula_smiles, bond_graph, fixed_state, stereo3d_sig, check_graphs, audit, choose_override, gate_qa, assemble(gate_qa·reassemble 안), reassemble, json_roundtrip, gates, audit_table. 다음 함수는 D0에 쓸 수 없다. D0 행에는 job_id·skeleton·dipole·ref_port가 없고, 경로가 D1_JOBS·D1-HF로 박혀 있기 때문이다: molecule_keys, check_level, cr_table, dev_counts, write_pairs/q6_report, hf_precheck, g_vs_e, port_check. 그중 molecule_keys와 check_level만 D0판(molecule_keys_d0, check_level_d0)으로 새로 썼다. 피할 수 없는 복사-수정이다. rev 2에서 D0 전용 보조 함수를 더했다: graph_minorities(보고용), smiles_graph·check_err_graphs(Q-2m), cross_cfg(보고용), per_reaction_digest(fingerprint).
+- **L-env** (jobs/d0lab.slurm; d0_labels.py:1-6): conda reactot에서 돈다(refs_q 결정 D1과 같음). jobs/cpu.slurm의 D1 venv에는 pyarrow가 없어 Q_keys_d0.parquet를 쓸 수 없다. 그래서 wrapper jobs/d0lab.slurm(48:00:00, 2코어, 16G, 로그 $GEO1B/logs)을 새로 만들었다.
+- **L-labels** (d0_labels.py:106, 630-646): GEO1b data.py가 읽는 worktree labels_all.json(GC.D0_LABELS)을 읽는다. Q-0 조건(하나라도 어긋나면 STOP):
+  - sha256 = 62c0e7845045…08753(조사 기록값, 전체 값 고정);
+  - main checkout 사본과 byte 단위로 같음;
+  - 5,265행, non-ok id = D0_EXCLUDE 5개;
+  - 어댑터 필드(job_id, ex1_kcal, ex2_kcal, cr)가 아직 없음.
+
+  PAIR(P-labels-all)도 같은 파일인지 확인하므로 양쪽에서 검사하는 셈이다.
+- **L-pop** (d0_labels.py:647-653): 대상 = status-ok 5,260행 전부. D-1 겹침 5개도 남긴다. 기준 구조 공급원이기 때문이고, 짝에서 빼는 일은 d0_pairs.py가 한다. E_min 모집단도 이 5,260행이다(D1 Q가 9,266 대상 전부를 쓴 것과 같다).
+- **L-jobid** (d0_labels.py:147-148, 651-652): refs_q 함수들이 row["job_id"]를 쓰므로 어댑터 job_id = D0G2_<rxn_id:04d>를 붙인다(d0_manifest·GEO2b 결합 라벨·D0_pairs.csv a_job과 같은 형식). 0을 채운 4자리이므로 refs_q.audit의 '동률이면 가장 작은 job_id'가 설계의 '가장 낮은 rxn_id'와 같다(rxn_id < 10000은 Q-0에서 확인). 출력 행에도 남긴다.
+- **L-dipole** (d0_labels.py:231-247): dipole 성분 = stereo_utils.dipole_backbone ring 규칙(d0_manifest dipole_smiles를 만든 규칙). 그 성분의 원소 조성은 role 기준 xyz의 조성과 같아야 한다.
+  - refs_q D3는 조성으로 먼저 정하고 ring 규칙은 교차 검사였다. D0에는 두 반응물의 조성이 같은 반응이 있을 수 있어 ring 규칙을 주 규칙으로 쓴다(개수는 keys.n_reactions_formula_ambiguous).
+  - 키를 만들 수 없는 반응은 refs_q처럼 STOP: ring 규칙 실패, 조성 불일치, 원자 수 불일치, alt 불일치.
+- **L-key-design** (d0_labels.py:252-256, 271): 설계 키 key_design = '<kind>:' + mirror_min(full_dataset.csv 반응물 SMILES, atom map 제거) + '|alt'(rel 파일이 *_alt.xyz일 때). alt 파일은 dipole에만 허용하고, label alt_used와 일치해야 한다(아니면 STOP).
+- **L-key-cfg** (rev 2; d0_labels.py:198-209, 261-266, 269, 272, 276-277): 최종 키에 '|cfg:<상태>'를 붙이는 것은 *_alt.xyz dipole 기준 구조뿐이다.
+  - 문제(rev 1과 같음): Coley 규칙(make_reference.coley_port 5-7단계)은 회전이 막힌(constrained) dipole이면 에너지와 상관없이 TS 상태의 alt를 쓴다(RMSD > 0.05 Å). 그래서 같은 분자의 '|alt' 기준 구조끼리도 고정 상태(syn/anti, W/U/S)가 다를 수 있다. '|alt'만으로 묶으면 다른 상태의 더 낮은 에너지로 바꿔 넣게 된다. D1은 constrained 기준 구조에만 '|fixed:' 상태를 넣어 이를 막았다(refs_q.py:561-572).
+  - rev 1은 모든 dipole(alt 아님 포함)에 cfg를 붙였다. 검토 finding 2: D1은 unconstrained dipole의 rotamer를 한 키로 묶는데 rev 1은 나눠, D0 d1·d2·barrier가 D1 cr2와 다른 기준 규칙을 따랐다.
+  - rev 2: D1 '|fixed'가 붙는 자리(TS 상태 기준 구조)에 대응하는 D0 표시는 alt 파일뿐이므로 cfg를 alt에만 붙인다(검토 선택지 (2)). alt가 아닌 기준 구조는 D1 unconstrained처럼 rotamer를 넘어 묶인다. D0에는 rotatable 정보가 없어 alt에서는 추적 이면각 전부를 쓴다(alt끼리는 D1보다 조금 보수적). 이름은 refs_q.fixed_state(WL hash 기준 정규 이름), sp 중심 '?' 이면각은 '?'(d0_labels.py:208).
+  - 남는 위험(한계): Coley가 원래 기준 구조를 그대로 쓴 constrained dipole(alt RMSD ≤ 0.05 Å라 alt 파일 없음)은 D1이면 '|fixed'를 받지만 D0에서는 구별할 수 없어, 같은 SMILES의 다른 상태와 묶일 수 있다. 그 상한을 보고서 audit.nonalt_dipole_replacements_across_cfg(alt가 아닌 dipole 교체 가운데 공급원의 cfg 상태가 다른 수·크기·예시, d0_labels.py:478-494, 722)로 센다. 이중 결합 E/Z(예: nitrone C=N)는 s3d가 따로 나눈다.
+  - cfg는 모든 dipole에서 계산해 cfg_state·cfg_error 열에 남긴다(보고·비교용). alt가 아닌 기준 구조의 cfg 실패는 키에 영향이 없다(cfg_error만 채움).
+- **L-key-s3d** (rev 2 근거 보강; d0_labels.py:267-268, 272): 모든 기준 구조 키에 '|s3d:<refs_q.stereo3d_sig>'를 붙인다. stereo3d_sig는 기준 구조 좌표에서 RDKit이 읽은 입체이고, 거울상은 합친다.
+  - 이유: 설계 키는 'canonical isomeric SMILES, enantiomers merged'이고 D1 SMILES는 입체가 모두 정해져 있다. D0 반응물 SMILES에는 사면체 입체 표기가 하나도 없고('@' 0개), E/Z 표기도 일부 행에만 있다('/'·'\'가 있는 행 1,201개). 그래서 같은 SMILES의 기준 구조가 서로 다른 입체이성질체일 수 있고, 좌표에서 읽은 입체가 설계의 'isomeric' 뜻을 D0에서 되살린다(검토 finding 2의 선택지 (1)·(2) 모두 s3d는 유지).
+  - D1에서는 이 서명이 D11(진단만)이었다. D1 SMILES가 이미 입체를 담았기 때문이다.
+- **L-key-decision** (rev 2; d0_labels.py:12-28, 117-119; DECISIONS.md D0D1): 최종 키 = '<kind>:<SMILES>' + '|alt' + '|cfg:'(alt만) + '|s3d:'. 검토 finding 2의 선택지 (2)를 추천안으로 골랐다.
+  - (1)(설계 키 + s3d)은 constrained alt끼리 상태가 다른 교체를 허용해 D1 '|fixed' 규칙을 어긴다.
+  - (3)(rev 1 키 유지)은 alt가 아닌 dipole의 rotamer 묶음을 막아 D1 unconstrained 규칙을 어긴다.
+  - (2)는 D1이 상태를 키에 넣는 곳(TS 상태 기준 구조)에만 넣으므로 D1 cr2 규칙에 가장 가깝다.
+  - DECISIONS.md D0D1에 한 줄로 남겼다. 이 규칙으로 d0_labels.py를 처음 돌린 뒤 d0_pairs.py build·GEO1b D를 한다(RUNBOOK_d0.md:23-24). 아직 어떤 출력도 없다($GEO1B/d0 없음, 2026-10-31 확인).
+- **L-key-compare** (rev 2; d0_labels.py:456-494, 719-727, 763-770): 다음을 보고만 한다(라벨에는 쓰지 않음).
+  - design_key_comparison: 설계 키 글자 그대로.
+  - cfg_all_key_comparison: 모든 dipole에 cfg를 붙인 rev 1 키(key_cfg_all).
+  - audit.nonalt_dipole_replacements_across_cfg(L-key-cfg).
+  - 내용: 교체 수(n_replaced_design, n_replaced_cfg_all 대 n_replaced_final), 최종 키 경계를 넘는 교체의 수·종류·크기, 예시. Q_keys_d0에는 src_design_job·dev_design_kcal·src_cfg_all_job·dev_cfg_all_kcal 열을 더한다.
+  - 이 수치가 D1 cr2와의 차이(이탈)로 GEO2b PREREG에 옮겨 적을 값이다.
+- **L-err** (rev 2; d0_labels.py:107, 268-272, 334-351, 669-674, 680, 745-748): 최종 키 상태(alt의 cfg, s3d)를 계산하지 못한 기준 구조는 STOP하지 않는다. 대신 혼자 쓰는 키 '<key_design>|err:<job_id>'를 준다. 이 키는 교체되지 않고 공급원도 되지 않으므로 Coley 기준 구조가 그대로 남는다. 이런 기준 구조가 전체의 2 %를 넘으면 STOP(Q-2s). D1 Q에서는 stereo3d 오류가 0건이었다. rev 2에서 더한 것:
+  - Q-2m: 그런 기준 구조의 결합 그래프(refs_q.bond_graph)가 그 SMILES 그래프(RDKit AddHs, 원소 이름표)와 동형이어야 한다. 아니면 STOP. 이유(검토 finding 1): 상태 계산 실패는 대개 template_match가 좌표의 연결이 SMILES와 다르다고 본 경우라 다른 분자(예: 고리가 닫힌 ylide)일 수 있다. 같은 SMILES의 다른 기준 구조가 없으면 Q-2p도 이를 잡지 못한다.
+  - 행 표시: labels_d0_q.json cr.unkeyed = |err 키를 가진 조각 목록(투명성; cr 안이라 Q-b에 걸리지 않음). Q-2m을 통과했으므로 그 기준 구조는 SMILES 분자 그대로이고, Coley 규칙 그대로의 기준 구조라 짝에서 빼지 않는다.
+- **L-q2** (rev 2; d0_labels.py:290-317, 675-679, 700-702): Q-2(최종 키)와 Q-2p(SMILES 키 key_plain)를 모든 기준 구조에 refs_q.check_graphs로 돌린다. 하나라도 다르면 STOP(설계 step 1, refs_q.py:1236-1240).
+  - rev 1의 '|iso:' 격리는 지웠다. rev 1은 같은 SMILES 안의 소수 결합 그래프 class를 singleton으로 두어 Coley 에너지를 남겼고, 상한은 0.5 %(Q-2i)였다.
+  - 검토 finding 1의 지적: 격리된 기준 구조가 labels_d0_q.json에 짝 제외 표시 없이 D0 짝으로 흘러간다. ex 최저값에 남아 건강한 행을 떨어뜨릴 수 있다. 격리 뒤의 Q-2/Q-2p는 늘 통과해 아무 뜻이 없다.
+  - 선택지 (a)(STOP)를 골랐다. 설계·refs_q 의미 그대로이기 때문이다. (b)(행 표시 + d0_pairs ok·ex 수정)는 PAIR 역할 파일의 행 규칙과 공유 인터페이스까지 바꿔야 한다.
+  - STOP이면 gates.Q-2p.graph_classes(다수·소수 class, 대표 기준 구조, 소수 목록)가 결정에 필요한 목록이다. graph_minorities는 이 보고용으로만 남겼다.
+- **L-level** (d0_labels.py:394-418, 703-708): refs_q D5(키 안에서 계산 수준·전하·좌표가 같아야 함)를 D0 라벨 입력 label_true/work/inputs/rxn_NNNN/frag{k}_rel.inp에 적용한다. D1이 쓴 D1-HF orig 사본에 해당하는 파일이다. 입력이 하나라도 없으면 STOP한다. D1은 누락을 세기만 했지만, D0는 5,265개 폴더가 모두 있다.
+- **L-prov** (d0_labels.py:419-439, 709-711): 새 검사 Q-2e: frag{k}_rel.out이 정상 종료했고, 그 FINAL SINGLE POINT ENERGY가 라벨 e_frag{k}_rel_eh와 정확히 같아야 한다.
+  - 근거: SMD_RELABEL.md에 따르면 frag*_rel은 다시 돌리지 않았으므로 라벨 에너지의 출처가 이 입력이다. 이 검사가 있어야 L-level 검사가 E_min이 묶는 에너지에도 적용된다.
+  - rxn 5에서 손으로 확인했다(-228.921080368852).
+- **L-refinp** (d0_labels.py:716-718): refs_q.choose_override는 ref_inp에 D1-HF 사본 경로를 적는다. D0 라벨 입력 경로로 바꿔 적는다. 기록용 문자열이고 계산에는 쓰지 않는다. src 이름은 'Q:label_min_d0'.
+- **L-ex** (d0_labels.py:111, 728-732): ex1_kcal·ex2_kcal = (Coley 기준 에너지 − 같은 SMILES(key_plain)의 최저값) × KCAL을 Q 전에 모든 행에 넣는다. build_rowattr 규칙이다. Q 전후 값이 같으므로 Q-b에 걸리지 않는다. d0_pairs.py는 같은 규칙으로 직접 계산하므로(P-ex), 이 필드는 교차 확인용이다. rev 2: Q-2p가 STOP이므로 같은 SMILES 안에 결합 그래프가 다른 기준 구조가 남지 않고, 최저값에 다른 분자가 끼지 않는다(finding 1의 ex 지적).
+- **L-cr** (rev 2; d0_labels.py:86, 744-748): reassemble이 만드는 'cr'(tag 'q_d0', refs_q version, key1/key2, changed, 공급원, orig)에 code = geo1b-d0q-2, key_design1/2, unkeyed(L-err)를 더한다. cr 안에만 넣으므로 Q-b(다른 필드는 모두 같아야 함)에 걸리지 않는다.
+- **L-constrained** (rev 2; d0_labels.py:57-58, 126-127, 276-277): Q_keys_d0.parquet의 'constrained' 열 = alt(Coley TS 상태 기준 구조).
+  - rev 2부터 키에 이면각 상태(|cfg)를 갖는 것은 alt뿐이다. 그래서 constrained = '키가 이면각 상태를 가짐'이고, D1 'constrained'가 키에서 하는 역할(|fixed)과 같다.
+  - 판정 방법은 다르다. D1은 xtb 회전 scan, D0는 Coley alt 파일이다.
+  - fixed_state = 키에 들어간 상태(alt만), cfg_state = 모든 dipole의 상태(보고용), stereo3d = s3d 서명.
+  - GEO2b P 단계(inputs.refs_min, P20)는 키 문자열과 alt·fixed_state·cfg_state·stereo3d 열을 읽어야 하고, constrained를 D1 rotatability 의미로 쓰면 안 된다(RUNBOOK_d0.md:37-41; 검토 finding 9).
+- **L-namespace** (rev 2; d0_labels.py:55-56, 128-129, 272; 검토 finding 9): 키는 D0 안에서만 만든다(설계 'Keys are built within D0').
+  - 모든 D0 키에는 '|s3d:' 또는 '|err:'가 있고, D1 키('<kind>:<SMILES>'[|fixed:…], refs_q.py:572)에는 없으므로 둘은 겹칠 수 없다.
+  - 따라서 설계 step 8의 '$LAD/Q_keys.parquet과 Q_keys_d0.parquet의 합집합'은 그냥 이어 붙이기이고, refs='min'은 데이터셋마다 따로다. D0와 D1이 같은 분자(dipole 12개, dipolarophile 27개)를 공유해도 기준 구조를 섞지 않는다.
+  - 기준 구조의 출처(최적화 프로그램)도 다르다(D0 Coley Gaussian 16, D1 ORCA; 설계 risks). Q_keys_d0의 dataset 열 = 'D0'.
+  - 데이터셋을 넘는 공유는 설계가 고르지 않았다. 원하면 따로 키를 정해야 한다. DECISIONS.md D0D1에 남겼다.
+- **L-outputs** (d0_labels.py:96-102, 151-176, 762-784): 출력은 $GEO1B/d0와 analysis/geo1b/results 아래에만 원자적으로 쓴다(그 밖이면 STOP).
+  - 설계의 세 출력 외에 $GEO1B/d0/Q_audit_d0.csv(refs_q.audit_table, 키별 표)를 더 쓴다.
+  - labels_d0_q.json = labels_all 필드 전부 + job_id, ex1_kcal, ex2_kcal + cr. 공유 인터페이스의 상위 집합이다.
+- **L-stale** (d0_labels.py:563-616, 779-782): refs_q D14와 같은 방식이다.
+  - 다시 계산할 때는 먼저 보고서를 all_pass false·running true로 쓰고, 이전 출력을 .stale로 옮긴다.
+  - STOP이면 그때까지 쓴 출력을 .stale로 옮긴다. Q-a .. Q-e 실패면 labels_d0_q.REJECTED.json도 남긴다.
+  - 통과하면 .stale을 지운다.
+  - fingerprint(L-fingerprint)가 같고 출력 sha256도 맞으면 'up to date'(exit 0).
+- **L-fingerprint** (rev 2; d0_labels.py:527-560, 574-583; 검토 finding 3): fingerprint = 다음 파일의 sha256 + 반응별 파일 digest.
+  - 파일: labels_all(worktree), full_dataset.csv, 이 파일, geo_common, refs_q, lad_common, d1pair_common, stage3_parse·_common(D1 사본), stereo_utils, fragmenter, hf_common.
+  - rev 2에서 더한 파일: main checkout labels_all.json(Q-0 'main 사본과 같음'), main checkout stage3_parse.py(assembly_same_as_d0_build), d0_manifest. 없으면 None.
+  - 반응별 파일: Coley 기준 xyz(rel{k}_file)와 label_true/work/inputs/rxn_NNNN/frag{k}_rel.inp·.out, status-ok 5,260행, 약 31.5k개. 이것들의 (경로, 크기, mtime_ns) digest를 넣는다. 650 MB를 매번 sha256하는 대신 stat를 쓴다. 내용이 같아도 mtime이 바뀌면 다시 계산하므로 안전한 쪽이다. 빠진 파일은 'missing'으로 digest에 들어가고, 실제 판정은 Q-2l이 한다.
+  - 이유: rev 1은 refs_q 선례대로 반응별 파일을 뺐다. 그러면 frag_rel.out 하나를 다시 돌리거나 main 사본이 바뀌어도 'up to date'(exit 0)가 되어 Q-0·Q-2e·Q-2l을 건너뛴다.
+- **L-assembly** (d0_labels.py:621-628): 재조립은 refs_q.stage3()가 불러오는 D1 코드 사본의 stage3_parse.py로 한다. D0 라벨을 만든 main checkout 사본, worktree 사본과 sha256이 같다(413bd2a7…, 세 곳 확인). 보고서 found.assembly_same_as_d0_build에 남기고, Q-a가 5,260행 재현을 증명한다.
+- **L-manifest** (d0_labels.py:354-383, 699): /gpfs/tmp_cpu2/yeseo1ee/g2c/d0_r1/d0_manifest.csv의 job_id와 dipole/dipolarophile SMILES를 이 키와 비교한다. 보고만 하고, 실패해도 멈추지 않는다. d0_pairs.py가 manifest SMILES로 component를 만들기 때문에 두 결과가 같은지 보여 주려는 것이다.
+- **L-d1only** (d0_labels.py:134): D1 입력에만 있는 단계는 D0에서 하지 않는다: hf_precheck, g_vs_e, ledger·port 검사, D'' 보고, Q-6 짝 dd. D0 짝 dd는 d0_pairs.py가 labels_d0_q.json으로 계산한다.
+- **L-noV** (d0_labels.py:135): 설계대로 D0 Phase V(DFT 형태 탐색)는 하지 않는다. labels_d0_q는 Q만 적용한 결과이고, D1 cr2(Q+V)와의 차이는 이탈로 남는다(DECISIONS.md D0D1).
+- **L-hyg** (d0_labels.py:512-523): R6 hygiene과 ex > 20은 여기서 적용하지 않고 보고만 한다: Q 전후 실패 수, 상태가 바뀐 rxn_id. 적용은 d0_pairs.py가 한다(P-hyg, P-ok).
+- **L-probe** (rev 2; d0_labels.py:787-801): 파일을 쓰지 않는 smoke test 'probe <rxn_id ...>'. rev 2에서 cfg_state·cfg_error·key_cfg_all 열을 더했다. RUNBOOK 예시의 rxn_id:
+  - 0, 1: nitrile ylide(추적할 이면각 없음);
+  - 2: nitrile oxide;
+  - 5: alt carbonyl oxide;
+  - 3312: charge2 +1;
+  - 3323: charge2 −2.
+- **L-pairs-ok0** (rev 2; d0_pairs.py:52-54, 361-370, 474-475; RUNBOOK_d0.md:51-52; 검토 finding 5): d0_pairs.py는 PAIR 역할 파일이지만 finding 5의 수정 위치라 이 부분만 고쳤다(PAIR가 P-g2-gate·P-u9b에서 data.py·tests.py를 고친 것과 같은 방식).
+  - 문제: pr_nog2(leaf가 붙을 component 선택 = component 구성 = fold 균형)가 Q 라벨 hygiene이 든 ok를 읽었다. 그래서 d0_labels.py를 다시 돌려 labels_d0_q.json이 바뀌면 fold가 바뀌어 frozen-fold STOP(P-frozen)에 걸리거나 --force가 필요했다.
+  - 수정: R[rid]['ok0'] = 같은 행 규칙(flag_async false, ex1·ex2 ≤ 20, hygiene)을 Coley 라벨(labels_all d1/d2)로 판정한 값이다. pr_nog2만 ok0을 쓴다.
+  - 짝의 hyg·ok 열과 anchor 우선순위 pr는 그대로 Q 라벨이다(P-hyg, P-ok, P-anchor-ok). anchor는 짝만 바꾸고 fold는 바꾸지 않는다.
+  - 확인: 다른 fold 입력(전하, manifest 반응물 SMILES, twin, 구조상 짝 수)은 Q 라벨을 읽지 않는다. 전하는 G-2에서 labels_all과 같음을 검사한다.
+  - CODE_VERSION은 바꾸지 않았다. 아직 출력이 없기 때문이다.
+
+## 검토 결과 반영 (rev 2, 2026-10-31)
+
+- finding 1 (major, d0_labels.py:567 Q-2 격리): 확인함. 수정: L-q2(STOP 복원, 선택지 (a)), L-err(Q-2m, cr.unkeyed), L-ex. Q-2/Q-2p는 이제 격리 없이 전체 기준 구조에서 판정한다.
+- finding 2 (major, d0_labels.py:252 키가 설계·D1 cr2와 다름): 확인함. 수정: L-key-cfg, L-key-s3d, L-key-decision(선택지 (2)), L-key-compare. DECISIONS.md D0D1에 기록.
+- finding 3 (minor, d0_labels.py:451 fingerprint 누락): 확인함. 수정: L-fingerprint.
+- finding 4·7 (minor, d0_pairs.py:215-216 읽는 쪽 sha256 검사 없음): 같은 문제이고, 검토한 판에서는 맞았다. PAIR rev 2가 이미 고쳤다(d0_pairs.py:251-262 P-Q-gate). Q_d0_report.json outputs에서 labels_d0_q.json의 sha256을 파일 이름으로 찾아 지금 파일과 비교하고, 다르면 STOP한다. LAB이 쓰는 outputs 형식 {절대 경로: sha256 문자열}(d0_labels.py:775)과 맞음을 확인했다. LAB은 더 고치지 않았다(거절: 이미 반영됨).
+- finding 5 (minor, d0_pairs.py:398 fold가 Q 라벨에 의존): 확인함. 수정: L-pairs-ok0.
+- finding 6 (minor, tests.py:168 U-8b가 자기 자신과 비교): 맞는 지적이다. GB rev 2가 같은 시각에 고쳤다(DECISIONS_GB GB-U8r: tests.py:154-211에 단일 run D1-G2 TS로 GEO1B.md 3-2 값을 재현하는 독립 회귀, G2c 'orig' 입력 = 단일 run 좌표 검사, geo_common.py:42, 62-70 D1_G2_SINGLE_RUN·G2RAW_SINGLE_RUN_REF). 같은 파일을 겹쳐 고치지 않으려고 LAB은 고치지 않았다(거절: 담당 역할이 이미 반영).
+- finding 8 (minor, RUNBOOK에 `data.py baseline` 명령 없음): 확인함. GB rev 2(DECISIONS_GB.md 검토 반영)는 이 항목을 다루지 않았고 RUNBOOK_d0.md는 LAB 담당 파일이라 LAB이 고쳤다. 수정: L-runbook (아래).
+- finding 9 (minor, Q_keys_d0 키 이름공간·constrained 의미): 확인함. 수정: L-namespace, L-constrained, RUNBOOK_d0.md:37-41, DECISIONS.md D0D1.
+- **L-runbook** (rev 2; RUNBOOK_d0.md:20-41, 51-52, 73-95): LAB 절을 새 key 규칙·게이트(Q-2/Q-2p STOP, Q-2s, Q-2m)·fingerprint·GEO2b P용 key 표 설명으로 고쳤다. PAIR 절에는 fold가 Q 라벨에 의존하지 않는다는 한 줄(L-pairs-ok0)만 고쳤다. 새 절 'GEO1b D -> baseline -> U'를 더했다. 내용은 다음과 같다.
+  - 필수 순서(DECISIONS_GB GB-order 그대로).
+  - `jobs/cpu.slurm data.py`, 그 뒤 afterok로 `jobs/cpu.slurm data.py baseline`, 그리고 `jobs/gpu.slurm tests.py synth`, baseline 뒤 afterok로 `tests.py data`.
+  - 통과 기준. baseline이 없거나 records sha가 다르면 U-8b와 E1이 멈춘다는 점과, 단일 run root가 있어야 한다는 점(GB-U8r).
+  - 명령과 파티션 형식은 GEO1B.md 3-1/3-2와 CLAUDE.md(sinfo로 빈 파티션)를 따랐다. 코드는 바꾸지 않았다.

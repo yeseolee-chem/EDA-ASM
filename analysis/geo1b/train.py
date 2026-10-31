@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Phase R: GEO1b training (docs/specs/GEO1B.md 3; = analysis/geo/train.py except train_items: all G2, no G1, no ablation).
-  python train.py smoke <k> | tune <k> <cfg> | select <k> | final <k> <seed>"""
+"""Phase R: GEO1b training (docs/specs/GEO1B.md 3; = analysis/geo/train.py except train_items: all G2, no G1, no ablation;
+split: D0 fold k held out of fold k and predicted by final_f{k}, decision D0D1).
+  python train.py smoke <k> | tune <k> <cfg> | select <k> | final <k> <seed>
+final_f{k}_s{seed}.pkl = uid -> predicted TS for every G2 input of D1 fold k and of D0 fold k."""
 from __future__ import annotations
 
 import json
@@ -50,12 +52,21 @@ def smoothed_best(hist, w=11):
     return dict(ep=int(i + w // 2), key=[float(p[i]), -float(m[i])], window=w)
 
 
+def is_d0(r):
+    """a D0 record that may enter a set (the 5 D-1 overlaps, fold -9, never do)."""
+    return r["src"] == "D0" and not r["overlap"]
+
+
 def split(recs, k):
+    """fold k (decision D0D1, design step 3): test = D1 fold k + D0 fold k ('final' predicts both); inner validation =
+    D1 fold (k+1) % 5 only (select stays on the D1 para pairs); train = the other D1 folds (fold -1 included) + every
+    D0 of a fold != k. tune trains on 'train', final on 'train' + inner validation, so D0 fold k is in neither."""
+    if any(r["fold"] not in (0, 1, 2, 3, 4) for r in recs if is_d0(r)):
+        raise SystemExit("STOP: a D0 record has no fold 0-4 (records built before d0_folds.csv): rerun data.py")
     inner = (k + 1) % 5
-    test = [r for r in recs if r["src"] == "D1" and r["fold"] == k]
+    test = [r for r in recs if (r["src"] == "D1" or is_d0(r)) and r["fold"] == k]
     ival = [r for r in recs if r["src"] == "D1" and r["fold"] == inner]
-    train = [r for r in recs if (r["src"] == "D1" and r["fold"] not in (k, inner))
-             or (r["src"] == "D0" and not r["overlap"])]
+    train = [r for r in recs if (r["src"] == "D1" and r["fold"] not in (k, inner)) or (is_d0(r) and r["fold"] != k)]
     return train, ival, test
 
 

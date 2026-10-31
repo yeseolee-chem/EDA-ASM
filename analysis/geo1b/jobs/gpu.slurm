@@ -14,10 +14,11 @@ conda activate reactot
 [ -f "$ENV/.d1fu2_env_ok" ] || { echo "STOP: env_d1fu2 not built ($ENV/.d1fu2_env_ok missing)"; exit 2; }
 export PY=$ENV/bin/python PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONWARNINGS=ignore
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
-export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo1b D0G2_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/d0_g2
+export GEO_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/geo1b G2C_SCRATCH=/gpfs/tmp_cpu2/yeseo1ee/g2c
+export D0G2_SCRATCH="${GEO_D0G2_SCRATCH:-/gpfs/tmp_cpu2/yeseo1ee/g2c/d0}"   # same test-only override as jobs/cpu.slurm
 gpu=$(command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
 echo "[gb_gpu] host=$(hostname) job=${SLURM_JOB_ID:-?} git=$(git rev-parse --short HEAD 2>/dev/null)" \
-     "$($PY --version 2>&1) gpu=${gpu:-none} $(date '+%F %T')"
+     "G2C_SCRATCH=$G2C_SCRATCH D0G2_SCRATCH=$D0G2_SCRATCH $($PY --version 2>&1) gpu=${gpu:-none} $(date '+%F %T')"
 "$PY" "$@"; rc=$?
 echo "=== exit $rc $(date '+%F %T')"
 exit $rc

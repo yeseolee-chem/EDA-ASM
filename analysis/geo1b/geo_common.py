@@ -1,4 +1,6 @@
-"""GEO1b common paths and helpers (docs/specs/GEO1B.md; copied from analysis/geo/geo_common.py, G1 removed). Python 3.9 compatible (D1 run env) and the GPU env (env_d1fu2)."""
+"""GEO1b common paths and helpers (docs/specs/GEO1B.md; copied from analysis/geo/geo_common.py, G1 removed). Python 3.9 compatible (D1 run env) and the GPU env (env_d1fu2).
+GEO1b decisions A-G2c (G2 inputs = the G2c build roots, G2-raw baseline from results/G2RAW_baseline.json) and D0D1
+(D0 folds from $GEO1B/d0/d0_folds.csv); judgment calls in results/DECISIONS_GB.md."""
 from __future__ import annotations
 
 import hashlib
@@ -16,11 +18,29 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 RES = HERE / "results"
 GEO = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo1b"))
-D0G2 = Path(os.environ.get("D0G2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/d0_g2"))
+
+# ---- G2 inputs = G2c (decision A-G2c, user 2026-10-30): the select_g2c.py build roots, read only. Each .done folder is
+# a byte copy of the chosen run (orig / r1 / r2) + g2c.json {rxn_id, src, chosen, source, energies_eh, rule}.
+G2C = Path(os.environ.get("G2C_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/g2c"))                   # = select_g2c.G2C
+D0G2 = Path(os.environ.get("D0G2_SCRATCH", str(G2C / "d0")))                               # D0 G2 root = $G2C/d0
+D0_G2_FINAL = D0G2 / "g2_final"                                                             # $G2C/d0/g2_final/<rid>
+D1_G2_FINAL = G2C / "d1" / "g2_final"                                                       # $G2C/d1/g2_final/<rid>
+G2C_RES = Path(os.environ.get("G2C_RESULTS", str(REPO.parent / "eda-asm-prediction-g2c" / "analysis" / "g2c"
+                                                  / "results")))                           # = select_g2c.RES
+G2C_SELECT = G2C_RES / "C_select.csv"                                                       # src, rxn_id, chosen, ...
+G2C_RUNS = ("orig", "r1", "r2")                                                             # = select_g2c.RUNS
+
+# ---- D0 folds (decision D0D1, design step 2: analysis/geo1b/d0_pairs.py build)
+D0_DIR = GEO / "d0"
+D0_FOLDS = D0_DIR / "d0_folds.csv"                         # rxn_id, component, fold (0-4; -9 overlap), twin_of, overlap
+D0_TWINS = D0_DIR / "d0_twins.csv"                         # every D0 reaction with a stereo-free D1 twin (P-twin-table)
+D0_PAIRS_REPORT = RES / "D0_pairs_report.json"             # stop false + outputs sha256 of d0_folds.csv (P-stop)
+D0_FOLD_OVERLAP = -9                                       # = d0_pairs.FOLD_OVERLAP (a D-1 overlap, in no set)
 
 # ---- D1 (read only)
-D1_G2_ROOT = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_g2")
-D1_G2_FINAL = D1_G2_ROOT / "g2_final"
+D1_G2_ROOT = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_g2")         # D1-G2 labels / meta only (its g2_final = G2c run 'orig')
+D1_G2_SINGLE_RUN = D1_G2_ROOT / "g2_final"                 # single-run D1-G2 TSs: tests.py U-8b regression ONLY
+#                                                            (GB-U8r), never a model input (inputs = D1_G2_FINAL, G2c)
 D1_LABELS_G2 = D1_G2_ROOT / "G" / "labels_d1_g2.json"      # 9,266 D1 label rows (prep_g.py inputs)
 D1_META_G2 = D1_G2_ROOT / "G" / "input_meta_d1_g2.csv"     # rxn_id, A_idx (frag1 = dipole, 0-based)
 D1_PAIR = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_pair")
@@ -39,7 +59,15 @@ D0_EXCLUDE = {3090, 3766, 4252, 3400, 5783}                # labels_all non-ok (
 
 RMSD_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/EDA-ASM/D1_build/validation/analysis")
 D1_FOLD_COUNTS = {0: 1874, 1: 1879, 2: 1503, 3: 1435, 4: 2195, -1: 380}   # C_compare rows per T1 fold (checked in I)
-G2RAW_PRIMARY = dict(n=1667, share=0.1338, median=0.0218)   # GEO1b: ALL para P_main pairs, test folds 0-4, G2 raw
+# G2-raw baseline (ALL para P_main pairs, D1 test folds 0-4, G2 input as is): no longer hard-coded (A-G2c). It is
+# computed from the records BEFORE training by `data.py baseline` and frozen in results/G2RAW_baseline.json, which
+# tests.py U-8b and evaluate.py read (load_g2raw_baseline). That file is a freeze, not an independent check (same code,
+# same records). The independent regression of metrics.py and of the record assembly is the single-run part of U-8b
+# (GB-U8r): the single-run D1-G2 TSs (D1_G2_SINGLE_RUN = GEO1's G2 input) placed on the same D1 test records must
+# reproduce the GEO1B.md 3-2 numbers below (= GEO1 analysis/geo/results E_rxn.csv 8,425 rows, E_pairs.csv para rows).
+G2RAW_BASELINE = RES / "G2RAW_baseline.json"
+G2RAW_SINGLE_RUN_REF = dict(n=1667, share=0.1338, median=0.0218, n_test=8425, g2="single-run D1-G2 (GEO1B.md 3-2)")
+G2RAW_TOL = dict(share=0.005, median=0.001)                # GEO1 U-8 tolerances (median in A); n, n_test exact
 ELEM = ["H", "B", "C", "N", "O", "F", "Si", "P", "S", "Cl", "As", "Se", "Br", "I"]   # type index = position
 TYPE = {e: i for i, e in enumerate(ELEM)}
 
@@ -158,11 +186,88 @@ def load_records():
         return _NumpyCompatUnpickler(f).load()
 
 
+def load_g2raw_baseline():
+    """results/G2RAW_baseline.json (data.py baseline; decision A-G2c), or None if it has not been computed."""
+    return json.loads(G2RAW_BASELINE.read_text()) if G2RAW_BASELINE.is_file() else None
+
+
+def load_d0_folds():
+    """$GEO1B/d0/d0_folds.csv (d0_pairs.py build) -> ({rxn_id: dict(component, fold, twin_of, overlap)}, problems).
+    Reader checks (DECISIONS_PAIR P-stop): D0_pairs_report.json has stop false and records the sha256 of this file;
+    overlap rows have fold -9 and no twin, every other row fold 0-4 and a component. A non-empty problem list = STOP."""
+    bad = []
+    if not D0_FOLDS.is_file():
+        return {}, [f"{D0_FOLDS} missing (run d0_pairs.py build)"]
+    try:
+        rep = json.loads(D0_PAIRS_REPORT.read_text())
+    except (OSError, ValueError) as e:
+        rep = {}
+        bad.append(f"{D0_PAIRS_REPORT} unreadable ({type(e).__name__})")
+    if rep.get("stop") is not False:
+        bad.append(f"{D0_PAIRS_REPORT}: stop = {rep.get('stop')!r} (must be false)")
+    outs = [v for k, v in (rep.get("outputs") or {}).items() if Path(k).name == D0_FOLDS.name]
+    if len(outs) != 1 or outs[0].get("sha256") != sha256(D0_FOLDS):
+        bad.append(f"{D0_FOLDS} sha256 differs from the one recorded in {D0_PAIRS_REPORT.name}")
+    F = pd.read_csv(D0_FOLDS, dtype=str, keep_default_na=False)
+    if list(F.columns) != ["rxn_id", "component", "fold", "twin_of", "overlap"]:
+        return {}, bad + [f"{D0_FOLDS}: columns {list(F.columns)}"]
+    out = {}
+    for r in F.itertuples(index=False):
+        rid, fold = int(r.rxn_id), int(r.fold)
+        twin = int(r.twin_of) if r.twin_of != "" else None
+        if r.overlap not in ("True", "False") or rid in out:
+            bad.append(f"d0_folds.csv rxn {rid}: overlap {r.overlap!r} or duplicate row")
+            continue
+        ov = r.overlap == "True"
+        if (ov and (fold != D0_FOLD_OVERLAP or twin is not None)) or \
+                (not ov and (fold not in (0, 1, 2, 3, 4) or r.component == "")):
+            bad.append(f"d0_folds.csv rxn {rid}: overlap {ov}, fold {fold}, component {r.component!r}, twin {twin}")
+        out[rid] = dict(component=r.component, fold=fold, twin_of=twin, overlap=ov)
+    return out, bad
+
+
+def load_d0_twins():
+    """$GEO1B/d0/d0_twins.csv (d0_pairs.py build; DECISIONS_PAIR P-twin-table) -> ({D0 rxn_id: dict(kind, twin_of, m1,
+    bind = T1 folds of the twins that set the D0 fold, ns = T1 folds of every stereo-free D1 twin)}, problems). Its
+    sha256 must be the one D0_pairs_report.json records under 'outputs' (same reader check as load_d0_folds). Moved
+    here from tests.py (GB-twin-m1) so data.py, tests.py U-9b and evaluate.py read it the same way."""
+    p = D0_TWINS
+    try:
+        rep = json.loads(D0_PAIRS_REPORT.read_text())
+    except (OSError, ValueError):
+        rep = {}
+    outs = [v for k, v in (rep.get("outputs") or {}).items() if Path(k).name == p.name]
+    if not p.is_file() or len(outs) != 1 or outs[0].get("sha256") != sha256(p):
+        return {}, [f"{p} missing or its sha256 differs from the one in {D0_PAIRS_REPORT.name}"]
+
+    def folds(s):                                   # '<D1 rxn_id>:<T1 fold> ...' -> {T1 fold}
+        return {int(x.rsplit(":", 1)[1]) for x in str(s).split()}
+    F = pd.read_csv(p, dtype=str, keep_default_na=False)
+    out, bad = {}, []
+    for r in F.itertuples(index=False):
+        rid = int(r.rxn_id)
+        if rid in out or r.m1 not in ("True", "False"):
+            bad.append(f"d0_twins.csv rxn {rid}: duplicate row or m1 {r.m1!r}")
+            continue
+        out[rid] = dict(kind=r.kind, twin_of=int(r.twin_of) if r.twin_of != "" else None, m1=r.m1 == "True",
+                        bind=folds(r.bind), ns=folds(r.twins_ns))
+    return out, bad
+
+
 def write_json(path, obj):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(obj, indent=1, default=lambda o: o.item() if hasattr(o, "item") else str(o)))
+    os.replace(tmp, path)
+
+
+def write_csv(df, path, **kw):
+    """df.to_csv(path, **kw) via <path>.<pid>.tmp + os.replace: a killed job never leaves a truncated csv (GB-atomic)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    df.to_csv(tmp, **kw)
     os.replace(tmp, path)
 
 
