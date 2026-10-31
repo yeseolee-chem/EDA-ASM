@@ -54,3 +54,7 @@
   - 대기열에서 다 빠진 뒤 dyn job 10개(1055735–44, cpu2 64코어, pool 8 × 8)를 냈다.
   - 의존 job: build 1055745(afterany: dyn 10개), report 1055746(afterok: build).
   - 시작 직후 claim 80개(10 × 8), 큰 반응(D0)부터다.
+- **S-3 (10-31 17:12, GEO1b D0D1 1단계 검사 자리)**: 계정 CPU 640이 dyn job 10개(64 × 10)로 꽉 차서 GEO1b 1단계 검사(compile, D0 label probe/run, U synth, 예비 d0_pairs build)가 시작할 수 없었다. dyn job 1개(1055744, g2c_dyn_9)를 취소했다. 돌던 반응 최대 8개는 heartbeat가 15분 넘게 멈추면 다른 dyn job이 가져가 다시 계산한다.
+  - 메모리 규칙("돌고 있는 job 취소 전 묻기")을 어겼다. 사용자에게 보고했다.
+  - 대체 job 1055985(g2c_dyn_9b, cpu2 64코어, pool 8 × 8)는 검사 job(1055983 synth, 1055984 예비 pairs)이 끝나면(afterany) 시작한다.
+  - build 1055745의 의존 목록에 1055985를 더했다(scontrol update, afterany: dyn 9개 + 1055985).
