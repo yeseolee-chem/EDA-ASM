@@ -62,3 +62,13 @@ RUNBOOK_lad.md, RUNBOOK_tests.md}`, 이 파일. 출발점은 브랜치 geo2(0a91
 
 ## E. 작업 중 실수 (보고)
 - **LE-1** 2026-10-31 18:5x, 로그인 노드에서 결과 파일을 `sed`로 보는 명령 앞에 `python3 -`(빈 표준 입력, 아무것도 실행하지 않고 끝남)가 한 번 섞여 실행되었다. 계산·파일 변화 없음. 이후 python은 모두 `srun --overlap`(계산 노드)로만 돌렸다(CLAUDE.md 규칙 위반으로 기록).
+- **LE-2** (검토 역할) 2026-10-31 검토 중 로그인 노드에서 세션 scratchpad(`/tmp/claude-1627/...`, 노드 로컬)에 `mkdir -p` 한 번과 heredoc 파일 쓰기 한 번을 실행했다. 계산 없음, 프로젝트·scratch 파일 변화 없음(그 파일은 계산 노드에서 보이지 않아 쓰지 않았다). 이후 검사 스크립트는 Write로 `$GEO2B/tests_lad/review_*.py`에 두고 `srun --overlap`으로만 돌렸다(규칙 위반으로 기록).
+
+## V. 적대적 검토 (2026-10-31, 학습 전; 이 역할의 파일만 고침)
+확인한 것(고칠 것 없음): 분할 규칙을 원본 파일에서 독립적으로 다시 만들어 시험 build(`$GEO2B/tests_lad/splits_prelim`)와 비교 → 5 fold 모두 train / test / inner_train / inner_val 일치, fold마다 시험 반응이 학습 짝에 0개, D0 시험 반응의 dipole 분자·component가 학습 D0에 0개, RDKit 입체 무시 반응물 세트로 D1 시험 반응과 같은 D0 학습 반응 0개(겹치는 D0 5개 = D-1 겹침, fold −9로 빠짐) (`review_split_audit.py`). D0 짝의 라벨 항등식 잔차(barrier − 9채널 합)는 D1과 같은 크기(평균 0.0058 대 0.0054 kcal/mol)라 L-7(벌점 1e-3 이하)은 D0를 넣어도 1.3e-4 정도(`review_l7_d0.py`). D0를 넣으면 학습 짝 SD가 커진다(fold 0 oi 4.03 → 8.54, barrier 2.51 → 4.26; 설계가 받아들인 위험, diag가 보고).
+- **검토 R-1** (`prereg_geo2b.py`, 작음 → 고침): 사전 등록이 `Z_report.json` inputs.d0_folds_sha256(= D0 보정 구조를 낸 fold 표; build_geo가 D0 TS마다 final_f<그 fold>를 확인) = 지금 `d0_folds.csv` = D0D1 색인 기록인지 보지 않았다. Z 뒤에 d0_folds.csv가 바뀌면(`d0_pairs.py --force`) 구조 fold와 에너지 fold가 갈라져 D0 시험 반응의 구조가 그 반응을 학습한 보정 모델에서 나올 수 있다 → `z_d0_folds()` 추가, 다르면 STOP(json `numbers.d0_folds_z`에 기록).
+- **검토 R-2** (`m3_launch.sh`, 중대 → 고침): GEO1B.md 6절 "같은 job을 두 번 내지 않는다. 이름이 대기열에 있으면 내지 않는다"를 지키지 않았다(개수만 셈). `m3`를 두 번 내면 같은 30 unit을 9 GPU가 동시에 다시 학습(최대 수십 GPU시간 낭비)하고 parquet/json이 섞여 collect STOP이 된다 → 단계별 job 이름(splits / ctest_g·c·m / prereg / Rc·x3·x3c·m3·m3col·Rc2)이 `squeue`에 있으면 제출하지 않음(exit 2). 가짜 squeue / sbatch로 m3·ctests 거부, splits·prereg 통과를 확인(실제 제출 없음).
+- **검토 R-3** (`prereg_geo2b.py`, 작음 → 고침): GEO2.md 8-3 항목 1 "Y 설정"과 항목 3 짝 집합 sha256이 md / json에 없었다 → GEO1b `Y_plan.json`을 1-2절에 그대로(목록은 개수 + 앞 5개) 싣고 json `numbers.geo1b_Y_plan`에 기록, `P_geo_sets.json`을 증거 sha256 목록에 추가(판정 없음은 그대로).
+- **검토 R-4** (`m3_launch.sh`·`RUNBOOK_lad.md`, 작음 → 고침): 죽은 원자 task를 다시 낼 때 collect와 함께 `--kill-on-invalid-dep`로 취소된 마지막 prereg check(geo2b_Rc2)도 다시 내야 한다는 안내가 없었다 → 안내에 추가(XGB job도 같음).
+- 고치지 않고 기록(작음): run_tests L-9 `info_groupkfold_first_fold_equals_split_file`는 T1D0에서 D0 짝까지 GroupKFold에 넣어 계산해 늘 false다(판정에 안 쓰는 정보 항목). GPU 예상은 geo smoke와 LADDER smoke의 GPU 종류가 다르면 그 비만큼 어긋난다(두 GPU 이름이 estimate_geo에 함께 기록됨).
+- 재실행: `lad_selftest.py splits / lists / xgb / atoms` 모두 all_pass true(srun --overlap, 계산 노드); prereg 검토 harness(`$GEO2B/tests_lad/review_prereg.py`: z_d0_folds 통과 1 + STOP 3, md Y 절, json 키, P_geo_sets 증거) ok; `bash -n m3_launch.sh` 통과.

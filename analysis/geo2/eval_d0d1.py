@@ -72,7 +72,7 @@ DECISIONS_E = {
            "training pairs), checked equal across the 4 SH models and zero for S (LADDER check_line); no input-table "
            "recomputation (the stage-3 LINE of the trainer is the reference); null = 0",
     "E-4": "D1 rows = every non-'d0' row (pair ids of S_folds.csv); D0 rows = ref_kind 'd0' (pair ids of D0_pairs.csv); "
-           "the two id sets must agree, unknown ids = STOP",
+           "the two id sets must agree, unknown ids = STOP; a D1 row fold must be its S_folds.csv fold_T1 (review R-5)",
     "E-5": "D0 evaluation pairs = predicted D0 pairs with D0_pairs.csv ok true (label eligibility); predicted not-ok pairs "
            "are counted and left out; the pair fold must equal d0_folds.csv of both ends (else STOP: leakage)",
     "E-6": "D0 CI = component bootstrap (component = D0_pairs.csv core 'D0/<component>', 2,000 resamples, seed 20261019; "
@@ -184,11 +184,12 @@ def rep_tables(U):
 
 
 # ---------------------------------------------------------------- predictions
-def check_predictions(G, d1_ids, d0_ids):
+def check_predictions(G, d1_ids, d0_ids, d1_fold=None):
     """Assumptions about L_predictions_geo.parquet (stage-3 collect with the T1D0 split; LADDER agent): columns
     include the LADDER PRED_COLS; rung 'geo' only; D1 rows = pair ids of S_folds.csv with ref_kind / pos of S_folds;
     D0 rows = ref_kind 'd0' (pos 'd0') with the pair ids D##### of D0_pairs.csv; fold = the outer fold 0-4 of the
-    unit; one row per pair x arm x model x target. -> (D1 rows, D0 rows) or STOP."""
+    unit (D1: = S_folds.csv fold_T1 when d1_fold {pair_id: fold_T1} is given: T1 test = fold_T1 == k, inputs.py /
+    FU2 evaluate D6); one row per pair x arm x model x target. -> (D1 rows, D0 rows) or STOP."""
     miss = [c for c in PRED_COLS if c not in G.columns]
     if miss:
         C.stop(f"{GEO_PRED.name} lacks columns {miss} (columns {list(G.columns)})")
@@ -205,6 +206,12 @@ def check_predictions(G, d1_ids, d0_ids):
                f"not in S_folds.csv (e.g. {G.pair_id[(is0 != in0) | (~is0 & ~in1)].head(3).tolist()})")
     if not set(G.fold) <= {0, 1, 2, 3, 4}:
         C.stop(f"prediction folds {sorted(set(G.fold))} (must be 0-4)")
+    if d1_fold is not None:                                      # the D1 test lists are not re-derived from the split
+        g1 = G[~is0]
+        wf = (g1.pair_id.map(d1_fold).fillna(-99).astype(int) != g1.fold).to_numpy()
+        if wf.any():
+            C.stop(f"{int(wf.sum())} D1 prediction rows whose fold != S_folds.csv fold_T1 (a T1 test pair in another "
+                   f"fold: leak or wrong split), e.g. {g1.pair_id[wf].head(3).tolist()}")
     if G.duplicated(["pair_id", "arm", "model", "target"]).any():
         C.stop("duplicated prediction rows (pair x arm x model x target)")
     if set(zip(G.arm, G.model)) != {(a, m) for a in ARMS for m in MODELS} or set(G.target) != set(TARGETS):
@@ -464,9 +471,10 @@ def evaluate(U, G, out, mode, extra=None):
     rep, rep8, rep_out, rep8_out = rep_tables(U)
     sys.path.insert(0, str(LAD_DIR))
     import evaluate as LE  # noqa: E402
-    S_ids = set(pd.read_csv(LE.S_FOLDS, usecols=["pair_id"], dtype={"pair_id": str}).pair_id)
+    Sf = pd.read_csv(LE.S_FOLDS, usecols=["pair_id", "fold_T1"], dtype={"pair_id": str})
+    S_ids = set(Sf.pair_id)
     D, folds, m1, d0_info = load_d0()
-    P1, P0 = check_predictions(G, S_ids, set(D.index))
+    P1, P0 = check_predictions(G, S_ids, set(D.index), dict(zip(Sf.pair_id, Sf.fold_T1.astype(int))))
     d1 = d1_part(P1, rep, rep8)
     fr0, d0chk = d0_frames(P0, D, folds, rep, rep8)
     D0M = d0_metrics(fr0, D, m1)
@@ -507,6 +515,17 @@ def evaluate(U, G, out, mode, extra=None):
     return report, dict(rep=rep, rep8=rep8, d1=d1, fr0=fr0, D0M=D0M, D=D, m1=m1, P0=P0, P1=P1, folds=folds)
 
 
+def _stop3(fn, *a, **k):
+    """eval_geo2 helpers STOP with SystemExit('STOP: ...') = exit 1; re-raised as exit 3 (this file's STOP code)."""
+    try:
+        return fn(*a, **k)
+    except SystemExit as e:
+        if isinstance(e.code, str) and e.code.startswith("STOP"):
+            print(e.code, file=sys.stderr, flush=True)
+            sys.exit(3)
+        raise
+
+
 def cmd_run():
     U = load_units_geo(GEO_UNITS)
     uj = unit_json_check(U)
@@ -525,7 +544,7 @@ def cmd_run():
                                                   labels=rep_geo.get("labels"), models=rep_geo.get("models")))
     _json(C.RES, "E_report.json", dict(mode="run", status="running (or killed / stopped): not a finished evaluation",
                                        started=time.strftime("%F %T")), {})    # the final report is written last
-    report, _ = evaluate(U, G, C.RES, "run", extra)
+    report, _ = _stop3(evaluate, U, G, C.RES, "run", extra)
     outputs = report["outputs"]
     _json(C.RES, "E_report.json", report, outputs)
     g = report["goal_d1"]["by_selection"]["REP8"]
@@ -688,6 +707,11 @@ def selftest_checks(res, report):
     ck["neg_ref_kind_mismatch_stops"] = _expect_stop(lambda: check_predictions(t4, S_ids, set(D.index)))
     t5 = G[~((G.arm == "SH") & (G.model == "TF"))]
     ck["neg_missing_model_stops"] = _expect_stop(lambda: check_predictions(t5, S_ids, set(D.index)))
+    Sf = pd.read_csv(LE.S_FOLDS, usecols=["pair_id", "fold_T1"], dtype={"pair_id": str})
+    t6 = G.copy()
+    t6.loc[t6.index[0], "fold"] = (int(t6.fold.iloc[0]) + 1) % 5          # a D1 row (P1 first) in another fold
+    ck["neg_d1_wrong_fold_stops"] = _expect_stop(lambda: check_predictions(
+        t6, S_ids, set(D.index), dict(zip(Sf.pair_id, Sf.fold_T1.astype(int)))))
     EV, _ = LE.fu2_eval()
     f1 = res["P1"]
     fr = LE.model_frames(f1, (RUNG,))
@@ -720,9 +744,9 @@ def cmd_selftest():
     G1 = L0[L0.rung == "g2"].assign(rung=RUNG)
     D, folds, m1, _ = load_d0()
     G = pd.concat([G1, synthetic_d0(D, folds)], ignore_index=True)
-    report, res = evaluate(U, G, OUT_SELFTEST, "selftest",
-                           dict(selftest="geo := LADDER g2 predictions / units (L_predictions.parquet, L_report.json, "
-                                         "L_xgb_report.json); D0 = synthetic predictions on the real ok D0 pairs"))
+    report, res = _stop3(evaluate, U, G, OUT_SELFTEST, "selftest",
+                         dict(selftest="geo := LADDER g2 predictions / units (L_predictions.parquet, L_report.json, "
+                                       "L_xgb_report.json); D0 = synthetic predictions on the real ok D0 pairs"))
     ck, det = selftest_checks(res, report)
     report.update(selftest=dict(checks=ck, detail=det, all_pass=all(ck.values()), seconds=time.time() - t0))
     _json(OUT_SELFTEST, "E_selftest.json", report, report["outputs"])

@@ -86,3 +86,19 @@ DECISIONS(GEO-*, F-*), `d0d1.py` DECISIONS(X-*), `inputs.py` 독스트링(PG-*);
 - C_select.csv(g2c 작업 트리)는 G2c build 뒤에 생김. 없으면 rel gate exit 2.
 - T_report가 bad token 행 하나에도 STOP하는 FU2 규칙 그대로(D0 포함 결합 집합에서 더 자주 걸릴 수 있음).
 - ext_used(layout) STOP 위험: 결합 집합에서 첫 실행 때 확인.
+
+## 10. 적대적 검토 (2026-10-31, 계산 전)
+- 검토 R-1(d0d1.py d0_pairs_state): 이 트리의 D0_pairs_report.json이 예비판(g2_source != g2c)인데 GEO1b 최종
+  d0_pairs.py가 D0_pairs.csv를 이미 다시 쓴 경우 sha256 불일치가 exit 3(STOP)이 되어 "병합 전 = exit 2" 규칙과 달랐다.
+  예비판 report의 sha256 불일치는 exit 2, 최종(g2c) report의 불일치만 exit 3으로 고쳤다. unit 시험 d0_pairs_state 추가.
+- 검토 R-2(RUNBOOK_feat.md): Wave B 작업 수를 16 + 1이 아니라 17 + 1 = 18(MaxSubmit 20에서 다른 대기 작업 2개까지)로
+  고쳤다. G 조각 바이트 예상(약 1.6 / 2 GB)과 F-1 STOP 예상(같은 feature 코드가 D1에서 1.14–1.42 %, D1-G2는 사용자가
+  받아들임 → p --accept=F-1은 사용자 결정)을 적었다. unit 시험 수 21.
+- 검토 R-3(feat_geo.py rel_gate): C_select.csv에 D1 geo 반응의 G2c 선택이 없으면(다른 파일·형식) orig 행이 0개가 되어
+  rel 에너지 gate가 비교 없이 통과했다. geo_final D1 폴더는 모두 G2c 폴더이므로 선택(orig/r1/r2)이 없는 D1 반응이 하나라도
+  있으면 STOP으로 했다(GEO-5 문구 갱신). unit 시험 rel_gate에 그 경우 추가.
+- 확인만(고치지 않음): 실제 D0-G2 orig 4,491 / G2c d0_r1 3,021 / d0_r2 3,034 폴더와 D1 G2c r1 5,547 / r2 4,413 / orig
+  8,616 폴더 모두 ts / rel 원소 순서 = 템플릿(라벨) 순서, rel 결합 그래프(formula + WL hash) = Q_keys(_d0) 값(P6b 통과).
+  D1-G2 HF 기준 입력의 rel 좌표 = 지금 d1_g2/g2_final rel 파일(17,232개 모두 같음) → rel gate는 같은 입력을 비교한다.
+  D0 HF 템플릿(3312 +1, 3323 −2): 'HF D3BJ 6-31G*', FRAG 문자열 2개, %pal nprocs 1, CPCM(water) + %cpcm smd, 전하·다중도·
+  (1)/(2) 태그 = 라벨. S-1 후보(3217, 3216, 3393)의 라벨 eda.out은 g_bond_ref·g2_sum 기준 안.

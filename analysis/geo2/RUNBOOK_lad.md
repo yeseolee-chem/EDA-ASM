@@ -9,7 +9,8 @@ split T1D0), `analysis/geo2/{d0d1_splits.py, prereg_geo2b.py, lad_selftest.py, m
 - Login node: only `sbatch` / `squeue` / `scancel` / `git` / reading files, and `bash analysis/geo2/m3_launch.sh <step>`
   (it calls only `squeue` and `sbatch`, no loop, nothing resident). No python on the login node.
 - MaxJobs 10 running, MaxSubmit 20 queued **tasks** (array elements count). `m3_launch.sh` refuses (exit 2) when
-  `squeue -u $USER -h -r | wc -l` + the step's tasks > 20. Every job: `--time=48:00:00`, partitions `cpu1,cpu2` /
+  `squeue -u $USER -h -r | wc -l` + the step's tasks > 20, and when a job name of the step is still running / pending
+  (GEO1B.md 6: never the same job twice; a dead task is resubmitted alone, M3 below). Every job: `--time=48:00:00`, partitions `cpu1,cpu2` /
   `gpu1,gpu2,gpu3,gpu5,gpu6` (SLURM takes the one with room), logs `/gpfs/tmp_cpu2/yeseo1ee/geo2b/logs` (`$GL`).
 - Exit codes of every python command: 0 done, 2 not ready (an input missing; nothing written), 3 STOP (read the log line
   `STOP: ...`, report, wait). Every step is atomic + idempotent: resubmitting the same line is safe.
@@ -116,8 +117,10 @@ sbatch --time=48:00:00 -p cpu1,cpu2 -J geo2b_Rc2 --cpus-per-task=1 --mem=4G --ou
   `busiest_slice_hours` gives the expected wall per worker count). `--workers 10` (one GNN per task) is possible only
   if nothing else runs (MaxJobs 10 incl. the XGB job).
 - Resubmit a dead atom task k: the JM line with `--array=<k>` and no `--dependency`, on the partition of the GPU type its
-  finished units ran on (log `[geo2b_gpu] ... gpu=<name>`); then the collect line with `--dependency=afterok:<new>:$JXC`.
-  A dead XGB job: the JX line without `--dependency`, then JXC, then collect.
+  finished units ran on (log `[geo2b_gpu] ... gpu=<name>`); then the collect line with `--dependency=afterok:<new>:$JXC`
+  and the final prereg check line (geo2b_Rc2) with `--dependency=afterok:<new collect>` (both were cancelled by
+  `--kill-on-invalid-dep`). A dead XGB job: the JX line without `--dependency`, then JXC, then collect, then Rc2.
+  Never rerun `m3_launch.sh m3` for this (it refuses while any geo2b_m3* / geo2b_x3* / geo2b_Rc* job is queued).
 - Collect outputs: `analysis/d1_ladder/results/L_predictions_geo.parquet` (rung geo only, PRED_COLS; D1 pairs and D0
   test pairs with ref_kind / pos 'd0', ids D#####), `L_val_geo.csv`, `L_report_geo.json` (`units.*.val_kcal_mae`,
   `geo2.n_test_pairs` D1 / D0), `L_xgb_report_geo.json` (XGB check). LADDER `L_predictions.parquet`, `L_report.json`,

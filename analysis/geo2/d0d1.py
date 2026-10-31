@@ -581,17 +581,20 @@ D0_PAIRS = GEO1B / "d0" / "D0_pairs.csv"
 def d0_pairs_state():
     """(D0_pairs_report.json, problems [(rc, why)]) for the files the P report reads: stop false and the sha256 of
     d0_folds.csv and D0_pairs.csv recorded under 'outputs' (keyed by absolute path; matched by file name, the
-    geo_common.load_d0_folds rule). g2_source != 'g2c' (the preliminary build before the G2c selection) = exit 2."""
+    geo_common.load_d0_folds rule). g2_source != 'g2c' (the preliminary build before the G2c selection) = exit 2; then a
+    sha256 difference is exit 2 too (review R-1: the final GEO1b d0_pairs.py build rewrote D0_pairs.csv and its report
+    is not merged into this tree yet), against a final report it is exit 3."""
     if not D0_PAIRS_REPORT.is_file():
         return {}, [(2, f"{D0_PAIRS_REPORT} missing")]
     rep = json.loads(D0_PAIRS_REPORT.read_text())
     pr = []
     if rep.get("stop") is not False:
         pr.append((3, f"{D0_PAIRS_REPORT.name}: stop {rep.get('stop')!r}"))
+    rc_sha = 3 if rep.get("g2_source") == "g2c" else 2
     for p in (D0_FOLDS, D0_PAIRS):
         outs = [v for k, v in (rep.get("outputs") or {}).items() if Path(k).name == p.name]
         if len(outs) != 1 or not p.is_file() or (outs[0] or {}).get("sha256") != C.sha256(p):
-            pr.append((3, f"{p} sha256 differs from {D0_PAIRS_REPORT.name} outputs"))
+            pr.append((rc_sha, f"{p} sha256 differs from {D0_PAIRS_REPORT.name} outputs"))
     if rep.get("g2_source") != "g2c":
         pr.append((2, f"{D0_PAIRS_REPORT.name}: g2_source {rep.get('g2_source')!r} (preliminary; rerun d0_pairs.py build "
                       f"after select_g2c.py build)"))

@@ -412,8 +412,15 @@ def cmd_unit():
                 fh.write(" ")
             rg2 = FG.rel_gate(E2, T4)
             assert rg2["n_mismatch"] == 2 and rg2["n_rel_bytes_differ"] == 1 and rg2["stop"], rg2
+            # review R-3: a D1 job without a G2c choice (C_select.csv not covering the geo base) is a STOP, not a pass
+            sel.write_text("src,rxn_id,chosen\n" + "".join(f"d1,{rid_of[T]},{c}\n" for T, c in chosen.items()
+                                                           if T != T4[3]))
+            rg3 = FG.rel_gate(E, T4)
+            assert rg3["stop"] and rg3["n_d1_no_g2c_choice"] == 1 and \
+                any("no G2c choice" in w for w in rg3["stop_reasons"]), rg3
             return dict(rg=dict(n_comparable=rg["n_comparable"], n_d1_not_orig=rg["n_d1_not_orig"]),
-                        rg2=dict(n_mismatch=rg2["n_mismatch"], stop=rg2["stop_reasons"]))
+                        rg2=dict(n_mismatch=rg2["n_mismatch"], stop=rg2["stop_reasons"]),
+                        rg3=dict(stop=rg3["stop_reasons"]))
         finally:
             FG.G2C_SELECT = save
             FG._LAB.clear()
@@ -446,6 +453,34 @@ def cmd_unit():
         return dict(n_replaced=rr["n_fragments_replaced"], keys_rxn0_rxn1_frag1_equal=k00 == k01,
                     replaced={f"{j}/{k}": p["src_job"] for (j, k), p in prov.items() if p["src"] == "min"})
 
+    def t_d0_pairs_state():
+        """review R-1: a preliminary D0_pairs_report.json (g2_source != g2c) whose D0_pairs.csv was rebuilt = exit 2
+        (not merged yet), the same mismatch against a final report = exit 3, a final matching report = ready."""
+        save = XD.D0_PAIRS_REPORT, XD.D0_FOLDS, XD.D0_PAIRS
+        d = scr / "d0p"
+        d.mkdir(parents=True, exist_ok=True)
+        try:
+            XD.D0_PAIRS_REPORT, XD.D0_FOLDS, XD.D0_PAIRS = d / "D0_pairs_report.json", d / "d0_folds.csv", d / "D0_pairs.csv"
+            XD.D0_FOLDS.write_text("rxn_id,fold\n0,1\n")
+            XD.D0_PAIRS.write_text("pair_id\nD00000\n")
+            outs = {str(p): dict(sha256=C.sha256(p)) for p in (XD.D0_FOLDS, XD.D0_PAIRS)}
+
+            def rep(src, o):
+                XD.D0_PAIRS_REPORT.write_text(json.dumps(dict(stop=False, g2_source=src, outputs=o)))
+                return XD.d0_pairs_state()[1]
+            ok = rep("g2c", outs)
+            assert not ok, ok
+            pre = rep("d0_g2_orig", outs)
+            assert [c for c, _ in pre] == [2], pre
+            XD.D0_PAIRS.write_text("pair_id\nD00000\nD00001\n")             # rebuilt by the final GEO1b run
+            pre2 = rep("d0_g2_orig", outs)
+            assert max(c for c, _ in pre2) == 2 and len(pre2) == 2, pre2
+            fin = rep("g2c", outs)
+            assert max(c for c, _ in fin) == 3, fin
+            return dict(preliminary_rebuilt=[c for c, _ in pre2], final_mismatch=[c for c, _ in fin])
+        finally:
+            XD.D0_PAIRS_REPORT, XD.D0_FOLDS, XD.D0_PAIRS = save
+
     def t_listing_digest():
         d = scr / "lnk"
         d.mkdir(parents=True, exist_ok=True)
@@ -464,7 +499,8 @@ def cmd_unit():
                          ("hf_text_equals_d1", t_hf_text_equals_d1), ("s1_select", t_s1_select),
                          ("comb_build", t_comb_build), ("comb_state_inputs_check", t_comb_state_and_labels),
                          ("geo_state", t_geo_state), ("g_scan", t_g_scan), ("rel_gate", t_rel_gate),
-                         ("refs_min_geo", t_refs_min_geo), ("listing_digest", t_listing_digest)]:
+                         ("refs_min_geo", t_refs_min_geo), ("d0_pairs_state", t_d0_pairs_state),
+                         ("listing_digest", t_listing_digest)]:
             check(name, fn)
     finally:
         shutil.rmtree(scr, ignore_errors=True)

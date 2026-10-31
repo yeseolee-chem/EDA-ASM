@@ -137,6 +137,13 @@ def fixture(root, mods=()):
         erxn0[3]["e_short_model"] = repr(float(erxn0[3]["e_short_model"]) + 1e-4)
     if "c_select" in mods:
         sel[10]["chosen"] = "r2" if sel[10]["chosen"] != "r2" else "r1"
+    if "e_rxn_missing" in mods:                                   # D1_1000002 (fold 0, built) missing from E_rxn.csv
+        erxn.pop(0)
+    if "e_rxn_extra" in mods:                                     # D0 59 (no G2c, not built) listed in E_rxn_d0.csv
+        erxn0.append(dict(erxn0[0], rxn_id=59))
+    if "stale_folder" in mods:                                    # an old .done folder of the no-G2c target 1000059
+        (root / "geo2" / "geo_final" / "1000059").mkdir(parents=True)
+        (root / "geo2" / "geo_final" / "1000059" / ".done").write_text("old\n")
     for (k, s), P in preds.items():
         with open(root / "geo1" / "preds" / f"final_{k}_s{s}.pkl", "wb") as f:
             pickle.dump(P, f, protocol=4)
@@ -192,7 +199,11 @@ def cmd_z():
         ck["base_e_rxn_check"] = (bs["D1"]["e_rxn_check"]["n"] == n_f04 and bs["D0"]["e_rxn_check"]["n"] == 59
                                   and bs["D1"]["e_rxn_check"]["max_abs_dev_A"] <= 1e-9
                                   and bs["D0"]["e_rxn_check"]["max_abs_dev_A"] <= 1e-9
-                                  and bs["D1"]["e_rxn_check"]["n_built_not_in_file"] == len(exp["D1"]) - n_f04)
+                                  and bs["D1"]["e_rxn_check"]["n_built_not_in_file"] == len(exp["D1"]) - n_f04
+                                  and bs["D1"]["e_rxn_check"]["n_file"] == n_f04 and bs["D0"]["e_rxn_check"]["n_file"] == 59
+                                  and all(bs[s]["e_rxn_check"][k] == 0 for s in ("D1", "D0")
+                                          for k in ("n_built_f04_not_in_file", "n_file_not_built_f04"))
+                                  and rep.get("n_stale_folders") == 0)
         bad = []
         for s in ("D1", "D0"):
             for rid, v in exp[s].items():
@@ -239,7 +250,10 @@ def cmd_z():
                  "two_folds": ("predicted by two folds", None),
                  "stray": ("are not GEO2b targets", None),
                  "c_select": ("no valid g2c.json", None),
-                 "d0_folds_sha": ("sha256 differs", None)}
+                 "d0_folds_sha": ("sha256 differs", None),
+                 "e_rxn_missing": ("D1: E_rxn.csv rows != the reactions built", "D0: E_rxn_d0.csv rows"),
+                 "e_rxn_extra": ("D0: E_rxn_d0.csv rows != the reactions built", "D1: E_rxn.csv rows"),
+                 "stale_folder": ("geo_final folders with .done for targets that are not built now", "rows !=")}
         for name, (want, notwant) in cases.items():
             rootc = tmp / name
             envc, _ = fixture(rootc, mods=(name,))
@@ -247,7 +261,7 @@ def cmd_z():
             repc = report(rootc)
             text = errc + json.dumps(repc.get("stop_reasons", []))
             okc = rcc == 3 and want in text and (notwant is None or notwant not in text) and repc.get("stop") is True
-            if name in ("c_select", "d0_folds_sha", "stray", "two_folds"):
+            if name in ("c_select", "d0_folds_sha", "stray", "two_folds", "d0_wrong_fold"):
                 okc &= not (rootc / "geo2" / "geo_final").exists()               # stopped before any folder write
             if name == "d0_fallback_excess":
                 okc &= json.loads((rootc / "geo2" / "geo_final" / "6" / "result.json").read_text())["fallback"] is True
@@ -355,6 +369,11 @@ def cmd_e():
                                                                             set(D.index)))
     ck["stop_missing_column"] = E._expect_stop(lambda: E.check_predictions(G.drop(columns=["base"]), set(G1.pair_id),
                                                                              set(D.index)))
+    f1 = dict(zip(G1.pair_id, G1.fold))                        # D1 fold check (S_folds fold_T1 stand-in)
+    p1f, _ = E.check_predictions(G, set(G1.pair_id), set(D.index), f1)
+    ck["check_predictions_d1_fold_ok"] = len(p1f) == len(G1)
+    ck["stop_d1_wrong_fold"] = E._expect_stop(lambda: E.check_predictions(
+        G, set(G1.pair_id), set(D.index), dict(f1, P00000=(f1["P00000"] + 1) % 5)))
     # unit records: robust names, two reports, folds 0-4
     tmp = Path(tempfile.mkdtemp(prefix="geo2b_etest_"))
     try:

@@ -4,7 +4,7 @@
  "verdict": "none (user decision D0D1: no comparison model, no geo-vs-g2 verdict; descriptive results)",
  "pooled": false,
  "note": "D1 and D0 are separate tables (E_* / E3_* = D1, E_d0_metrics = D0); never pooled",
- "date": "2026-10-31 18:42:49",
+ "date": "2026-10-31 19:57:36",
  "command": "selftest",
  "inputs": {
   "predictions": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/d1_ladder/results/L_predictions_geo.parquet",
@@ -1070,7 +1070,7 @@
   "E-1": "thin eval_d0d1.py instead of 'eval_geo2.py run --rungs geo' and instead of a new evaluate.py e3: it imports analysis/d1_ladder/evaluate.py unchanged and calls its E2 functions (fu2_eval, prep_S, read_lab, label_info, model_frames, check_pair_attrs, ref_set, derived_frames, gate_pairs, check_line, annotate_all, metrics_e1, met_index, bends_e1, goal_e1) on rung geo, and eval_geo2 metrics / reps / select / app_metrics / by_class / goal; LADDER outputs are untouched (no LADDER file is written or edited)",
   "E-2": "REP / REP8 / ENS4 from the geo unit records val_kcal_mae (L_report_geo.json + L_xgb_report_geo.json; T1D0 inner validation = D1 only) before the prediction file is read; the D0 rows use the same choices",
   "E-3": "LINE of the geo rung = the SH units' baseline column (base = beta x dH as trained; T1D0 fits beta on its own training pairs), checked equal across the 4 SH models and zero for S (LADDER check_line); no input-table recomputation (the stage-3 LINE of the trainer is the reference); null = 0",
-  "E-4": "D1 rows = every non-'d0' row (pair ids of S_folds.csv); D0 rows = ref_kind 'd0' (pair ids of D0_pairs.csv); the two id sets must agree, unknown ids = STOP",
+  "E-4": "D1 rows = every non-'d0' row (pair ids of S_folds.csv); D0 rows = ref_kind 'd0' (pair ids of D0_pairs.csv); the two id sets must agree, unknown ids = STOP; a D1 row fold must be its S_folds.csv fold_T1 (review R-5)",
   "E-5": "D0 evaluation pairs = predicted D0 pairs with D0_pairs.csv ok true (label eligibility); predicted not-ok pairs are counted and left out; the pair fold must equal d0_folds.csv of both ends (else STOP: leakage)",
   "E-6": "D0 CI = component bootstrap (component = D0_pairs.csv core 'D0/<component>', 2,000 resamples, seed 20261019; = eval_geo2.boot_diff(e, 0, component) with the resampling weights cached per component list)",
   "E-7": "D0 subsets all and no_m1_twin (neither end has a stereo-free D1 twin of T1 fold -1, d0_twins.csv m1; DECISIONS_PAIR P-y-m1 recommendation); edge kinds all / sibling / dipole / leaf",
@@ -1087,8 +1087,8 @@
   "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/selftest_d0d1/E3_bend_rates.json": "8b31f5fc6c8491a420cfa83ec5dcf230518aba5175588b2da50038201580c182"
  },
  "seconds": {
-  "total": 82.02386140823364,
-  "d1": 73.24768543243408
+  "total": 88.66815328598022,
+  "d1": 77.17634892463684
  },
  "selftest": {
   "checks": {
@@ -1113,6 +1113,7 @@
    "neg_d0_missing_row_stops": true,
    "neg_ref_kind_mismatch_stops": true,
    "neg_missing_model_stops": true,
+   "neg_d1_wrong_fold_stops": true,
    "neg_d1_missing_pair_stops": true
   },
   "detail": {
@@ -1147,6 +1148,6 @@
    "d0_boot_max_diff": 0.0
   },
   "all_pass": true,
-  "seconds": 84.44555616378784
+  "seconds": 93.05948519706726
  }
 }

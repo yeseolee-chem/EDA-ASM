@@ -81,7 +81,7 @@ Pass checks:
   `$GEO2B/t2`, `t3`, `td0`, `td0h`). `--rerun` forces a fresh work dir. After any code edit the T records are stale
   (exit 2 downstream): resubmit wave A's T lines.
 
-## 3. Wave B — G, F, H pilot (after Z and T; G+F 16 tasks, pilot 1)
+## 3. Wave B — G, F, H pilot (after Z and T; G + g_report + F 17 tasks, pilot 1 = 18 queued tasks: at most 2 other tasks may be queued)
 ```bash
 cd $R/geo2
 JG=$(sbatch --parsable -p cpu1,cpu2 -J g2b_g --time=48:00:00 --cpus-per-task=16 --mem=32G --array=0-5 \
@@ -106,11 +106,16 @@ JHP=$(sbatch --parsable -p cpu2 -J g2b_hp --time=48:00:00 --cpus-per-task=64 --m
 - G: slices write `$GEO2B/geo_feat/<rxn_id>/` (.done | .fail_<reason>), `results/F_steps/g_<ii>of06.json`. A slice
   that exits 2 (open reactions) is resubmitted alone (`--array=<i>`), then g_report and the F lines again (a pending
   `afterok` job whose dependency failed never starts; it must be resubmitted). `g A 6 retry` (explicit) moves that
-  slice's .fail_freq_* / .fail_error_* / stale folders aside and recomputes them.
+  slice's .fail_freq_* / .fail_error_* / stale folders aside and recomputes them. Bytes per slice (review estimate from
+  the LADDER dft_final / D0-G2 folders: 0.57 MB per D1, 0.86 MB per D0 folder) about 1.6 GB of the 2 GB
+  `GEO2_G_BUDGET_GB` default.
 - g_report: `results/G_report.json` complete, stop false; per dataset atom order <= 0.5 %, Freq/error <= 1 %, B6 not
   computable <= 1 %. A B6-only STOP may be accepted by the user only (`g_report --accept=B6`).
 - F: `$GEO2B/X182_d1_geo.parquet` (D1 + D0 rows), `$GEO2B/fu2_geo/` atoms + tokens, `results/fu2_geo/{Q,T}_report.json`,
   `results/F_steps/f_report.json` summary per dataset (F-1, B6, Q-a, T-a <= 1 %; Q-a limit = ceil(0.5 % x n)).
+  Expect the F-1 rule to STOP for D1: the same feature code gave 1.14 % (D1PAIR G1), 1.42 % (LADDER F0) and 1.36 %
+  (D1-G2, `analysis/d1_g2/results/F_DECISION.md`, accepted by the user), mostly `ext:B1:engine_gate1`. Report it; only
+  a user decision continues with `p --accept=F-1` (GEO-7).
 - pilot: `results/H_pilot.json` `pass` true: 25 D1 + 25 D0 stratified by n_atoms quartile, stratified projection
   <= 4,000 core-h, rel-energy gate on the D1 orig rows. A projection over the cap is a STOP (report the numbers).
   On cpu1 use `-p cpu1 --cpus-per-task=48 --mem=200G` (D1-HF precedent: %maxcore 3500 x workers).
@@ -143,11 +148,13 @@ JP=$(sbatch --parsable -p cpu1,cpu2 -J g2b_p --time=48:00:00 --cpus-per-task=4 -
 - p_report: `results/P_geo_report.json` (+ `P_geo_sets.json`, `$GEO2B/inputs/sets/P_geo_d0.csv`): D1 P_geo / P_23 / P_023
   over S_folds.csv (STOP |P_23| < 0.98 |P_g2|, kept as a pipeline check), D0 usable pairs per fold and edge kind,
   D0 pairs lost because an end is unusable, usable reactions per dataset and fold. Exit 2 while
-  `D0_pairs_report.json` `g2_source` is not `g2c` (the preliminary D0 build).
+  `D0_pairs_report.json` `g2_source` is not `g2c` (the preliminary D0 build), also when the final GEO1b d0_pairs.py run
+  has already rewritten `$GEO1B/d0/D0_pairs.csv` but its report is not merged into this tree yet (review R-1); a
+  sha256 difference against a final (`g2c`) report is exit 3.
 - report: `results/F_report.json` + `results/F_G_status.csv`.
 
 ## 6. Tests (no ORCA / xtb; foreground `srun --jobid=<running job> --overlap -n1 -c1 timeout 500 ...`)
-`tests_feat.py lint` (undefined names), `unit` (20 tests -> `results/U_feat_tests.json`), `wrap` (Phase X into
+`tests_feat.py lint` (undefined names), `unit` (21 tests -> `results/U_feat_tests.json`), `wrap` (Phase X into
 `$GEO2B/_selftest` + the GEO-15 HF wrappers on 3 D1 + 6 D0 reactions -> `results/U_feat_wrap.json`), `gorder` (D1 env;
 G atom-order gate on D1 + D0 folders -> `results/U_feat_gorder.json`). `lint` / `unit` / `wrap` in conda reactot,
 `gorder` in the D1 env.

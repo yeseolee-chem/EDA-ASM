@@ -15,7 +15,8 @@
 #                                                          W + 5 tasks (default W = 9): prereg check -> XGB run (1 x 32
 #                                                          CPUs) -> XGB check; atom array 0..W-1 (1 GPU each); collect
 #                                                          --with-xgb after both; prereg check again (LADDER files)
-# Exit 0 = submitted (or printed with --dry-run), 2 = not enough queue room (MaxSubmit 20 counts array tasks) / usage.
+# Exit 0 = submitted (or printed with --dry-run), 2 = not enough queue room (MaxSubmit 20 counts array tasks), a job
+# name of the step already in the queue (GEO1B.md 6: never the same job twice) / usage.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)       # analysis/geo2 = the submit dir of jobs/m3_*.slurm
 cd "$HERE"
@@ -29,14 +30,21 @@ if [ "$a2" = "--dry-run" ] || [ "$a3" = "--dry-run" ] || [ "$a4" = "--dry-run" ]
 if [ "$a2" = "--workers" ]; then W=$a3; elif [ "$a3" = "--workers" ]; then W=$a4; fi
 case "$W" in ''|*[!0-9]*) echo "--workers needs a positive number (got '$W')"; exit 2 ;; esac
 [ "$W" -ge 1 ] && [ "$W" -le 10 ] || { echo "--workers must be 1..10 (MaxJobs 10)"; exit 2; }
-case "$mode" in
-  splits) NEED=1 ;; ctests) NEED=3 ;; prereg) NEED=1 ;; m3) NEED=$((W + 5)) ;;
-  *) sed -n '2,22p' "$0"; exit 2 ;;
+case "$mode" in      # NAMES = the job names this step submits (GEO1B.md 6: a name already in the queue -> not again)
+  splits) NEED=1; NAMES='geo2b_splits' ;; ctests) NEED=3; NAMES='geo2b_ctest_[gcm]' ;;
+  prereg) NEED=1; NAMES='geo2b_prereg' ;; m3) NEED=$((W + 5)); NAMES='geo2b_(Rc|x3|x3c|m3|m3col|Rc2)' ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac
 N=$(squeue -u "$USER" -h -r | wc -l)
 echo "[m3_launch] mode $mode, queue now $N task(s), this step adds $NEED (MaxSubmit $MAXSUB)"
 if [ $((N + NEED)) -gt $MAXSUB ]; then
   echo "NOT SUBMITTED: $N + $NEED > $MAXSUB queued tasks; submit again when the queue has room"
+  [ $DRY -eq 1 ] || exit 2
+fi
+DUP=$(squeue -u "$USER" -h -o '%j' | { grep -Ex "$NAMES" || true; } | sort -u | tr '\n' ' ')
+if [ -n "$DUP" ]; then
+  echo "NOT SUBMITTED: job(s) of this step already running / pending: $DUP(GEO1B.md 6: never submit the same job" \
+       "twice; resubmit a dead task alone with the RUNBOOK_lad lines)"
   [ $DRY -eq 1 ] || exit 2
 fi
 sub() {   # sub <name> <sbatch args...> : prints the line; submits unless --dry-run; echoes the job id
@@ -84,5 +92,6 @@ case "$mode" in
          "'[geo2b_gpu] ... gpu=<name>'):"
     echo "    cd $HERE && sbatch --time=48:00:00 -p <partition of that GPU type> --gres=gpu:1 -J geo2b_m3 --cpus-per-task=4" \
          "--mem=32G --array=<k> --output=$GL/%x_%A_%a.out jobs/m3_gpu.slurm train_atoms.py run @I $W --stage 3"
-    echo "  then the collect line again with --dependency=afterok:<new id>:$JXC" ;;
+    echo "  then the collect line again with --dependency=afterok:<new id>:$JXC and the geo2b_Rc2 prereg check line with" \
+         "--dependency=afterok:<new collect id> (both were cancelled by --kill-on-invalid-dep)" ;;
 esac

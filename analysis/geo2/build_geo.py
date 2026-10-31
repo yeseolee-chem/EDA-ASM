@@ -6,7 +6,7 @@
   python build_geo.py build     -> $GEO2/geo_final/<rxn_id>/{ts.xyz, rel1.xyz, rel2.xyz, result.json, .done}
                                    + results/Z_status.csv + results/Z_report.json   (exit 3 = STOP, spec 4-3)
 Targets: D1 = the 9,266 rows of labels_d1_g2.json (uid D1_<rid>, rid >= 1000001, label TS d1_jobs/<job_id>/ts.xyz);
-D0 = the status-ok rows of labels_all.json without the 5 D-1 overlaps of d0_folds.csv (uid D0_<rid>, rid 0-5268,
+D0 = the status-ok rows of labels_all.json without the 5 D-1 overlaps of d0_folds.csv (uid D0_<rid>, rid 0-5973,
 job_id D0G2_<rid:04d>, label TS = the Coley profile TS full_dataset_profiles/<rid>/<ts_file>, as GEO1b data.py).
 D1 and D0 rxn ids are disjoint, so both datasets share $GEO2/geo_final/<rxn_id>/.
 Each reaction gets exactly one TS: the 3-seed mean of the GEO1b 'final' model of the fold whose test set holds it
@@ -14,8 +14,10 @@ Each reaction gets exactly one TS: the 3-seed mean of the GEO1b 'final' model of
 D0 has no fold -1). rel1 / rel2 = byte copies of the G2c folder whose TS was the GEO1b input (decision A-G2c). A
 structure that fails the sanity rules (4-2) is replaced by that G2c TS (deployable fallback, flagged).
 Gates (STOP), D1 and D0 checked separately: forming-distance errors of the mean coordinates = GEO1b E_rxn.csv (D1) /
-E_rxn_d0.csv (D0) to 1e-6 A; fallback share <= 2 %. Also STOP: a reaction predicted by two folds, a D0 prediction in
-another fold than d0_folds.csv, a prediction that is no target, G2c folders that disagree with C_select.csv / g2c.json.
+E_rxn_d0.csv (D0) to 1e-6 A, and the file rows = exactly the reactions built from folds 0-4 (D1 fold -1 = fm1 is in no
+file); fallback share <= 2 %. Also STOP: a reaction predicted by two folds, a D0 prediction in another fold than
+d0_folds.csv (checked before any write), a prediction that is no target, G2c folders that disagree with C_select.csv /
+g2c.json, a .done geo_final folder of a target that is not built now (stale).
 Idempotent: an existing .done folder whose sources are unchanged is kept. results/Z_report.json is first rewritten with
 stop true ('running') and gets its final content last, so a killed or stopped run never leaves a passing report.
 """
@@ -210,9 +212,12 @@ def build():
     stray = sorted(set(P) - {t["uid"] for t in T})
     if stray:
         C.stop(f"{len(stray)} GEO1b predictions are not GEO2b targets (stale pickles or other labels): {stray[:5]}")
+    for t in T:                                                          # D0D1: final_f{k} predicts D0 fold k only
+        if t["src"] == "D0" and t["uid"] in P and P[t["uid"]][1] != f"f{t['fold']}":   # (before any folder write)
+            C.stop(f"{t['uid']}: predicted by {P[t['uid']][1]} but its d0_folds.csv fold is {t['fold']}")
     erxn = {s: read_erxn(s) for s in SRCS}
     rows = []
-    acc = {s: dict(n_fb=0, e_dev=0.0, n_e=0, n_built_not_in_e=0) for s in SRCS}
+    acc = {s: dict(n_fb=0, e_dev=0.0, n_e=0, n_built_not_in_e=0, ids_f04=set()) for s in SRCS}
     for t in T:
         src, rid, T_, uid = t["src"], t["rid"], t["job"], t["uid"]
         g2 = t["g2"]
@@ -227,14 +232,14 @@ def build():
             rows.append(row)
             continue
         X, tag, shas = P[uid]
-        if src == "D0" and tag != f"f{t['fold']}":                       # D0D1: final_f{k} predicts D0 fold k only
-            C.stop(f"{uid}: predicted by {tag} but its d0_folds.csv fold is {t['fold']}")
         syms_l, lab = C.read_xyz(t["lab"])
         syms_g, Xg2 = C.read_xyz(g2 / "ts.xyz")
         if list(syms_g) != list(syms_l):
             C.stop(f"{src} {rid}: G2c ts.xyz element order != label")
         pairs = C.parse_pairs(t["pairs"])
         a = acc[src]
+        if tag != "fm1":                                                 # folds 0-4: must be a row of the E_rxn file
+            a["ids_f04"].add(rid)
         if rid in erxn[src][1]:                                          # consistency with the GEO1b evaluation
             dev = float(np.abs(e_sorted(X, lab, pairs) - np.array(erxn[src][1][rid])).max())
             a["e_dev"], a["n_e"] = max(a["e_dev"], dev), a["n_e"] + 1
@@ -282,6 +287,11 @@ def build():
     rows += [dict(rxn_id=rid, job_id=C.d0_job_id(rid), src="D0", status="d0_overlap_excluded", source="", fallback=False,
                   reason="GEO1 rule D-1 (fold -9, in no set)", g2c="") for rid, f in sorted(d0f.items()) if f["overlap"]]
     stops, by_src = [], {}
+    stale = sorted(r["rxn_id"] for r in rows if r["status"] not in ("ok", "kept")
+                   and C.marker(C.GEO_FINAL / str(r["rxn_id"])) == ".done")
+    if stale:                                                            # feat_geo would take them as geo inputs
+        stops.append(f"{len(stale)} geo_final folders with .done for targets that are not built now (no G2c, no GEO1b "
+                     f"prediction or D-1 overlap): {stale[:5]}; move them aside explicitly (never automatic)")
     for s in SRCS:
         rs = [r for r in rows if r["src"] == s and r["status"] != "d0_overlap_excluded"]
         n_ok = sum(r["status"] in ("ok", "kept") for r in rs)
@@ -290,6 +300,12 @@ def build():
         if a["n_e"] == 0 or a["e_dev"] > E_RXN_TOL:
             stops.append(f"{s}: forming-distance errors differ from GEO1b {E_RXN_FILE[s]} (max {a['e_dev']:.2e} A over "
                          f"{a['n_e']} rxns)")
+        f_ids = set(erxn[s][1])                                          # the file = the GEO1b evaluation of these folds
+        miss, extra = sorted(a["ids_f04"] - f_ids), sorted(f_ids - a["ids_f04"])
+        if miss or extra:
+            stops.append(f"{s}: {E_RXN_FILE[s]} rows != the reactions built from final_f0..4 ({len(miss)} built but not in "
+                         f"the file, e.g. {miss[:5]}; {len(extra)} in the file but not built from folds 0-4, e.g. "
+                         f"{extra[:5]}): stale GEO1b evaluation, pickles or G2c root")
         if n_ok and share > FALLBACK_MAX:
             stops.append(f"{s}: fallback rate {share:.3f} > {FALLBACK_MAX}")
         by_src[s] = dict(n_targets=len(rs), n_folders=n_ok, by_status=dict(Counter(r["status"] for r in rs)),
@@ -298,7 +314,9 @@ def build():
                          fallback_reasons=dict(Counter(r["reason"] for r in rs if r["fallback"])),
                          g2c_chosen=dict(Counter(r["g2c"] for r in rs if r["status"] in ("ok", "kept"))),
                          e_rxn_check=dict(file=str(C.GEO1_RES / E_RXN_FILE[s]), n=a["n_e"], max_abs_dev_A=a["e_dev"],
-                                          tol=E_RXN_TOL, n_built_not_in_file=a["n_built_not_in_e"]))
+                                          tol=E_RXN_TOL, n_built_not_in_file=a["n_built_not_in_e"],
+                                          n_file=len(f_ids), n_built_f04_not_in_file=len(miss),
+                                          n_file_not_built_f04=len(extra)))
     C.write_atomic(C.RES / "Z_status.csv", C.csv_text(rows, Z_FIELDS))
     rr = [r for r in rows if r["status"] != "d0_overlap_excluded"]
     rep = dict(n_targets=len(T), n_folders=sum(v["n_folders"] for v in by_src.values()),
@@ -306,7 +324,8 @@ def build():
                n_fallback=sum(v["n_fallback"] for v in by_src.values()),
                fallback_reasons=dict(Counter(r["reason"] for r in rr if r["fallback"])),
                e_rxn_check={s: by_src[s]["e_rxn_check"] for s in SRCS}, by_src=by_src, n_d0_overlap_excluded=n_ov,
-               layout=dict(root=str(C.GEO_FINAL), folder="<rxn_id> (D1 >= 1000001, D0 0-5268)",
+               n_stale_folders=len(stale),
+               layout=dict(root=str(C.GEO_FINAL), folder="<rxn_id> (D1 >= 1000001, D0 0-5973)",
                            files=["ts.xyz", "rel1.xyz", "rel2.xyz", "result.json", ".done"],
                            z_status_fields=Z_FIELDS),
                inputs=dict(d1_labels=str(C.D1_LABELS_G2), d0_labels=str(C.D0_LABELS), d0_folds=str(C.D0_FOLDS),

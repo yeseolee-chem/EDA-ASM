@@ -11,7 +11,8 @@ CLI (exit 0 = done, 2 = not ready (an input missing; nothing written), 3 = STOP 
         Needs (else exit 2): analysis/geo1b/results/E_report.json (GEO1b E1), results/Z_report.json, P_build_geo.json,
         P_geo_report.json, S_splits_d0d1.json (final), C_tests_geo.json, analysis/d1_ladder/results/C_smoke_atoms_geo.json,
         C_smoke_xgb_geo.json, D0D1_diag_geo.json, the gated input files. STOP (exit 3): Z / P stop, the geo table sha256
-        != P_build_geo outputs, the D0D1 index not final / not current (d0d1_splits.load_s_splits), F_pairs_cr2.csv !=
+        != P_build_geo outputs, the D0D1 index not final / not current (d0d1_splits.load_s_splits), Z_report.json
+        inputs.d0_folds_sha256 != d0_folds.csv now / the index record (review R-1), F_pairs_cr2.csv !=
         V_report outputs, C_tests_geo.json not all_pass or not run on the code / geo table / labels now, a stage-3 smoke
         not passed, the GPU projection not computed or > 160 GPU-h, a stage-3 unit / prediction / evaluation file
         already exists, a tracked analysis/d1_ladder/results file differs from git HEAD, a spec heading missing.
@@ -275,7 +276,7 @@ def evidence_paths():
     E = [SPEC, SPEC_B, LAD_SPEC, DESIGN, GEO1B_DEC, DD.D0_REPORT, DD.Q_D0_REPORT, GEO1B_RES / "DECISIONS_PAIR.md",
          GEO1B_RES / "E_report.json", GEO1B_RES / "E_rmsd.json", GEO1B_RES / "E_main.csv", GEO1B_RES / "E_rxn.csv",
          GEO1B_RES / "E_rxn_d0.csv", GEO1B_RES / "Y_plan.json"] + [GEO1B_RES / f"R_select_f{k}.json" for k in range(NF)]
-    E += [Z_REPORT, RES / "Z_status.csv", P_BUILD, P_REPORT, C_TESTS, RES / "C_tests_geo_gpu.json",
+    E += [Z_REPORT, RES / "Z_status.csv", P_BUILD, P_REPORT, RES / "P_geo_sets.json", C_TESTS, RES / "C_tests_geo_gpu.json",
           RES / "C_tests_geo_cpu.json", HERE / "eval_geo2.py", HERE / "build_geo.py", HERE / "geo2_common.py",
           Path(__file__).resolve(), LAD_DIR / "evaluate.py", LAD_DIR / "tests" / "run_tests.py",
           LAD_RES / "C_smoke_atoms_geo.json", LAD_RES / "C_smoke_xgb_geo.json", LAD_RES / "C_l6_xgb_geo.json",
@@ -314,6 +315,19 @@ def d0d1_index():
                        for k, v in (rec.get("units") or {}).items()},
                 rules=rec.get("rules"), twins=rec.get("twins"), inputs_sha256=rec.get("inputs_sha256"),
                 code_version=rec.get("code_version"), built=rec.get("finished"))
+
+
+def z_d0_folds(z, index):
+    """review R-1: the D0 folds of the geo structures (Z_report.json inputs.d0_folds_sha256; build_geo checks that each D0
+    TS came from final_f<its fold>) = d0_folds.csv now = the D0D1 index record (energy folds); STOP otherwise."""
+    zf = (z.get("inputs") or {}).get("d0_folds_sha256")
+    now_ = sha(DD.D0_FOLDS)
+    ix = ((index or {}).get("d0") or {}).get("d0_folds_sha256")
+    if zf is None or zf != now_ or zf != ix:
+        stop(f"{Z_REPORT.name} inputs.d0_folds_sha256 {str(zf)[:12]} != d0_folds.csv now {str(now_)[:12]} / the D0D1 index "
+             f"record {str(ix)[:12]}: the geo D0 structures (GEO1b final_f<k> by D0 fold) and the energy folds would come "
+             f"from different d0_folds.csv (leak risk); rerun Z and the splits on the frozen d0_folds.csv")
+    return dict(z_report_d0_folds_sha256=zf, equal_file_and_index=True)
 
 
 def c_tests():
@@ -473,6 +487,8 @@ def gather():
     D["E_report"] = read_json(GEO1B_RES / "E_report.json", "GEO1b evaluate.py (E1)")
     er = GEO1B_RES / "E_rmsd.json"
     D["E_rmsd"] = json.loads(er.read_text()) if er.is_file() else None
+    yp = GEO1B_RES / "Y_plan.json"                            # review R-3: GEO2.md 8-3 item 1 'Y 설정'
+    D["Y_plan"] = json.loads(yp.read_text()) if yp.is_file() else None
     z = read_json(Z_REPORT, "build_geo.py build (GEO2.md 4)")
     if z.get("stop"):
         stop(f"{Z_REPORT}: stop {z.get('stop_reasons')} (GEO2.md 4-3)")
@@ -493,6 +509,7 @@ def gather():
     if not v.get("all_pass") or (v.get("outputs") or {}).get(str(DD.CR2)) != sha(DD.CR2):
         stop(f"{DD.CR2} sha256 != results/V_report.json outputs (or V not all_pass)")
     D["index"] = d0d1_index()
+    D["d0_folds_z"] = z_d0_folds(z, D["index"])
     D["C_tests"] = c_tests()
     D["smoke"] = smoke_estimates()
     D["diag"] = diag()
@@ -588,6 +605,13 @@ def md_text(D):
     a += quote(secb("### 0-2."))
     A(">")
     a += quote(secb("### 4-3."))
+    A("")
+    A("- Y 설정 (fold −1 D1 반응의 보정 구조; `analysis/geo1b/results/Y_plan.json`, GEO1b `train_m1.py plan`, 20개보다 긴 "
+      "목록은 개수와 앞 5개):" + ("" if D["Y_plan"] is not None else " 파일 없음 (작성 시)"))
+    if D["Y_plan"] is not None:
+        A("```json")
+        a += json.dumps(compact(D["Y_plan"]), indent=1, ensure_ascii=False, default=str).split("\n")
+        A("```")
     A("")
     A("### 1-3. 상식 검사·대체 규칙·Z gate (GEO2.md 4절 그대로) 와 Z 결과 (`analysis/geo2/results/Z_report.json`)")
     a += quote(sec("## 4."))
@@ -788,7 +812,8 @@ def json_rec(D, md_sha):
                        reporting="D1 and D0 separately, never pooled; D0 component bootstrap CI"),
         geo_table=D["P_build"], code_git=D["code_git"], evidence=D["evidence"], seen=D["seen"],
         replaced_draft=D["replaced_draft"],
-        numbers=dict(geo1b_E_report=D["E_report"], geo1b_E_rmsd=D["E_rmsd"], Z_report=D["Z_report"],
+        numbers=dict(geo1b_E_report=D["E_report"], geo1b_E_rmsd=D["E_rmsd"], geo1b_Y_plan=D["Y_plan"],
+                     Z_report=D["Z_report"], d0_folds_z=D["d0_folds_z"],
                      P_geo_report=D["P_geo_report"], C_tests_geo=D["C_tests"], smoke=D["smoke"], diag=D["diag"],
                      selftest=D["selftest"]),
         design=D["design"], d0d1_decision=D["d0d1_decision"], grid_source=D["grid_src"])

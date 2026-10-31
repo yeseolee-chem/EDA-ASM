@@ -209,7 +209,9 @@ DECISIONS = {
     "GEO-5 rel gate": "명령서 6-1 HF 추가 gate를 A-G2c에 맞게 좁힌다: 비교 대상 = D1 반응 중 G2c C_select.csv chosen == 'orig'"
                       "(G2c 폴더 = 단일 run D1-G2 폴더의 사본)이고 geo HF ok이며 analysis/d1_g2/results/labels_d1_hf_g2.parquet에 "
                       "ok 행이 있는 반응. geo_final rel1/rel2.xyz sha256이 d1_g2/g2_final의 것과 다르거나 e_frag{k}_rel_eh 차이 "
-                      "> 1e-6 Eh면 불일치. 불일치 / 비교 반응 > 0.5 % = STOP. r1/r2가 뽑힌 D1과 D0에는 기준이 없다(보고만).",
+                      "> 1e-6 Eh면 불일치. 불일치 / 비교 반응 > 0.5 % = STOP. r1/r2가 뽑힌 D1과 D0에는 기준이 없다(보고만). "
+                      "C_select.csv에 G2c 선택(orig/r1/r2)이 없는 D1 geo 반응이 있으면 STOP(검토 R-3: 비교 대상이 비어 "
+                      "gate가 그냥 통과하지 않게).",
     "GEO-6 H run failure": "명령서 6-2 H '실행 실패 > 1 %' = (H_status fail + gate_fail + eda_table_unexplained + parse_fail) / "
                            "끝난 반응, dataset마다. h_batch의 배치 누적 검사(M_checks)는 두 dataset을 합친 비율로 미리 "
                            "멈춘다(가중 평균 > 1 %면 어느 한 dataset이 > 1 %이므로 잘못된 STOP이 아니다).",
@@ -1640,7 +1642,8 @@ def rel_gate(E, jobs):
     """GEO-5 (spec 6-1 HF gate narrowed for A-G2c): E = {job_id: (e_frag1_rel_eh, e_frag2_rel_eh)} of the geo ok
     reactions. Comparable = D1 rows whose G2c choice is 'orig' with a D1-G2 HF ok row; a row whose geo_final
     rel{k}.xyz bytes differ from d1_g2/g2_final or whose energies differ by > 1e-6 Eh is a mismatch; STOP if > 0.5 % of
-    the comparable rows mismatch, or none is comparable while such D1 orig rows have geo HF values."""
+    the comparable rows mismatch, or none is comparable while such D1 orig rows have geo HF values, or (review R-3) a D1
+    job has no G2c choice in C_select.csv (every geo_final D1 folder is a G2c folder: the gate must not pass empty)."""
     import pandas as pd
     G = pd.read_parquet(G2_HF_LABELS)
     G = G[(G.geom == "g2") & (G.status == "ok")]
@@ -1651,6 +1654,7 @@ def rel_gate(E, jobs):
     rid_of = {str(d["job_id"]): int(r) for r, d in labels().items()}
     want = [str(j) for j in jobs]
     d1 = [j for j in want if ds_of(rid_of[j]) == "D1"]
+    no_choice = sorted(j for j in d1 if sel.get(rid_of[j]) not in ("orig", "r1", "r2"))
     orig = [j for j in d1 if sel.get(rid_of[j]) == "orig"]
     have = {j: E[j] for j in orig if j in E}
     comp = sorted(set(have) & set(ref))
@@ -1671,6 +1675,9 @@ def rel_gate(E, jobs):
     mis = sorted(j for j, v in d.items() if not v <= H_REL_TOL_EH)
     rate = len(mis) / len(comp) if comp else float("nan")
     why = []
+    if no_choice:
+        why.append(f"rel-energy gate: {len(no_choice)} D1 geo reactions have no G2c choice in {G2C_SELECT} (another "
+                   f"C_select.csv than Phase Z used?): {no_choice[:5]}")
     if have and not comp:
         why.append(f"rel-energy gate: none of the {len(have)} D1 orig-run geo ok reactions has a D1-G2 ok row")
     elif comp and rate > H_REL_MAX:
@@ -1680,6 +1687,7 @@ def rel_gate(E, jobs):
     return dict(rule=DECISIONS["GEO-5 rel gate"], reference=str(G2_HF_LABELS), reference_sha256=C.sha256(G2_HF_LABELS),
                 c_select=str(G2C_SELECT), c_select_sha256=C.sha256(G2C_SELECT), tol_eh=H_REL_TOL_EH, threshold=H_REL_MAX,
                 n_jobs=len(want), n_d1=len(d1), n_d1_orig=len(orig), n_d1_not_orig=len(d1) - len(orig),
+                n_d1_no_g2c_choice=len(no_choice), d1_no_g2c_choice=no_choice[:50],
                 n_d0_no_reference=len(want) - len(d1), n_geo=len(have), n_comparable=len(comp),
                 n_not_in_reference=len(set(have) - set(ref)), not_in_reference=sorted(set(have) - set(ref))[:50],
                 n_rel_bytes_differ=len(byte_bad), rel_bytes_differ=byte_bad[:50], n_mismatch=len(mis), rate=rate,
