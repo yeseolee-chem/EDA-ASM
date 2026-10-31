@@ -9,20 +9,23 @@ The computation is unchanged: each reaction runs exactly the per-reaction comman
 (same scripts and environment as jobs/g2c.slurm; their files are not modified). Finished = .done / .fail_* marker in
 the root's g2_final/<rxn_id>/, exactly as the static pools.
 
-Claims ($G2C/claims/<root>/<T>; content "<SLURM_JOB_ID> <host> <time> <attempt>"):
-  * created atomically (temp file + os.link, never empty); a claimed reaction is skipped by the other jobs;
-  * stale = no final marker, older than MIN_STALE_S and the owner job id is absent from a FRESH `squeue -o %A`;
-    the takeover is atomic: only the job that creates the token <T>.take.<owner> (O_EXCL) may os.replace the claim;
-  * a run that ends without a marker is an error: the claim gets attempt+1 and owner 'retry' (any job may retry it
-    once, through the same token rule); after MAX_ATTEMPTS it becomes 'error' (skipped; counted by 'plan');
-  * circuit breaker: a child exit 3 (STOP) or MAX_CONSEC consecutive errors in this job -> stop and exit 3.
+Claims ($G2C/claims/<root>/<T>; content "<owner> <host> <time> <by> <attempt>"):
+  * created atomically (temp file + os.link, never empty); the owner's run touches it every HEARTBEAT_S (mtime);
+  * stale = no final marker, heartbeat older than MIN_STALE_S AND owner absent from a fresh `squeue -o %A`;
+  * takeover (stale or 'retry') is atomic: only the creator of the token <T>.take.<owner>.<attempt> (O_EXCL, holding
+    the creator's job id) may os.replace the claim; the token is removed if the takeover fails, and an orphan token
+    (creator dead, older than MIN_STALE_S) is retired by an atomic rename so the claim can be taken again;
+  * a run that ends without a marker (or exceeds RUN_TIMEOUT_S) -> owner 'retry' with attempt+1 (any job retries it
+    once); after MAX_ATTEMPTS -> 'error' (skipped, counted by 'plan'); a claim is only rewritten while this job owns it;
+  * circuit breaker: a child exit 3 (STOP) or MAX_CONSEC consecutive errors in this job -> stop, exit 3.
 Order: largest expected cost first over all four roots (D1: C_compare g2_core_h_total; D0: GEO1 Z_status core_h).
-Refuses to start while a static G2c pool job (name g2c_d1_r* / g2c_d0_r*) is in the queue.
+A job leaves when nothing is claimable (unclaimed, retry, or stale); reactions held by live jobs are theirs.
+Refuses to start while a static G2c pool job (name g2c_d1_r* / g2c_d0_r*) is queued, or outside SLURM.
 
-  python g2c_pool_dyn.py plan                  # counts per root (targets / final / live / stale / retry / error / open)
+  python g2c_pool_dyn.py plan                  # per root: targets / final / live / stale / retry / error / open / tokens
   python g2c_pool_dyn.py run <n_par> <cores>   # stops starting new reactions after $G2C_STOP_AFTER_H h (default 44)
-run exit: 0 = every reaction final (or error after MAX_ATTEMPTS), nothing held by live jobs; 2 = time limit or a
-reaction ended in error; 3 = STOP (static pool running, child STOP, too many consecutive errors)."""
+run exit: 0 = nothing claimable is left and this job ended no run in error; 2 = time limit, an error run, or claimable
+work left at exit; 3 = STOP."""
 from __future__ import annotations
 
 import csv
@@ -46,9 +49,15 @@ Z_STATUS = REPO / "analysis" / "geo" / "results" / "Z_status.csv"
 D1_SCRIPT = REPO / "analysis" / "g2c" / "g2c_d1.py"
 D0_SCRIPT = REPO / "analysis" / "geo" / "d0g2.py"
 STOP_H = float(os.environ.get("G2C_STOP_AFTER_H", "44"))
-JOB = os.environ.get("SLURM_JOB_ID", "nojob")
+JOB = os.environ.get("SLURM_JOB_ID", "")
+HOST = socket.gethostname()
 USER = os.environ.get("USER", "yeseo1ee")
-MIN_STALE_S, MAX_ATTEMPTS, MAX_CONSEC, WAIT_S = 600, 2, 5, 300
+MIN_STALE_S, HEARTBEAT_S, RUN_TIMEOUT_S = 900, 120, 6 * 3600
+MAX_ATTEMPTS, MAX_CONSEC = 2, 5
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def fval(x):
@@ -90,22 +99,15 @@ def squeue(fmt):
     try:
         out = subprocess.run(["squeue", "-h", "-u", USER, "-o", fmt], capture_output=True, text=True, check=True,
                              timeout=120).stdout
-        return out.split("\n")
+        return [x.strip() for x in out.split("\n") if x.strip()]
     except (subprocess.SubprocessError, OSError):
         return None
 
 
 def live_jobs():
-    """job ids (unique per array task: %A) in the queue now; None if squeue failed (then nothing is ever stale)."""
+    """job ids (unique per array task: %A) queued now; None if squeue failed (then nothing is ever stale)."""
     out = squeue("%A")
-    return None if out is None else {x.strip() for x in out if x.strip()}
-
-
-def static_pools_queued():
-    out = squeue("%j")
-    if out is None:
-        return None
-    return sorted(n.strip() for n in out if n.strip().startswith(("g2c_d1_r", "g2c_d0_r")))
+    return None if out is None else set(out)
 
 
 def read_claim(p):
@@ -120,55 +122,76 @@ def read_claim(p):
     return owner, att, st.st_mtime
 
 
-def write_claim_new(p, attempt=0):
-    """atomic create: True if this job now owns a brand-new claim."""
+def _tmp(p):
+    return p.with_name(f".{p.name}.{JOB}.{threading.get_ident()}.tmp")
+
+
+def write_claim_new(p):
+    """atomic create: True if this job now owns a brand-new claim (attempt 0)."""
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".{p.name}.{JOB}.{threading.get_ident()}.tmp")
-    tmp.write_text(f"{JOB} {socket.gethostname()} {time.strftime('%Y-%m-%dT%H:%M:%S')} - {attempt}\n")
+    tmp = _tmp(p)
+    tmp.write_text(f"{JOB} {HOST} {now()} - 0\n")
     try:
         os.link(tmp, p)
         return True
     except FileExistsError:
         return False
     finally:
-        tmp.unlink(missing_ok=True)
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
 
 
-def replace_claim(p, owner_word, attempt):
-    tmp = p.with_name(f".{p.name}.{JOB}.{threading.get_ident()}.tmp")
-    tmp.write_text(f"{owner_word} {socket.gethostname()} {time.strftime('%Y-%m-%dT%H:%M:%S')} {JOB} {attempt}\n")
-    os.replace(tmp, p)
-
-
-def take_over(p, old_owner, attempt):
-    """atomic takeover of a stale / retry claim: only the creator of the token may replace the claim."""
-    tok = p.with_name(f"{p.name}.take.{old_owner}.{attempt}")
-    try:
-        fd = os.open(tok, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-    except FileExistsError:
+def set_claim(p, owner_word, attempt):
+    """rewrite the claim, but only while this job owns it (atomic replace)."""
+    c = read_claim(p)
+    if c is None or c[0] != JOB:
         return False
-    os.close(fd)
-    cur = read_claim(p)
-    if cur is None or cur[0] != old_owner or cur[1] != attempt:      # changed meanwhile: leave it
-        return False
-    tmp = p.with_name(f".{p.name}.{JOB}.{threading.get_ident()}.tmp")
-    tmp.write_text(f"{JOB} {socket.gethostname()} {time.strftime('%Y-%m-%dT%H:%M:%S')} - {attempt}\n")
+    tmp = _tmp(p)
+    tmp.write_text(f"{owner_word} {HOST} {now()} {JOB} {attempt}\n")
     os.replace(tmp, p)
     return True
 
 
-def state(p):
-    """'none' | 'mine' | 'retry' | 'error' | 'held' (owner word, attempt, mtime kept for the caller)."""
-    c = read_claim(p)
-    if c is None:
-        return "none", None
-    if c[0] == "retry":
-        return "retry", c
-    if c[0] == "error":
-        return "error", c
-    if c[0] == JOB:
-        return "mine", c
-    return "held", c
+def take_over(p, old_owner, attempt, live):
+    """atomic takeover of a stale / 'retry' claim. Only the creator of the token may replace the claim."""
+    tok = p.with_name(f"{p.name}.take.{old_owner}.{attempt}")
+    for _ in range(2):
+        try:
+            fd = os.open(tok, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            break
+        except FileExistsError:
+            try:                                              # orphan token: creator dead and old -> retire it
+                creator = tok.read_text().split()[0]
+                age = time.time() - tok.stat().st_mtime
+            except (FileNotFoundError, IndexError):
+                return False
+            if live is None or creator in live or age < MIN_STALE_S:
+                return False
+            try:
+                os.rename(tok, tok.with_name(f"{tok.name}.dead.{JOB}.{threading.get_ident()}"))
+            except FileNotFoundError:
+                return False                                  # someone else retired it first
+    else:
+        return False
+    ok = False
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(f"{JOB} {HOST} {now()}\n")
+        cur = read_claim(p)
+        if cur is not None and cur[0] == old_owner and cur[1] == attempt:
+            tmp = _tmp(p)
+            tmp.write_text(f"{JOB} {HOST} {now()} - {attempt}\n")
+            os.replace(tmp, p)
+            ok = True
+        return ok
+    finally:
+        if not ok:
+            try:
+                tok.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def task_env(root):
@@ -181,19 +204,48 @@ def task_env(root):
 
 
 def run_one(root, T, rid, cores, attempt):
-    """-> ('.done' | '.fail' | 'error', child rc)."""
+    """-> ('.done' | '.fail' | 'error', child rc). Heartbeat on the claim while the child runs."""
     script, cwd = (D1_SCRIPT, D1_SCRIPT.parent) if root.startswith("d1") else (D0_SCRIPT, D0_SCRIPT.parent)
+    p = CLAIMS / root / T
     log = G2C / root / "logs" / "rxn" / f"{T}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
     with open(log, "w") as f:
-        r = subprocess.run([sys.executable, str(script), "one", T, str(cores)], cwd=cwd, stdout=f,
-                           stderr=subprocess.STDOUT, env=task_env(root))
+        child = subprocess.Popen([sys.executable, str(script), "one", T, str(cores)], cwd=cwd, stdout=f,
+                                 stderr=subprocess.STDOUT, env=task_env(root))
+        while True:
+            try:
+                rc = child.wait(timeout=HEARTBEAT_S)
+                break
+            except subprocess.TimeoutExpired:
+                try:
+                    os.utime(p)
+                except OSError:
+                    pass
+                if time.time() - t0 > RUN_TIMEOUT_S:
+                    child.kill()
+                    rc = child.wait()
+                    print(f"  {root} {T}: killed after {RUN_TIMEOUT_S} s", flush=True)
+                    break
     if final(root, rid):
         fin = G2C / root / "g2_final" / str(rid)
-        return (".done" if (fin / ".done").is_file() else ".fail"), r.returncode
-    p = CLAIMS / root / T
-    replace_claim(p, "retry" if attempt + 1 < MAX_ATTEMPTS else "error", attempt + 1)
-    return "error", r.returncode
+        return (".done" if (fin / ".done").is_file() else ".fail"), rc
+    set_claim(p, "retry" if attempt + 1 < MAX_ATTEMPTS else "error", attempt + 1)
+    return "error", rc
+
+
+def classify(root, T, rid, live):
+    """'final' | 'open' | 'live' | 'stale' | 'retry' | 'error' (for plan and the claimable-work check)."""
+    if final(root, rid):
+        return "final"
+    c = read_claim(CLAIMS / root / T)
+    if c is None:
+        return "open"
+    if c[0] in ("retry", "error"):
+        return c[0]
+    if live is not None and c[0] not in live and time.time() - c[2] > MIN_STALE_S:
+        return "stale"
+    return "live"
 
 
 def cmd_plan():
@@ -202,71 +254,66 @@ def cmd_plan():
     for _, root, T, rid in tasks():
         d = rep.setdefault(root, dict(targets=0, final=0, live=0, stale=0, retry=0, error=0, open=0))
         d["targets"] += 1
-        if final(root, rid):
-            d["final"] += 1
-            continue
-        s, c = state(CLAIMS / root / T)
-        if s == "held":
-            s = "live" if live is None or c[0] in live else "stale"
-        d[{"none": "open", "mine": "live"}.get(s, s)] += 1
+        d[classify(root, T, rid, live)] += 1
+    for root in ROOTS:
+        rep.setdefault(root, {})["tokens"] = len(list((CLAIMS / root).glob("*.take.*"))) if (CLAIMS / root).is_dir() else 0
     print(json.dumps(rep, indent=1), flush=True)
     return 0
 
 
 def cmd_run(n_par, cores):
+    if not JOB:
+        print("STOP: run only inside a SLURM job (SLURM_JOB_ID unset)", file=sys.stderr)
+        return 3
     if not (D1_SCRIPT.is_file() and D0_SCRIPT.is_file()):
         print("STOP: per-reaction scripts missing", file=sys.stderr)
         return 3
-    sp = static_pools_queued()
-    if sp is None or sp:
-        print(f"STOP: static G2c pool jobs still queued (or squeue failed): {sp}", file=sys.stderr)
+    names = squeue("%j")
+    static = None if names is None else sorted(n for n in names if n.startswith(("g2c_d1_r", "g2c_d0_r")))
+    if static is None or static:
+        print(f"STOP: static G2c pool jobs still queued (or squeue failed): {static}", file=sys.stderr)
         return 3
     T_all, t0 = tasks(), time.time()
     lock, pos, res = threading.Lock(), [0], {}
     stop = threading.Event()
     consec = [0]
 
-    def acquire(i):
-        """try to own reaction i: unfinished and unclaimed / stale / retry. -> attempt or None."""
+    def acquire(i, live):
+        """try to own reaction i (unfinished and unclaimed / stale / retry) -> attempt or None."""
         _, root, T, rid = T_all[i]
         if final(root, rid):
             return None
         p = CLAIMS / root / T
-        if write_claim_new(p):
-            return 0
-        s, c = state(p)
-        if s == "retry":
-            return c[1] if take_over(p, "retry", c[1]) else None
-        if s == "held" and time.time() - c[2] > MIN_STALE_S:
-            live = live_jobs()                                   # fresh list for every takeover decision
-            if live is not None and c[0] not in live and not final(root, rid):
-                if take_over(p, c[0], c[1]):
-                    print(f"  stale claim of job {c[0]} taken over: {root} {T}", flush=True)
-                    return c[1]
+        c = read_claim(p)
+        if c is None:
+            return 0 if write_claim_new(p) else None
+        if c[0] == "retry":
+            return c[1] if take_over(p, "retry", c[1], live) else None
+        if c[0] in ("error", JOB):
+            return None
+        if live is not None and c[0] not in live and time.time() - c[2] > MIN_STALE_S and not final(root, rid):
+            if take_over(p, c[0], c[1], live):
+                print(f"  stale claim of job {c[0]} taken over: {root} {T}", flush=True)
+                return c[1]
         return None
 
     def next_task(rescan):
         with lock:
+            live = live_jobs()                               # fresh once per call (seconds old at most)
             i = 0 if rescan else pos[0]
             while i < len(T_all) and not stop.is_set():
                 j = i
                 i += 1
                 if not rescan:
                     pos[0] = i
-                a = acquire(j)
+                a = acquire(j, live)
                 if a is not None:
                     return j, a
             return None
 
-    def others_hold_work():
+    def claimable_left():
         live = live_jobs()
-        for _, root, T, rid in T_all:
-            if final(root, rid):
-                continue
-            s, c = state(CLAIMS / root / T)
-            if s in ("retry", "none") or (s == "held" and (live is None or c[0] in live)):
-                return True
-        return False
+        return sum(classify(root, T, rid, live) in ("open", "retry", "stale") for _, root, T, rid in T_all)
 
     def worker():
         rescan = False
@@ -277,27 +324,24 @@ def cmd_run(n_par, cores):
                 return
             try:
                 t = next_task(rescan)
-            except OSError as e:                                 # transient filesystem error: wait and retry
+            except OSError as e:                             # transient filesystem error: wait and retry
                 print(f"  next_task: {e!r}; retry in 60 s", flush=True)
                 time.sleep(60)
                 continue
             if t is None:
                 if not rescan:
-                    rescan = True                                # whole list again: stale / retry claims
+                    rescan = True                            # whole list once more: stale / retry claims
                     continue
-                if others_hold_work():                           # other jobs still running: wait, then rescan
-                    time.sleep(WAIT_S)
-                    continue
-                return
+                return                                       # nothing claimable: what is left belongs to live jobs
             j, att = t
             _, root, T, rid = T_all[j]
             try:
                 s, rc = run_one(root, T, rid, cores, att)
-            except Exception as e:                               # noqa: BLE001  (never leave a held claim behind)
+            except Exception as e:                           # noqa: BLE001  (never leave a held claim behind)
                 s, rc = "error", -1
                 print(f"  {root} {T}: exception {e!r}", flush=True)
                 try:
-                    replace_claim(CLAIMS / root / T, "retry" if att + 1 < MAX_ATTEMPTS else "error", att + 1)
+                    set_claim(CLAIMS / root / T, "retry" if att + 1 < MAX_ATTEMPTS else "error", att + 1)
                 except OSError:
                     pass
             with lock:
@@ -312,10 +356,11 @@ def cmd_run(n_par, cores):
     with ThreadPoolExecutor(max_workers=int(n_par)) as ex:
         for f in [ex.submit(worker) for _ in range(int(n_par))]:
             f.result()
-    print(f"[g2c dyn] {res}", flush=True)
+    left = claimable_left()
+    print(f"[g2c dyn] {res}; claimable left {left}", flush=True)
     if res.get("stopped"):
         return 3
-    return 2 if res.get("not_started") or res.get("error") else 0
+    return 2 if res.get("not_started") or res.get("error") or left else 0
 
 
 if __name__ == "__main__":

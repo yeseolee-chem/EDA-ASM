@@ -44,3 +44,13 @@
   - 반박 검토 2회: 1회차 blocker 1, major 5를 모두 고쳤다. 계산 노드에서 compile, plan(남은 반응 13,051), 시작 거부 검사를 통과했다.
   - 전환 순서: 고정 job 10개를 취소한다 → 대기열에서 사라진 것을 확인한다 → dyn job 10개(64코어, 8 × 8)를 낸다 → build(afterany: dyn 10개 모두; build가 스스로 미완료를 검사해 exit 3) → report(afterok: build).
   - 취소한 고정 job이 돌리던 반응(최대 80개)은 다시 계산한다. 표시가 없으므로 dyn이 가져간다.
+- **DYN 2회차 검토 반영 + 전환 (10-31 12:2x)**: 2회차 반박 검토의 major 2개와 minor 4개를 고쳤다.
+  - 고아 토큰: 실패 시 지우고, 만든 job이 죽었으면 원자적 rename으로 정리한다.
+  - 꼬리: job은 가져갈 일(미점유·retry·stale)이 없으면 바로 끝난다. 살아 있는 job이 쥔 반응은 기다리지 않는다.
+  - claim heartbeat는 120초마다다. stale은 heartbeat가 15분 넘게 멈췄고 squeue에도 없을 때다.
+  - 반응 하나당 6시간 상한, SLURM 밖 실행 거부, 자기 claim일 때만 다시 쓰기, scan당 squeue 1회.
+  - 계산 노드에서 compile, plan, 두 가지 시작 거부 검사를 통과했다.
+  - cpu2에 자원을 기다리는 다른 사용자 job이 0개라서(song08은 cpu1) 취소해도 자리를 잃지 않는다. 그래서 고정 job 10개를 취소했다(12:23, 1054054–56, 1054119, 1054187–92).
+  - 대기열에서 다 빠진 뒤 dyn job 10개(1055735–44, cpu2 64코어, pool 8 × 8)를 냈다.
+  - 의존 job: build 1055745(afterany: dyn 10개), report 1055746(afterok: build).
+  - 시작 직후 claim 80개(10 × 8), 큰 반응(D0)부터다.
