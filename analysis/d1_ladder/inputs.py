@@ -155,6 +155,24 @@ Review fixes 2026-10-23 (FIXER; every judgment = the recommended option, user 20
   P23 L-4 roots (review P-4): the FU2 T1 fold files + FU2 S_splits.json + V_report / Q_report are 'shared'; the DFT-only
       phase results (G0_*, F0_*, Q_audit, Q6, labels_d1_cr*.parquet, V_* but V_report) are 'dft'; check_paths ok also
       needs no unclassified path.
+GEO2b additions 2026-10-31 (docs/specs/GEO2.md 8-1 read with GEO1B.md 4-3 and the user decision D0D1; role FEAT,
+analysis/geo2/results/DECISIONS_feat.md). Added only; dft / g1 / g2, RUNG_ORDER, the CLI and DECISIONS are unchanged.
+  PG-1 RUNGS['geo'] is fixed here (= analysis/geo2/feat_geo.py rung_cfg('geo'); feat_geo p compares them by string
+       values): the 'g2' geometry slot of the D1-HF runner, fu2_res / h_parquet under analysis/geo2/results, tokens /
+       x182 / hf_runs / hf_inputs under $GEO2B = $GEO2_SCRATCH (default /gpfs/tmp_cpu2/yeseo1ee/geo2b), versions
+       fu2-*-3-geo, refs min, plus two keys only geo has: targets (the combined D1 + D0 labels
+       $GEO2B/comb/labels_d0d1.json) and keys ($LAD/Q_keys.parquet, $GEO1B/d0/Q_keys_d0.parquet). The geo table is
+       $GEO2B/inputs/geo.parquet (feat_geo.py p), not table_path('geo'); 'geo' is not in RUNG_ORDER (build / pa / pairs
+       and the loader CLI keep dft, g1, g2).
+  PG-2 rung_roots: $GEO2B, analysis/geo2/results and $GEO1B/d0 (the D0 labels / pairs / keys) form the column 'geo'
+       (L-4 of the geo rung; for the other rungs such a path was unclassified before and is foreign now: check_paths ok
+       stays false either way).
+  PG-3 targets_of(rung): L.targets() for every rung without a 'targets' entry (dft / g1 / g2: unchanged); for geo the
+       combined labels, whose D1 rows must be exactly L.targets() (job_id, rxn_id) and whose D0 rows have job_id
+       D0G2_<rid:04d>; make_table loops over targets_of(rung) (dft / g1 / g2: the same 9,266 rows as before).
+  PG-4 _load_keys(rung): refs_q.load_keys() ($LAD/Q_keys.parquet) for every rung without a 'keys' entry; for geo the
+       concatenation of the key tables (D0 keys carry '|s3d:' / '|err:' and never equal a D1 key, checked; (job_id,
+       frag) unique, checked), so refs 'min' and the P6b graph check stay per dataset; refs_min reads it.
 """
 from __future__ import annotations
 
@@ -227,6 +245,11 @@ F0_REPORT = L.RES / "F0_report.json"
 G0_REPORT = L.RES / "G0_report.json"
 Q_KEYS = L.LAD / "Q_keys.parquet"                # = refs_q.LAD_KEYS
 G2_RES = L.G2_DIR / "results"
+# GEO2b (PG-1 .. PG-4; read only here): $GEO2B scratch and analysis/geo2/results of the geo rung, the GEO1b D0 tables
+GEO2 = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2b"))   # = analysis/geo2/g3c.G3
+GEO2_RES = L.REPO / "analysis" / "geo2" / "results"
+GEO1B_D0 = Path("/gpfs/tmp_cpu2/yeseo1ee/geo1b/d0")                            # d0_labels.py / d0_pairs.py outputs
+Q_KEYS_D0 = GEO1B_D0 / "Q_keys_d0.parquet"
 
 RUNGS = {
     "dft": dict(geom="dft", fu2_res=L.RES / "fu2", tokens=L.LAD / "fu2" / "tokens",
@@ -239,6 +262,12 @@ RUNGS = {
     "g2": dict(geom="g2", fu2_res=G2_RES / "fu2", tokens=L.G2 / "fu2" / "tokens", x182=L.G2 / "X182_d1_g2.parquet",
                h_parquet=G2_RES / "labels_d1_hf_g2.parquet", hf_runs=L.G2 / "runs", hf_inputs=L.G2 / "inputs",
                atom_version="fu2-atoms-3-g2", token_version="fu2-tokens-3-g2", refs="min"),
+    # GEO2b PG-1: = analysis/geo2/feat_geo.py rung_cfg("geo") (fixed here; targets / keys only for geo, PG-3 / PG-4)
+    "geo": dict(geom="g2", fu2_res=GEO2_RES / "fu2_geo", tokens=GEO2 / "fu2_geo" / "tokens",
+                x182=GEO2 / "X182_d1_geo.parquet", h_parquet=GEO2_RES / "hf_geo" / "labels_d1_hf_g2.parquet",
+                hf_runs=GEO2 / "hf_geo" / "runs", hf_inputs=GEO2 / "hf_geo" / "inputs",
+                atom_version="fu2-atoms-3-geo", token_version="fu2-tokens-3-geo", refs="min",
+                targets=GEO2 / "comb" / "labels_d0d1.json", keys=(Q_KEYS, Q_KEYS_D0)),
 }
 
 DECISIONS = {
@@ -460,6 +489,8 @@ def rung_roots():
         (set_path("P_g1"), "g1"),
         # g2 column
         (L.G2, "g2"), (G2_RES, "g2"), (table_path("g2"), "g2"), (set_path("P_g2"), "g2"),
+        # geo column (GEO2b PG-2): every geo input lives under $GEO2B, analysis/geo2/results or the GEO1b D0 tables
+        (GEO2, "geo"), (GEO2_RES, "geo"), (GEO1B_D0, "geo"),
         # files holding more than one rung
         (L.D1HF_LABELS, "dft+g1"), (L.HF_SCR / "inputs", "dft+g1"), (L.HF_SCR / "labels_d1_hf.json", "dft+g1"),
         (set_path("P_01"), "dft+g1"), (set_path("P_012"), "dft+g1+g2"),
@@ -711,6 +742,58 @@ def assemble_rung(rung, Hq, override, rxn_of, t0):
 
 
 # ---------------------------------------------------------------- inputs of a rung (build side)
+def targets_of(rung):
+    """PG-3: the target rows of a rung table, job_id order. L.targets() (the 9,266 D1 targets) unless the rung has a
+    'targets' entry (geo: the combined D1 + D0 labels, D1 rows = L.targets() by (job_id, rxn_id), D0 job_id
+    D0G2_<rid:04d>, rxn_id unique)."""
+    cfg = RUNGS[rung]
+    if "targets" not in cfg:
+        return L.targets()
+    p = Path(cfg["targets"])
+    PATHLOG.note(p, f"{rung} targets")
+    rows = json.loads(p.read_text())
+    d1 = {(str(d["job_id"]), int(d["rxn_id"])) for d in L.targets()}
+    got1 = {(str(d["job_id"]), int(d["rxn_id"])) for d in rows if int(d["rxn_id"]) > 1_000_000}
+    d0 = [d for d in rows if int(d["rxn_id"]) <= 1_000_000]
+    bad0 = [int(d["rxn_id"]) for d in d0 if str(d.get("job_id")) != f"D0G2_{int(d['rxn_id']):04d}"]
+    ids = [int(d["rxn_id"]) for d in rows]
+    if got1 != d1 or bad0 or len(set(ids)) != len(ids):
+        raise _Stop(f"{p}: D1 rows != lad_common.targets() ({len(got1 ^ d1)} differ), D0 job_id rule broken "
+                    f"{bad0[:5]}, duplicate rxn_id {len(ids) - len(set(ids))} (PG-3)")
+    return sorted(rows, key=lambda d: d["job_id"])
+
+
+def _load_keys(rung):
+    """PG-4: the Q-2 key table of a rung: refs_q.load_keys() unless the rung has a 'keys' entry (geo: the D1 and D0
+    key tables concatenated; key strings disjoint across the tables, (job_id, frag) unique)."""
+    cfg = RUNGS[rung]
+    if "keys" not in cfg:
+        return _Q().load_keys()
+    parts = []
+    for p in cfg["keys"]:
+        p = Path(p)
+        PATHLOG.note(p, f"{rung} Q-2 keys")
+        K = pd.read_parquet(p)
+        need = ["job_id", "rxn_id", "frag", "kind", "key", "constrained", "formula", "wl_graph"]
+        miss = [c for c in need if c not in K.columns]
+        if miss or K[need].isna().any().any():
+            raise _Stop(f"{p}: key columns missing {miss} or null values (PG-4)")
+        if "dataset" not in K.columns:
+            K["dataset"] = "D1" if Path(p) == Q_KEYS else Path(p).stem
+        parts.append(K)
+    for i in range(len(parts)):
+        for j in range(i + 1, len(parts)):
+            both = set(parts[i].key) & set(parts[j].key)
+            if both:
+                raise _Stop(f"Q-2 key tables {cfg['keys']} share {len(both)} keys (PG-4: keys are per dataset): "
+                            f"{sorted(both)[:3]}")
+    K = pd.concat(parts, ignore_index=True, sort=False)
+    K["constrained"] = K.constrained.astype(bool)
+    if K.duplicated(["job_id", "frag"]).any():
+        raise _Stop(f"Q-2 key tables {cfg['keys']}: duplicate (job_id, frag) rows (PG-4)")
+    return K
+
+
 def _read_h(rung):
     """labels_d1_hf(_g2).parquet rows of the rung's geometry, job_id order (P3 source)."""
     cfg = RUNGS[rung]
@@ -827,7 +910,7 @@ def refs_min(rung, Hq, rep_out=None, g2_q_keys=False):
     Q = _Q()
     if Path(Q.LAD_KEYS) != Q_KEYS:
         raise _Stop(f"refs_q.LAD_KEYS {Q.LAD_KEYS} != {Q_KEYS}")
-    K = Q.load_keys()
+    K = _load_keys(rung)                                              # PG-4 (= Q.load_keys() but for geo)
     E = {}
     for j, e1, e2 in zip(Hq.job_id, Hq.e_frag1_rel_eh, Hq.e_frag2_rel_eh):
         for k, e in ((1, e1), (2, e2)):
@@ -1078,7 +1161,7 @@ def make_table(rung, Hq, Hn, prov, tok, X, xcols):
           zip(Hq.job_id, *[Hq[t] for t in H_TARGETS])}
     xfin = pd.Series(np.isfinite(X[xcols].to_numpy(float)).all(1), index=X.index)
     rows = []
-    for d in L.targets():
+    for d in targets_of(rung):                                         # PG-3 (= L.targets() but for geo)
         j, rid = d["job_id"], int(d["rxn_id"])
         t = tok.get(rid)
         r = dict(rxn_id=rid, job_id=j, has_tok=t is not None, tok_path=t[0] if t else "",

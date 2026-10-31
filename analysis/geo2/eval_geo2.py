@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""GEO2 Phase E: energy (8 EDA channels + c_ghost + barrier) of the geo rung against dft / g1 / g2 (docs/specs/GEO2.md 9).
+"""GEO2b Phase E: energy (8 EDA channels + c_ghost + barrier) of the geo rung against dft / g2 (docs/specs/GEO2.md 9,
+GEO1B.md 5-2: no g1 rung, pair bins from GEO1b E_rxn.csv instead of the G1-derived same_ts_g1 class).
 
   python eval_geo2.py selftest   # g2 predictions relabelled as rung 'geo': must reproduce E2 numbers exactly, diff = 0
-  python eval_geo2.py run        # results/E_metrics.csv, E_compare.csv, E_recovery.csv, E_class.csv, E_app.csv,
-                                 # E_report.json
+  python eval_geo2.py run        # disabled (exit 2) under the GEO2b decision D0D1: no comparison verdict; the
+                                 # evaluation is eval_d0d1.py run, which reuses this module's functions
 Reads only; any pandas + pyarrow + numpy + scipy env (LADDER evaluate env 'espley' or reactot).
 """
 from __future__ import annotations
@@ -20,7 +21,8 @@ REPO = HERE.parents[1]
 RES = HERE / "results"
 LAD_RES = REPO / "analysis" / "d1_ladder" / "results"
 F_PAIRS = REPO / "analysis" / "d1_pair" / "results" / "F_pairs.csv"
-C_COMPARE = REPO / "analysis" / "d1_g2" / "results" / "C_compare.csv"
+GEO1B_RXN = REPO / "analysis" / "geo1b" / "results" / "E_rxn.csv"            # rxn_id -> bin (G2 vs label mapped RMSD)
+BIN_ORDER = {"low": 0, "mid": 1, "high": 2}
 BASE_PRED = LAD_RES / "L_predictions.parquet"
 BASE_UNITS = (LAD_RES / "L_report.json", LAD_RES / "L_xgb_report.json")
 GEO_PRED = LAD_RES / "L_predictions_geo.parquet"                       # stage-3 collect (spec 8-1)
@@ -87,11 +89,12 @@ def pairs_frame():
     keep = ["pair_id", "ref_kind", "a_rxn", "b_rxn", "pos", "in_P_main", "core", "dipole", "skeleton", "series", "fam",
             "cfg", "orient", "face", "c3", "Xb"]
     F = F[[c for c in keep if c in F.columns]].copy()
-    C = pd.read_csv(C_COMPARE, usecols=["rxn_id", "same_ts_g1"]).set_index("rxn_id").same_ts_g1
-    C = C.map({True: True, False: False, "True": True, "False": False})
-    sa, sb = C.reindex(F.a_rxn).values, C.reindex(F.b_rxn).values
-    F["cls"] = np.where((sa == True) & (sb == True), "same",                         # noqa: E712
-                        np.where((sa == False) & (sb == False), "different", "mixed"))  # noqa: E712
+    if GEO1B_RXN.is_file():
+        B = pd.read_csv(GEO1B_RXN, usecols=["rxn_id", "bin"]).set_index("rxn_id").bin
+        ba, bb = B.reindex(F.a_rxn).fillna("na").values, B.reindex(F.b_rxn).fillna("na").values
+    else:
+        ba = bb = np.array(["na"] * len(F))
+    F["cls"] = ["na" if "na" in (x, y) else max((x, y), key=BIN_ORDER.get) for x, y in zip(ba, bb)]
     return F
 
 
@@ -193,13 +196,13 @@ def by_class(L, F, rep, rep8, pset):
     Fi = F.set_index("pair_id")
     para = [p for p in pset if Fi.at[p, "pos"] == "p"]
     rows = []
-    for rung in ("dft", "g1", "g2", "geo"):
+    for rung in ("dft", "g2", "geo"):
         if rung not in set(L.rung):
             continue
         for t in TARGETS:
             d = select(L, rung, ("REP8",), t, rep, rep8).reindex(para)
             e = np.abs(d.yhat - d.y).values
-            for cls in ("same", "mixed", "different"):
+            for cls in ("low", "mid", "high", "na"):
                 m = Fi.cls.reindex(para).values == cls
                 rows.append(dict(rung=rung, sel="REP8", target=t, cls=cls, n=int(m.sum()), mae=float(e[m].mean())))
     return pd.DataFrame(rows)
@@ -211,7 +214,7 @@ def app_metrics(L, F, rep, rep8, pset):
     from scipy.stats import spearmanr
     Fi = F.set_index("pair_id")
     rows = []
-    for rung in ("dft", "g1", "g2", "geo"):
+    for rung in ("dft", "g2", "geo"):
         if rung not in set(L.rung):
             continue
         for sel in (("REP8",), ("ENS4", "SH"), ("ENS4", "S")):
@@ -307,7 +310,7 @@ def main(mode):
     rep, rep8, mval = reps(U)
     P23 = common_pairs(L, F, ("g2", "geo"))
     P023 = common_pairs(L, F, ("dft", "g2", "geo"))
-    own = {r: common_pairs(L, F, (r,)) for r in ("dft", "g1", "g2", "geo")}
+    own = {r: common_pairs(L, F, (r,)) for r in ("dft", "g2", "geo")}
     M = pd.concat([metrics(L, F, rep, rep8, ("g2", "geo"), P23, "P_23"),
                    metrics(L, F, rep, rep8, ("dft", "g2", "geo"), P023, "P_023")]
                   + [metrics(L, F, rep, rep8, (r,), own[r], f"own_{r}") for r in own], ignore_index=True)
@@ -318,7 +321,7 @@ def main(mode):
     M.to_csv(out / "E_metrics.csv", index=False)
     C.to_csv(out / "E_compare.csv", index=False)
     recovery(M).to_csv(out / "E_recovery.csv", index=False)
-    by_class(L, F, rep, rep8, P023).to_csv(out / "E_class.csv", index=False)
+    by_class(L, F, rep, rep8, P023).to_csv(out / "E_bin.csv", index=False)
     app_metrics(L, F, rep, rep8, P023).to_csv(out / "E_app.csv", index=False)
     rep_out = {f"{k[0]}|{k[1]}|{k[2]}": v for k, v in rep.items()}
     rep8_out = {f"{k[0]}|{k[1]}": list(v) for k, v in rep8.items()}
@@ -335,6 +338,10 @@ def main(mode):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["selftest"], ["run"]):
+    if sys.argv[1:] == ["run"]:                     # GEO2b decision D0D1 (user 2026-10-31): no geo-vs-g2 verdict
+        print("NOT READY: 'run' (the GEO2.md 9-10 comparison with dft / g2 and its verdict) is dropped by the user "
+              "decision D0D1; the GEO2b evaluation is 'eval_d0d1.py run' (results/DECISIONS_ZE.md E-8)", file=sys.stderr)
+        sys.exit(2)
+    if sys.argv[1:] == ["selftest"]:
         sys.exit(main(sys.argv[1]))
     raise SystemExit(__doc__)

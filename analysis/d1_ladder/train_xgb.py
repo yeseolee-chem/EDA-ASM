@@ -28,6 +28,26 @@ CLI (submit from analysis/d1_pair with jobs/py.slurm PYENV=espley, script ../d1_
         yhat <= 1e-6, y <= 1e-12, same best cell and inner CV MAE (<= 1e-9), rev 9 test pairs missing here = exactly the
         pairs dropped as not usable -> results/C_l6_xgb.json (exit 3 when it fails).
 
+GEO2b stage 3 (docs/specs/GEO2.md 8-1 read with GEO1B.md 4-3; user decision D0D1 2026-10-31; decisions XG-G* / XG-B*
+  at the end of this docstring; the train_atoms.py GA-* / GB-* rules apply line for line): rung 'geo' = STAGE_RUNGS[3]
+  only (10 units L__geo__<arm>__XGB__f<k>) on D0 + D1 pairs ($GEO2/F_pairs_d0d1.csv, split T1D0 of
+  analysis/geo2/d0d1_splits.py). Stage 1 / 2 unit lists, gates, split T1 and outputs are unchanged; but this file's
+  sha256 is no longer the one that wrote the LADDER results, so smoke / run / check with --stage 1|2 and l6 without
+  --stage 3 STOP before writing anything (XG-G9); only `list --stage 1|2` is usable here.
+  python train_xgb.py list --stage 3                    the 10 geo XGB units
+  python train_xgb.py smoke --stage 3 [--labels P]      -> results/C_smoke_xgb_geo.json, scratch $LAD/smoke_xgb_geo
+  python train_xgb.py run <i|@I|A> <n> --stage 3        gates = train_atoms stage 3 (PREREG_GEO2B + LADDER result
+        snapshot, GEO2b Phase P, the D0D1 split index, analysis/geo2/results/C_tests_geo.json); units ->
+        $LAD/units/L__geo__*__XGB__* (new)
+  python train_xgb.py check --stage 3                   the geo XGB units only -> results/L_xgb_report_geo.json
+  python train_xgb.py l6 --stage 3                      the L-6 helper re-run (GEO2 8-2 regression 2) without touching
+        the LADDER outputs: -> results/C_l6_xgb_geo.json, scratch $LAD/smoke_xgb_l6_geo (same comparison as l6)
+  python train_xgb.py diag --stage 3                    diagnostics only (XG-B6): s_y and SH beta (+ residual SD) per
+        fold and target for the D1 training pairs alone and for D1 + D0 (final T_main fit and inner fold 0 fit, after
+        the usable filter) -> results/D0D1_diag_geo.json; nothing in training reads it
+  geo inputs: X182 $GEO2/X182_d1_geo.parquet, reports analysis/geo2/results/fu2_geo, table $GEO2/inputs/geo.parquet
+  ($GEO2 = $GEO2_SCRATCH, default /gpfs/tmp_cpu2/yeseo1ee/geo2b). Default labels: --stage 3 -> $GEO2/F_pairs_d0d1.csv.
+
 Rules (spec 4-2, 4-3; rev 9 d1_train.py arm C unchanged unless named)
   pairs / folds  FU2 T1 split files $D1PAIR_SCRATCH/fu2/splits/T1__f<k>.json (sha256 = FU2 S_splits.json; their train /
                  test lists are re-derived here from S_folds.csv with the d1_train.masks arm C rule and must be equal):
@@ -154,6 +174,42 @@ Review fixes 2026-10-23 (FIXER; recommended option each time)
   XG-17 run: ADD3 gate opens no file of another rung's column only (L-4), P_report consistency (tables + label file =
         inputs.py pairs), stage 2 needs C_tests.json g2_verified (= train_atoms MA-15 .. MA-17).
   XG-18 M1 plan: XGB array %4 first, then the atom array; one collect (review M-2 / M-3; spec 15 at most 4 jobs).
+GEO2 additions 2026-10-30 (docs/specs/GEO2.md 8-1; role LADA; reviewed and ported to GEO2b 2026-10-31, XG-B*)
+  XG-G1 rung list and paths only (= train_atoms GA-1): STAGE_RUNGS[3] = ("geo",), RUNG_ORDER + "geo", RUNGS["geo"] =
+        fu2_res analysis/geo2/results/fu2_geo, x182 $GEO2/X182_d1_geo.parquet, tag geo; inputs_path("geo") =
+        $GEO2/inputs/geo.parquet. GRIDS["XGB"], the fits and the scoring are unchanged.
+  XG-G2 stage 1 / 2 paths unchanged (except the XG-G9 refusal); stage-3 outputs carry "_geo" (res_out):
+        C_smoke_xgb_geo.json, L_xgb_report_geo.json, C_l6_xgb_geo.json, D0D1_diag_geo.json; scratch $LAD/smoke_xgb_geo,
+        $LAD/smoke_xgb_l6_geo.
+  XG-G3 run --stage 3 gates = train_atoms gate_prereg_geo2 (gate_add3 rule on PREREG_GEO2B.md / prereg_geo2b.json +
+        LADDER result snapshot), gate_p_geo (GB-6), gate_splits_d0d1 (GB-2), gate_c_geo (re-implemented line for line:
+        train_atoms imports torch).
+  XG-G4 geo units are written to $LAD/units only after the PREREG_GEO2B gate (_check_root rung check).
+  XG-G5 fingerprint: geo units add prereg_geo2b, d0d1_code, split = train_atoms GA-8.
+  XG-G6 check --stage 3 covers the geo rung only (train_atoms collect --stage 3 --with-xgb reads its report).
+  XG-G7 l6 --stage 3 = the same L-6 run and comparison into the _geo outputs (regression 2 must not rewrite
+        results/C_l6_xgb.json); l6 without --stage 3 is unchanged.
+  XG-G8 no absolute repo path enters a unit fingerprint; the LADDER result snapshot uses repo-relative keys (F-13).
+        Every existing LADDER XGB unit records the pre-GEO2 train_xgb.py sha256 (79ddc291...), so no stage-1 / 2 unit
+        matches this file's fingerprint (XG-G9).
+  XG-G9 guard_ladder_write: smoke / run / check with --stage 1|2 and l6 without --stage 3 STOP (exit 3) before any write
+        or folder removal when CODE_SHA != results/L_xgb_report.json code_sha256 (no such file = a fresh LADDER tree).
+  XG-G10 gate_c_geo = train_atoms GA-14 (C_tests_geo.json code_sha256 of train_atoms.py, train_xgb.py, inputs.py,
+        lad_common.py, geo2/d0d1_splits.py = the files now).
+GEO2b D0 + D1 (user decision D0D1 2026-10-31; = train_atoms GB-1 .. GB-6)
+  XG-B1 split T1D0 for rung geo through d0d1_splits.load_s_splits (train_atoms GB-1); the d1_train.masks arm C check on
+        S_folds.csv applies to the D1 part of each train / test list (= the FU2 T1 list, asserted by load_s_splits too).
+  XG-B2 inner folds (XG-4 with the arm P precedent): GroupKFold(4) by core on the D1 part of the unfiltered outer-train
+        list only; the D0 training pairs (all of them, in the split-file order) join EVERY inner training side and no
+        validation side. Fold 0 = the split file (inner_train = FU2 inner_train + the D0 training pairs, inner_val =
+        FU2 inner_val), asserted. D0 pairs carry their label-file core 'D0/<component>' (never a GroupKFold group).
+  XG-B3 labels: train_atoms GB-3 (label_provenance / L-11' re-implemented line for line).
+  XG-B4 gate M-1' (GB-5): when the unit's training pairs hold D0 pairs, 200 random D0 training pairs (rng seeded by the
+        unit name + 'd0') are appended to the 200 test gate pairs of every fit; one tolerance, one verdict per fit.
+  XG-B5 XData.split for T1D0: D0 pairs in inner_val or in any inner validation side = STOP; n_d0 per list recorded.
+  XG-B6 diag --stage 3 (train_atoms GB-10): per fold / arm / target s_y (= std of the fit target: y for S, the SH
+        residual r for SH, ddof 0 = d1_train.Scale) and SH beta, for the D1 training pairs alone and for D1 + D0, on the
+        final (T_main) and the inner fold 0 training pairs after the usable filter; diagnostics only.
 """
 from __future__ import annotations
 
@@ -226,8 +282,13 @@ MODEL = "XGB"
 ARMS = ("S", "SH")
 SPLIT, NF = "T1", 5
 FOLD_KEYS = ("train", "test", "inner_train", "inner_val")
-STAGE_RUNGS = {1: ("dft", "g1"), 2: ("g2",)}
-RUNG_ORDER = ("dft", "g1", "g2")
+STAGE_RUNGS = {1: ("dft", "g1"), 2: ("g2",), 3: ("geo",)}     # stage 3 = GEO2b (docs/specs/GEO2.md 8-1, XG-G1)
+RUNG_ORDER = ("dft", "g1", "g2", "geo")
+GEO_STAGE = 3
+sys.path.insert(0, str(L.REPO / "analysis" / "geo2"))
+import d0d1_splits as DD  # noqa: E402        (GEO2b D0 + D1 label / split rules, numpy / pandas only; XG-B1, XG-B3)
+SPLIT_D0D1 = DD.SPLIT                                         # "T1D0"
+RUNG_SPLIT = {"geo": SPLIT_D0D1}                              # = train_atoms GB-1
 TARGETS = list(F.TARGETS)                                     # d1 d2 elst pauli oi disp cpcm cds c_ghost barrier
 NT = len(TARGETS)
 H_TARGETS = [t for t in TARGETS if t != "c_ghost"]            # spec 4-1: the 9 HF values
@@ -244,6 +305,22 @@ FU2_S_SPLITS = F.FU2_RES / "S_splits.json"
 S_FOLDS = C.RES / "S_folds.csv"
 ADD3_MD = L.RES / "PREREG_D1PAIR_ADD3.md"
 ADD3_JSON = L.RES / "prereg_d1pair_add3.json"
+# GEO2b stage 3 (docs/specs/GEO2.md 6-1, 8-1 with GEO1B.md 4-3; read only here; = train_atoms.py GEO2 constants)
+GEO2 = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2b"))      # $GEO2B (= DD.GEO2)
+GEO2_RES = L.REPO / "analysis" / "geo2" / "results"
+GEO_INPUTS = {"geo": GEO2 / "inputs" / "geo.parquet"}         # the other rungs keep $LAD/inputs/<rung>.parquet
+PREREG_GEO2_MD = GEO2_RES / "PREREG_GEO2B.md"
+PREREG_GEO2_JSON = GEO2_RES / "prereg_geo2b.json"
+C_TESTS_GEO = GEO2_RES / "C_tests_geo.json"
+CODE_D0D1 = Path(DD.__file__).resolve()
+C_GEO_TRAINER_CODE = {"train_atoms.py": HERE / "train_atoms.py", "train_xgb.py": HERE / "train_xgb.py",
+                      "inputs.py": HERE / "inputs.py", "lad_common.py": HERE / "lad_common.py",
+                      "geo2/d0d1_splits.py": CODE_D0D1}       # = train_atoms (XG-G10)
+P_BUILD_GEO = GEO2_RES / "P_build_geo.json"
+P_GEO_REPORT = GEO2_RES / "P_geo_report.json"
+SMOKE_GEO = L.LAD / "smoke_xgb_geo"
+L6_DIR_GEO = L.LAD / "smoke_xgb_l6_geo"
+DIAG_GEO = "D0D1_diag_geo.json"                               # XG-B6 (results/, res_out name of stage 3)
 REV9_UNITS = D1T.UNITS / "T1"                                 # rev 9 cache: T1__C__XGB__<t>__f<k>.{json,parquet}
 PRED_COLS = ["pair_id", "ref_kind", "pos", "fold", "rung", "arm", "model", "target", "y", "yhat", "base", "beta",
              "yhat_seed_sd"]                                  # = train_atoms.PRED_COLS (L_predictions.parquet)
@@ -251,6 +328,7 @@ RUNGS = {   # spec 4-1 columns: token reports (usable reactions) + the 182 globa
     "dft": dict(fu2_res=L.RES / "fu2", x182=L.LAD / "X182_d1_dft.parquet", tag="dft"),
     "g1": dict(fu2_res=F.FU2_RES, x182=F.X182, tag=""),
     "g2": dict(fu2_res=L.G2_DIR / "results" / "fu2", x182=L.G2 / "X182_d1_g2.parquet", tag="g2"),
+    "geo": dict(fu2_res=GEO2_RES / "fu2_geo", x182=GEO2 / "X182_d1_geo.parquet", tag="geo"),      # GEO2 8-1
 }
 GRID = D1T.grid_cells("XGB")                                  # 12 cells, sorted-key product (rev 9 order)
 ESTIMATOR = repr(TMS.GRIDS["XGB"][0])
@@ -325,7 +403,28 @@ def norm(obj):
 
 
 def inputs_path(rung):
-    return INPUTS / f"{rung}.parquet"
+    return GEO_INPUTS[rung] if rung in GEO_INPUTS else INPUTS / f"{rung}.parquet"
+
+
+def res_out(name, stage):
+    """results/<name> for stages 1 / 2; results/<stem>_geo<suffix> for stage 3 (XG-G2 = train_atoms.res_out)."""
+    p = L.RES / name
+    return p.with_name(f"{p.stem}_geo{p.suffix}") if int(stage) == GEO_STAGE else p
+
+
+def collect_rungs(stage):
+    """rungs of check: every rung of the stages <= stage (LADDER); stage 3 = the geo rung only (= train_atoms)."""
+    return tuple(STAGE_RUNGS[GEO_STAGE]) if int(stage) == GEO_STAGE else rungs_upto(stage)
+
+
+def rung_split(rung):
+    """= train_atoms.rung_split (geo -> T1D0, every other rung -> T1)."""
+    return RUNG_SPLIT.get(rung, SPLIT)
+
+
+def stage_labels(stage):
+    """= train_atoms.stage_labels (3 -> $GEO2B/F_pairs_d0d1.csv, else $LAD/F_pairs_cr2.csv)."""
+    return Path(DD.LABELS) if int(stage) == GEO_STAGE else DEFAULT_LABELS
 
 
 def uname(u):
@@ -509,8 +608,25 @@ def load_inputs(rung, meta, A):
     return H9, usable, info
 
 
+def _dd(fn, *a, **k):
+    """= train_atoms._dd: a d0d1_splits rule -> exit 3 (Stop) / exit 2 (NotReady) with its message."""
+    try:
+        return fn(*a, **k)
+    except DD.NotReady as e:
+        not_ready(str(e))
+    except DD.Stop as e:
+        stop(str(e))
+
+
 def label_provenance(path, sha):
-    """= train_atoms.label_provenance: a passed Q / V output or the original D1PAIR file (tests: others, recorded)."""
+    """= train_atoms.label_provenance: a passed Q / V output or the original D1PAIR file (tests: others, recorded);
+    XG-B3: or the GEO2b D0 + D1 file whose sha256 S_splits_d0d1.json records."""
+    if path == _abs(DD.LABELS):
+        rec = _dd(DD.load_s_splits)[0]
+        if (rec.get("outputs") or {}).get(str(path)) != sha:
+            stop(f"{path}: sha256 differs from {DD.S_SPLITS.name} outputs")
+        return (f"{DD.S_SPLITS.name} all_pass (preliminary {rec.get('preliminary')}), outputs sha256 equal; D0 = GEO1b "
+                f"build {(rec.get('d0') or {}).get('g2_source')} (D0_pairs.csv {str((rec.get('d0') or {}).get('d0_pairs_sha256'))[:12]})")
     if path == _abs(ORIG_LABELS):
         want = json.loads(FU2_S_SPLITS.read_text()).get("inputs_sha256", {}).get("F_pairs")
         if sha != want:
@@ -531,7 +647,8 @@ def label_provenance(path, sha):
 
 
 def load_labels(labels):
-    """= train_atoms.load_labels: label file -> pair table (index pair_id) + info; L-11 invariant on every load."""
+    """= train_atoms.load_labels: label file -> pair table (index pair_id) + info; L-11 invariant on every load (L-11'
+    for the D0 + D1 file, XG-B3)."""
     path = _abs(labels)
     if not path.is_file():
         not_ready(f"label file {path} missing")
@@ -545,29 +662,51 @@ def load_labels(labels):
     if P.pair_id.duplicated().any():
         stop(f"{path}: duplicated pair_id")
     l11 = "original labels"
-    if path != _abs(ORIG_LABELS):
+    if path == _abs(DD.LABELS):
+        l11 = l11_d0d1(path, P)
+    elif path != _abs(ORIG_LABELS):
         O = pd.read_csv(ORIG_LABELS)
-        if list(P.columns) != list(O.columns) or P.pair_id.tolist() != O.pair_id.tolist():
-            stop(f"{path}: columns / pair order differ from {ORIG_LABELS}")
-        ch = {f"dd_{t}" for t in CHANGED_DD}
-        other = [c for c in O.columns if not c.startswith("dd_") and not P[c].equals(O[c])]
-        dmax = {t: _maxdiff(P[f"dd_{t}"], O[f"dd_{t}"]) for t in TARGETS if f"dd_{t}" not in ch}
-        if other or max(dmax.values()) > 1e-12:
-            stop(f"{path}: differs from F_pairs.csv outside dd_d1 / dd_d2 / dd_barrier: columns {other}, dd {dmax}")
-        l11 = dict(non_dd_columns_identical=True, unchanged_dd_max_abs=dmax)
+        l11 = _l11_vs_orig(path, P, O)
     P = P.assign(pair_id=P.pair_id.astype(str), ref_kind=P.ref_kind.fillna("").astype(str),
                  pos=P.pos.fillna("").astype(str), a_rxn=P.a_rxn.astype(int), b_rxn=P.b_rxn.astype(int))
     return P.set_index("pair_id"), dict(path=str(path), sha256=sha, provenance=prov, l11=l11, n_pairs=int(len(P)))
 
 
+def _l11_vs_orig(path, P, O):
+    """= train_atoms._l11_vs_orig (L-11, MA-9)."""
+    if list(P.columns) != list(O.columns) or P.pair_id.tolist() != O.pair_id.tolist():
+        stop(f"{path}: columns / pair order differ from {ORIG_LABELS}")
+    ch = {f"dd_{t}" for t in CHANGED_DD}
+    other = [c for c in O.columns if not c.startswith("dd_") and not P[c].equals(O[c])]
+    dmax = {t: _maxdiff(P[f"dd_{t}"], O[f"dd_{t}"]) for t in TARGETS if f"dd_{t}" not in ch}
+    if other or max(dmax.values()) > 1e-12:
+        stop(f"{path}: differs from F_pairs.csv outside dd_d1 / dd_d2 / dd_barrier: columns {other}, dd {dmax}")
+    return dict(non_dd_columns_identical=True, unchanged_dd_max_abs=dmax)
+
+
+def l11_d0d1(path, P):
+    """= train_atoms.l11_d0d1 (L-11', XG-B3)."""
+    rec = _dd(DD.l11_d0d1, path=path)
+    cr2 = _abs(DEFAULT_LABELS)
+    if _abs(DD.CR2) != cr2:
+        stop(f"d0d1_splits CR2 {DD.CR2} != {cr2}")
+    prov2 = label_provenance(cr2, L.sha256(cr2))
+    O = pd.read_csv(ORIG_LABELS)
+    n1 = len(O)
+    l11 = _l11_vs_orig(cr2, pd.read_csv(cr2), O)           # the D1 prefix IS this file (byte check above)
+    d0 = P.ref_kind.fillna("").astype(str).eq("d0").to_numpy()
+    ids = P.pair_id.astype(str)
+    if len(P) != n1 + rec["n_d0_rows"] or d0[:n1].any() or not d0[n1:].all() \
+            or (ids.str.startswith("D").to_numpy() != d0).any():
+        stop(f"{path}: rows are not 'the {n1} D1 rows, then {rec['n_d0_rows']} D0 rows' (ref_kind d0 <-> D#####)")
+    return dict(rec, F_pairs_cr2_provenance=prov2, F_pairs_cr2_l11=l11, n_rows=int(len(P)))
+
+
 _FOLDS: dict = {}
 
 
-def load_folds():
-    """the FU2 T1 split files (sha256 = FU2 S_splits.json; rung independent) + S_folds.csv (sha256 = S_splits
-    inputs_sha256.S_folds): core per pair (the rev 9 inner GroupKFold groups) and the d1_train.masks arm C check."""
-    if _FOLDS:
-        return _FOLDS
+def _s_folds():
+    """S_folds.csv (sha256 = FU2 S_splits.json inputs_sha256.S_folds) -> (frame, srep, sha)."""
     srep = json.loads(FU2_S_SPLITS.read_text())
     s_sha = L.sha256(S_FOLDS)
     if s_sha != (srep.get("inputs_sha256") or {}).get("S_folds"):
@@ -578,24 +717,51 @@ def load_folds():
             stop(f"{S_FOLDS}: column {col} is {S[col].dtype}, not bool")
     if S.pair_id.duplicated().any() or S.core.isna().any():
         stop(f"{S_FOLDS}: duplicated pair_id or missing core")
-    S = S.assign(pair_id=S.pair_id.astype(str))
+    return S.assign(pair_id=S.pair_id.astype(str)), srep, s_sha
+
+
+def _masks_check(S, k, rec, p, d1_only=False):
+    """d1_train.masks(u), u = T1 arm C fold k: test = fold == k & (P_sens | A_main), train = fold != k & T_main (S order);
+    d1_only: compared with the D1 part of the lists (XG-B1)."""
+    te = S.loc[(S.fold_T1 == k) & (S.in_P_sens | S.in_A_main), "pair_id"].tolist()
+    tr = S.loc[(S.fold_T1 != k) & S.in_T_main, "pair_id"].tolist()
+    mtr = [q for q in rec["train"] if not DD.is_d0_id(q)] if d1_only else list(rec["train"])
+    mte = [q for q in rec["test"] if not DD.is_d0_id(q)] if d1_only else list(rec["test"])
+    if tr != mtr or te != mte:
+        stop(f"{p}: train / test lists differ from the d1_train.masks arm C rule on {S_FOLDS}")
+
+
+def load_folds(split=SPLIT):
+    """the FU2 T1 split files (sha256 = FU2 S_splits.json; rung independent) + S_folds.csv (sha256 = S_splits
+    inputs_sha256.S_folds): core per pair (the rev 9 inner GroupKFold groups) and the d1_train.masks arm C check.
+    split 'T1D0' (XG-B1): the GEO2b split files through d0d1_splits.load_s_splits; the masks check on their D1 parts."""
+    if split in _FOLDS:
+        return _FOLDS[split]
+    if split not in (SPLIT, SPLIT_D0D1):
+        stop(f"split {split}: LADDER uses T1 only (spec 4-3)")
+    S, srep, s_sha = _s_folds()
     folds, files = {}, {}
-    for k in range(NF):
-        name = f"{SPLIT}__f{k}.json"
-        p = F.SPLITS / name
-        if not p.is_file() or L.sha256(p) != srep["units"][name]["sha256"]:
-            stop(f"{p} missing or changed after {FU2_S_SPLITS}")
-        rec = json.loads(p.read_text())
-        # d1_train.masks(u), u = T1 arm C fold k: test = fold == k & (P_sens | A_main), train = fold != k & T_main (S order)
-        te = S.loc[(S.fold_T1 == k) & (S.in_P_sens | S.in_A_main), "pair_id"].tolist()
-        tr = S.loc[(S.fold_T1 != k) & S.in_T_main, "pair_id"].tolist()
-        if tr != list(rec["train"]) or te != list(rec["test"]):
-            stop(f"{p}: train / test lists differ from the d1_train.masks arm C rule on {S_FOLDS}")
-        folds[k] = rec
-        files[f"split_T1_f{k}"] = str(p)
-    _FOLDS.update(srep=srep, folds=folds, files=files, core=dict(zip(S.pair_id, S.core)),
-                  s_splits_sha=L.sha256(FU2_S_SPLITS), s_folds_sha=s_sha)
-    return _FOLDS
+    if split == SPLIT_D0D1:
+        if _abs(DD.FU2_SPLITS) != _abs(F.SPLITS) or _abs(DD.FU2_S_SPLITS) != _abs(FU2_S_SPLITS):
+            stop(f"d0d1_splits FU2 paths {DD.FU2_SPLITS}, {DD.FU2_S_SPLITS} != {F.SPLITS}, {FU2_S_SPLITS}")
+        rec_s, folds, files = _dd(DD.load_s_splits)
+        for k in range(NF):
+            _masks_check(S, k, folds[k], files[f"split_T1D0_f{k}"], d1_only=True)
+        s_index = Path(DD.S_SPLITS)
+    else:
+        for k in range(NF):
+            name = f"{SPLIT}__f{k}.json"
+            p = F.SPLITS / name
+            if not p.is_file() or L.sha256(p) != srep["units"][name]["sha256"]:
+                stop(f"{p} missing or changed after {FU2_S_SPLITS}")
+            rec = json.loads(p.read_text())
+            _masks_check(S, k, rec, p)
+            folds[k] = rec
+            files[f"split_T1_f{k}"] = str(p)
+        s_index = FU2_S_SPLITS
+    _FOLDS[split] = dict(srep=srep, folds=folds, files=files, core=dict(zip(S.pair_id, S.core)),
+                         s_splits_sha=L.sha256(s_index), s_splits_path=str(s_index), s_folds_sha=s_sha)
+    return _FOLDS[split]
 
 
 _BASE: dict = {}
@@ -609,6 +775,9 @@ def rung_base(rung, labels):
     if rung not in RUNGS:
         stop(f"unknown rung {rung}")
     t0, i0 = time.time(), len(_OPEN_LOG)
+    split = rung_split(rung)
+    if split == SPLIT_D0D1 and _abs(GEO2) != _abs(DD.GEO2):
+        stop(f"$GEO2_SCRATCH roots differ: train_xgb {GEO2} vs d0d1_splits {DD.GEO2}")
     meta = load_meta(rung)
     A = load_x182(meta)
     H9, ur, hinfo = load_inputs(rung, meta, A)
@@ -617,11 +786,14 @@ def rung_base(rung, labels):
         stop(f"rung {rung}: {int(nofeat.sum())} usable reactions without a finite row in {meta['x182']}, e.g. "
              f"{meta['rids'][nofeat][:5].tolist()} (P_{rung} would differ from the atom models')")
     P, linfo = load_labels(labels)
-    fo = load_folds()
+    fo = load_folds(split)
     fold_ids = {q for f in fo["folds"].values() for k in FOLD_KEYS for q in f[k]}
     miss = sorted(fold_ids - set(P.index))
     if miss:
         stop(f"{len(miss)} split pair ids are not in {linfo['path']}: {miss[:5]}")
+    is_d0 = P.ref_kind.eq("d0").to_numpy()
+    if split == SPLIT and is_d0[np.isin(P.index.to_numpy(), sorted(fold_ids))].any():
+        stop(f"split T1 holds D0 pairs (ref_kind d0) of {linfo['path']}")
     y = P[[f"dd_{t}" for t in TARGETS]].to_numpy(float)
     row = meta["row"]
     ra = np.array([row.get(int(r), -1) for r in P.a_rxn])
@@ -635,23 +807,29 @@ def rung_base(rung, labels):
     dH[usable_pair] = H10[ra[usable_pair]] - H10[rb[usable_pair]]
     pid = P.index.to_numpy()
     core = np.array([fo["core"].get(q) for q in pid], dtype=object)
+    if split == SPLIT_D0D1:                                         # XG-B2: D0 pairs keep their label-file core
+        core[is_d0] = P.core.to_numpy()[is_d0]
     if any(core[k] is None for k in range(len(pid)) if pid[k] in fold_ids):
         stop(f"a split pair has no core in {S_FOLDS}")
     in_folds = np.isin(pid, sorted({q for f in fo["folds"].values() for q in f["train"] + f["test"]}))
     pair_list = sorted(pid[usable_pair & in_folds].tolist())
     inputs = dict(meta["inputs"], inputs_table=hinfo["path"], labels=linfo["path"], labels_original_l11=(
-        str(ORIG_LABELS) if linfo["path"] != str(_abs(ORIG_LABELS)) else None), split_s_splits=str(FU2_S_SPLITS),
+        str(ORIG_LABELS) if linfo["path"] != str(_abs(ORIG_LABELS)) else None), split_s_splits=fo["s_splits_path"],
         split_s_folds=str(S_FOLDS), **fo["files"])
+    if split == SPLIT_D0D1:
+        inputs.update(labels_cr2_l11=str(_abs(DEFAULT_LABELS)), labels_v_report=str(L.RES / "V_report.json"))
     sha = dict(meta["sha"], inputs_table=hinfo["sha256"], labels=linfo["sha256"], s_splits=fo["s_splits_sha"],
                s_folds=fo["s_folds_sha"])
     b = dict(rids=meta["rids"], glob_cols=meta["glob_cols"], x182=A, H9=H9, H10=H10, usable_rxn=ur, hinfo=hinfo, P=P,
              linfo=linfo, folds=fo["folds"], y=y, pid=pid, pid_row={p: k for k, p in enumerate(pid)}, core=core, ra=ra,
              rb=rb, has_tok=has_tok, usable_pair=usable_pair, dH=dH, pair_list=pair_list,
              pair_list_sha=C.list_sha([(q,) for q in pair_list]), inputs=inputs, sha=sha, labels_path=linfo["path"],
-             opened=list(_OPEN_LOG[i0:]), load_seconds=time.time() - t0)
+             opened=list(_OPEN_LOG[i0:]), load_seconds=time.time() - t0, split=split, is_d0=is_d0)
+    n_d0 = int((usable_pair & in_folds & is_d0).sum())
     print(f"[data] rung {rung}: {len(meta['rids'])} token reactions, {hinfo['n_usable']} usable, {len(pair_list)} pairs "
-          f"in P_{rung} ({int(usable_pair.sum())} usable of {len(P)}), labels {Path(linfo['path']).name} "
-          f"({b['load_seconds']:.0f} s)", flush=True)
+          f"in P_{rung} ({int(usable_pair.sum())} usable of {len(P)}), labels {Path(linfo['path']).name}"
+          + (f", split {split} ({n_d0} D0 pairs)" if split == SPLIT_D0D1 else "")
+          + f" ({b['load_seconds']:.0f} s)", flush=True)
     _BASE[key] = b
     return b
 
@@ -661,7 +839,8 @@ class XData:
     dH (SH baseline), the usable-pair filter and the split lists (= train_atoms.LadData without the tokens)."""
 
     _KEYS = ("rids", "glob_cols", "H10", "usable_rxn", "hinfo", "P", "linfo", "folds", "y", "pid", "pid_row", "core",
-             "ra", "rb", "has_tok", "usable_pair", "dH", "pair_list", "pair_list_sha", "inputs", "sha", "opened")
+             "ra", "rb", "has_tok", "usable_pair", "dH", "pair_list", "pair_list_sha", "inputs", "sha", "opened",
+             "is_d0")
 
     def __init__(self, rung, arm, labels=DEFAULT_LABELS):
         if arm not in ARMS:
@@ -670,6 +849,7 @@ class XData:
         for k in self._KEYS:
             setattr(self, k, b[k])
         self.rung, self.arm, self.labels = rung, arm, b["labels_path"]
+        self.split_name = b["split"]
         if arm == "S":
             self.X, cols = b["x182"], list(b["glob_cols"])
         else:
@@ -681,10 +861,12 @@ class XData:
 
     def split(self, a, b=None):
         """split(k) or split("T1", k) -> {train, test, inner_train, inner_val (usable pair-table rows), inner (4 rev 9
-        inner folds after the filter), dropped, list sha256}; leak checks (= train_atoms LadData.split + inner folds)."""
-        split, k = (SPLIT, a) if b is None else (a, b)
-        if split != SPLIT:
-            stop(f"split {split}: LADDER uses T1 only (spec 4-3)")
+        inner folds after the filter), dropped, list sha256}; leak checks (= train_atoms LadData.split + inner folds).
+        Rung geo: split T1D0 (XG-B2, XG-B5)."""
+        split, k = (self.split_name, a) if b is None else (a, b)
+        if split != self.split_name:
+            stop(f"split {split}: LADDER uses T1 only (spec 4-3)" if self.split_name == SPLIT else
+                 f"split {split}: rung {self.rung} uses {self.split_name} only (XG-B1)")
         k = int(k)
         if k in self._splits:
             return self._splits[k]
@@ -703,12 +885,17 @@ class XData:
         rx = lambda r: set(self.ra[r].tolist()) | set(self.rb[r].tolist())          # noqa: E731
         if rx(out["test"]) & rx(out["train"]):
             stop(f"{self.rung} fold {k}: test reaction in train")
-        # rev 9 d1_train.inner_folds: GroupKFold(4), group = core, on the unfiltered outer-train list (S order)
+        # rev 9 d1_train.inner_folds: GroupKFold(4), group = core, on the unfiltered outer-train list (S order);
+        # T1D0 (XG-B2): on its D1 part only, the D0 training pairs join every inner training side
         from sklearn.model_selection import GroupKFold
         tr_all = np.array([self.pid_row[q] for q in rec["train"]], dtype=int)
+        d0d1 = self.split_name == SPLIT_D0D1
+        tr_d0 = tr_all[self.is_d0[tr_all]] if d0d1 else tr_all[:0]
+        tr_d1 = tr_all[~self.is_d0[tr_all]] if d0d1 else tr_all
         inner = []
-        for j, (ia, ib) in enumerate(GroupKFold(C.N_INNER).split(tr_all, groups=self.core[tr_all])):
-            itr_all, iva_all = tr_all[ia], tr_all[ib]
+        for j, (ia, ib) in enumerate(GroupKFold(C.N_INNER).split(tr_d1, groups=self.core[tr_d1])):
+            itr_all = np.r_[tr_d1[ia], tr_d0] if len(tr_d0) else tr_d1[ia]
+            iva_all = tr_d1[ib]
             if j == 0 and (_ids(self, itr_all) != list(rec["inner_train"]) or _ids(self, iva_all) != list(rec["inner_val"])):
                 stop(f"{self.rung} fold {k}: GroupKFold(4) fold 0 differs from the split file inner_train / inner_val")
             if set(self.core[itr_all].tolist()) & set(self.core[iva_all].tolist()):
@@ -716,6 +903,8 @@ class XData:
             itr, iva = itr_all[self.usable_pair[itr_all]], iva_all[self.usable_pair[iva_all]]
             if not len(itr) or not len(iva) or set(itr.tolist()) & set(iva.tolist()):
                 stop(f"{self.rung} fold {k} inner {j}: empty or overlapping inner sides")
+            if d0d1 and self.is_d0[iva].any():
+                stop(f"{self.rung} fold {k} inner {j}: D0 pairs on a validation side (XG-B5)")
             inner.append(dict(train=itr, val=iva, dropped=dict(train=int(len(itr_all) - len(itr)),
                                                               val=int(len(iva_all) - len(iva)))))
         if not (np.array_equal(inner[0]["train"], out["inner_train"]) and np.array_equal(inner[0]["val"], out["inner_val"])):
@@ -727,14 +916,24 @@ class XData:
                    val_sha=C.list_sha([(q,) for q in ids["inner_val"]]), test_sha=C.list_sha([(q,) for q in ids["test"]]),
                    inner_sha=C.list_sha([(q,) for f in inner for q in _ids(self, f["train"]) + ["|"] + _ids(self, f["val"])
                                          + ["||"]]))
+        if d0d1:
+            out["n_d0"] = {key: int(self.is_d0[out[key]].sum()) for key in FOLD_KEYS}
         self._splits[k] = out
         return out
+
+    def d0_rows(self, rows):
+        """XG-B4: the D0 pairs among pair-table rows (empty for T1)."""
+        rows = np.asarray(rows, dtype=int)
+        return rows[self.is_d0[rows]] if len(rows) else rows
 
 
 _DATA: dict = {}
 
 
-def get_data(rung, arm, labels=DEFAULT_LABELS):
+def get_data(rung, arm, labels=None):
+    """rung x arm data; labels None -> the rung's default label file (= train_atoms.get_data)."""
+    if labels is None:
+        labels = stage_labels(GEO_STAGE) if rung_split(rung) == SPLIT_D0D1 else DEFAULT_LABELS
     key = (rung, arm, str(_abs(labels)))
     if key not in _DATA:
         _DATA[key] = XData(rung, arm, labels)
@@ -917,21 +1116,165 @@ def gate_c_stage2():
     return dict(c_tests_sha256=L.sha256(L.RES / "C_tests.json"))
 
 
-def _check_root(root, smoke):
+# ---------------------------------------------------------------- GEO2b stage 3 gates (= train_atoms.py GA-4 .. GA-7, GB-2/6)
+def ladder_results_changed(rec):
+    """= train_atoms.ladder_results_changed: snapshot paths (repo-relative) whose file is missing or changed now."""
+    snap = rec.get("ladder_results_sha256")
+    if not isinstance(snap, dict) or not snap:
+        return [f"{PREREG_GEO2_JSON.name} has no ladder_results_sha256 snapshot"]
+    bad = []
+    for rel, s in sorted(snap.items()):
+        p = L.REPO / rel
+        if not p.is_file() or L.sha256(p) != s:
+            bad.append(rel)
+    return bad
+
+
+def gate_prereg_geo2(need, rungs=()):
+    """= train_atoms.gate_prereg_geo2 (gate_add3 rule on PREREG_GEO2B.md + prereg_geo2b.json, json rungs = ["geo"] and
+    split = "T1D0", inputs_sha256 ⊇ need, listed files unchanged, LADDER result snapshot unchanged); exit 3 otherwise."""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(L.HERE), *a], capture_output=True, text=True)
+    bad = []
+    for p in (PREREG_GEO2_MD, PREREG_GEO2_JSON):
+        if not p.is_file():
+            bad.append(f"{p.name} missing")
+        elif git("ls-files", "--error-unmatch", str(p)).returncode != 0:
+            bad.append(f"{p.name} not committed")
+        elif git("diff", "--quiet", "HEAD", "--", str(p)).returncode != 0:
+            bad.append(f"{p.name} modified since its commit")
+    rec = {}
+    if not bad:
+        rec = json.loads(PREREG_GEO2_JSON.read_text())
+        if L.sha256(PREREG_GEO2_MD) != rec.get("md_sha256"):
+            bad.append(f"{PREREG_GEO2_MD.name} sha256 differs from {PREREG_GEO2_JSON.name} md_sha256")
+        if list(rec.get("rungs") or []) != list(STAGE_RUNGS[GEO_STAGE]) or rec.get("split") != SPLIT_D0D1:
+            bad.append(f"{PREREG_GEO2_JSON.name} rungs {rec.get('rungs')} / split {rec.get('split')} != "
+                       f"{list(STAGE_RUNGS[GEO_STAGE])} / {SPLIT_D0D1}")
+        ins = rec.get("inputs_sha256") or {}
+        lack = sorted(set(need) - set(ins))
+        if lack:
+            bad.append(f"{PREREG_GEO2_JSON.name} inputs_sha256 lacks {lack}")
+        skipped = []
+        for path, s in ins.items():
+            if path not in need and _foreign_to(path, rungs):
+                skipped.append(path)
+                continue
+            if not Path(path).is_file() or L.sha256(path) != s:
+                bad.append(f"input {path} changed or missing")
+        _GATE["prereg_geo2_not_opened_other_rungs"] = skipped
+        changed = ladder_results_changed(rec)
+        if changed:
+            bad.append(f"LADDER result files changed since the pre-registration (spec 14): {changed[:8]}")
+    if bad:
+        print("PREREG_GEO2B gate (GEO2 spec 8-3: commit PREREG_GEO2B.md + prereg_geo2b.json before any stage-3 training):"
+              "\n  " + "\n  ".join(bad), file=sys.stderr, flush=True)
+        sys.exit(3)
+    _GATE["prereg_geo2"] = L.sha256(PREREG_GEO2_MD)
+    return dict(rec, git_head=git("rev-parse", "HEAD").stdout.strip())
+
+
+def gate_p_geo(rungs, labels):
+    """= train_atoms.gate_p_geo (GB-6): P_build_geo.json all_pass, not stop, table sha256; P_geo_report.json stop false."""
+    for p in (P_BUILD_GEO, P_GEO_REPORT):
+        if not p.is_file():
+            not_ready(f"{p} missing (GEO2b Phase P of the inputs role: GEO2.md 6-1 P / 7)")
+    b = json.loads(P_BUILD_GEO.read_text())
+    pr = json.loads(P_GEO_REPORT.read_text())
+    if b.get("running") or pr.get("running"):
+        not_ready(f"{P_BUILD_GEO.name} / {P_GEO_REPORT.name} is being written")
+    bad = [] if b.get("all_pass") and not b.get("stop") else [f"P_build_geo all_pass {b.get('all_pass')}, stop "
+                                                              f"{b.get('stop')}"]
+    for r in rungs:
+        t = inputs_path(r)
+        want = (b.get("outputs") or {}).get(str(t))
+        if want is None or not t.is_file() or L.sha256(t) != want:
+            bad.append(f"{t} sha256 != {P_BUILD_GEO.name} outputs ({want})")
+    if pr.get("stop"):
+        bad.append(f"{P_GEO_REPORT.name} stop: {pr.get('stop_reasons') or pr.get('stop_reason')}")
+    if bad:
+        stop("GEO2b Phase P state differs from what training needs (rerun the inputs role's P step): " + "; ".join(bad))
+    return dict(p_build_geo_sha256=L.sha256(P_BUILD_GEO), p_geo_report_sha256=L.sha256(P_GEO_REPORT),
+                sha256=L.sha256(P_BUILD_GEO), rungs=list(rungs), labels=str(_abs(labels)))
+
+
+def gate_splits_d0d1(labels):
+    """= train_atoms.gate_splits_d0d1 (GB-2)."""
+    if _abs(labels) != _abs(DD.LABELS):
+        stop(f"stage 3 trains on {DD.LABELS} only (GB-3), got --labels {labels}")
+    fo = load_folds(SPLIT_D0D1)
+    rec = _dd(DD.load_s_splits)[0]
+    return dict(s_splits_sha256=fo["s_splits_sha"], preliminary=rec.get("preliminary"),
+                n_d0_ok=(rec.get("d0") or {}).get("n_ok"), labels_sha256=(rec.get("labels") or {}).get("sha256"))
+
+
+def gate_c_geo():
+    """= train_atoms.gate_c_geo: analysis/geo2/results/C_tests_geo.json all_pass (full geo mode) and (XG-G10) its
+    code_sha256 of the trainer files = the files now."""
+    c = json.loads(C_TESTS_GEO.read_text()) if C_TESTS_GEO.is_file() else {}
+    if not c.get("all_pass") or c.get("mode") not in (None, "geo"):
+        stop(f"stage 3 needs {C_TESTS_GEO} all_pass in the full geo mode (tests/run_tests.py geo, GEO2 spec 8-2): "
+             f"all_pass {c.get('all_pass')}, mode {c.get('mode')}")
+    rec = c.get("code_sha256") if isinstance(c.get("code_sha256"), dict) else {}
+    diff = [k for k, p in C_GEO_TRAINER_CODE.items() if rec.get(k) != L.sha256(p)]
+    if diff:
+        stop(f"{C_TESTS_GEO.name} code_sha256 differs from the code now for {diff}: the C tests did not run on the code "
+             f"that would train (XG-G10; rerun tests/run_tests.py geo gpu + cpu + merge)")
+    return dict(c_tests_geo_sha256=L.sha256(C_TESTS_GEO), code_checked=list(C_GEO_TRAINER_CODE))
+
+
+def guard_ladder_write(stage, what):
+    """XG-G9 (= train_atoms GA-13): smoke / run / check with --stage 1|2 and l6 without --stage 3 write LADDER files
+    (results/C_smoke_xgb.json, L_xgb_report.json, C_l6_xgb.json, $LAD/smoke_xgb, $LAD/smoke_xgb_l6, $LAD/units). STOP
+    (exit 3) before any write unless CODE_SHA = results/L_xgb_report.json code_sha256, the code that wrote the LADDER
+    XGB results (no such file = a fresh LADDER tree: the old behaviour). Stage 3 is not affected; `list` never calls
+    this."""
+    if int(stage) == GEO_STAGE:
+        return
+    ref = L.RES / "L_xgb_report.json"
+    if not ref.is_file():
+        return
+    try:
+        rec = json.loads(ref.read_text()).get("code_sha256")
+    except (OSError, ValueError, AttributeError) as e:
+        stop(f"{what} --stage {stage}: {ref} unreadable ({type(e).__name__}); refusing to write LADDER files (XG-G9)")
+    rec = rec if isinstance(rec, dict) else {}
+    diff = sorted(k for k in set(rec) | set(CODE_SHA) if rec.get(k) != CODE_SHA.get(k))
+    if diff:
+        stop(f"{what} --stage {stage} refused: this code differs from the code of the LADDER XGB results (results/"
+             f"L_xgb_report.json code_sha256: {diff}); with the GEO2 additions the stage-1 / 2 commands other than list "
+             f"would rewrite or invalidate LADDER files (GEO2 8-1 / 13 / 14; XG-G9)")
+
+
+def _check_root(root, smoke, rung=None):
     r = _abs(root)
     u = _abs(UNITS)
     inside = r == u or u in r.parents
     if smoke and inside:
         stop("--smoke / l6 never write to $LAD/units")
-    if inside and not _GATE.get("add3"):
+    if inside and not _GATE.get("add3") and not (rung in GEO_INPUTS and _GATE.get("prereg_geo2")):
         stop("writing $LAD/units needs the ADD3 gate (train_xgb.py run)")
+    if inside and rung in GEO_INPUTS and not _GATE.get("prereg_geo2"):          # XG-G4
+        stop("writing geo units to $LAD/units needs the PREREG_GEO2B gate (train_xgb.py run --stage 3)")
     L.assert_path(r / "probe")
     return r
 
 
 def fingerprint(D, u, sp, idx, smoke=False):
+    fp = _fingerprint_dict(D, u, sp, idx, smoke)
+    if D.rung in GEO_INPUTS:                    # XG-G5 (= train_atoms GA-8)
+        fp["prereg_geo2b"] = None if smoke else (L.sha256(PREREG_GEO2_MD) if PREREG_GEO2_MD.is_file() else None)
+        fp["d0d1_code"] = L.sha256(CODE_D0D1)
+        fp["split"] = D.split_name
+        fp["rules_d0d1"] = ("inner GroupKFold(4) on the D1 part of the outer-train list only; every D0 training pair in "
+                            "every inner training side, none in a validation side (XG-B2); gate M-1' also on 200 random "
+                            "D0 training pairs (XG-B4)")
+    return norm(fp)
+
+
+def _fingerprint_dict(D, u, sp, idx, smoke=False):
     sh = D.arm == "SH"
-    return norm(dict(
+    return dict(
         code=CODE_VERSION, code_sha256=CODE_SHA, rung=D.rung, arm=D.arm, model=MODEL,
         inputs_table=D.sha["inputs_table"], labels=D.sha["labels"], pair_list=D.pair_list_sha, split_pairs=sp["pairs_sha"],
         inner_folds=sp["inner_sha"], s_splits=D.sha["s_splits"], s_folds=D.sha["s_folds"], t_report=D.sha["t_report"],
@@ -947,14 +1290,14 @@ def fingerprint(D, u, sp, idx, smoke=False):
                    antisym=dict(final_tol=F.ANTISYM_TOL, model_tol=C.ANTISYM_TOL, n=C.ANTISYM_N),
                    sh=("beta = sum(dH dy) / sum(dH^2) no intercept on the fit pairs, c_ghost 0; target r = y - beta dH; "
                        "score |beta dH + g - y|") if sh else None),
-        versions=versions()))
+        versions=versions())
 
 
 # ================================================================ one unit
 def run_unit(D, u, root=UNITS, cells=None, smoke=False):
     """tune (per target: grid cells x 4 inner GroupKFold folds) -> final (per target best cell, all training pairs) ->
     test predictions + gate M-1' on every fit for one unit L__<rung>__<arm>__XGB__f<k>."""
-    root = _check_root(root, smoke)
+    root = _check_root(root, smoke, getattr(D, "rung", None))
     root.mkdir(parents=True, exist_ok=True)
     if (u["rung"], u["arm"]) != (D.rung, D.arm) or u.get("model") != MODEL:
         stop(f"unit {u} does not match the data ({D.rung}, {D.arm}, {MODEL})")
@@ -977,6 +1320,12 @@ def run_unit(D, u, root=UNITS, cells=None, smoke=False):
     # gate pairs: 200 random test pairs (rev 9 d1_train.fit_final rng rule, seeded by the unit name)
     rng = np.random.default_rng(C.SEED + int(hashlib.sha256(name.encode()).hexdigest()[:8], 16) % 10 ** 6)
     gp = te[rng.choice(len(te), size=min(C.ANTISYM_N, len(te)), replace=False)]
+    d0tr = D.d0_rows(tr) if hasattr(D, "d0_rows") else tr[:0]
+    n_gp_d0 = 0
+    if len(d0tr):                               # XG-B4: + 200 random D0 training pairs (own rng), every fit
+        rng0 = np.random.default_rng(C.SEED + int(hashlib.sha256((name + "d0").encode()).hexdigest()[:8], 16) % 10 ** 6)
+        gp0 = d0tr[rng0.choice(len(d0tr), size=min(C.ANTISYM_N, len(d0tr)), replace=False)]
+        gp, n_gp_d0 = np.r_[gp, gp0], int(len(gp0))
     # ---- tuning
     fits = []
     for f in inner:
@@ -1058,6 +1407,10 @@ def run_unit(D, u, root=UNITS, cells=None, smoke=False):
                cpu_seconds=float(sum(tune_s) + sum(final[t]["seconds"] for t in TARGETS)), n_jobs=N_JOBS,
                wall_seconds=time.time() - t_unit, host=socket.gethostname(), slurm_job=os.environ.get("SLURM_JOB_ID"),
                slurm_array_task=os.environ.get("SLURM_ARRAY_TASK_ID"), decisions=DECISIONS)
+    if "n_d0" in sp:                                                       # XG-B4 / XG-B5 (T1D0 only)
+        rec.update(split=D.split_name, n_d0=sp["n_d0"], n_gate_pairs_d0_train=n_gp_d0,
+                   n_d0_inner=[dict(train=int(D.is_d0[f["train"]].sum()), val=int(D.is_d0[f["val"]].sum()))
+                               for f in inner])
     write_json(js, rec)
     print(f"  {name}: done ({rec['wall_seconds']:.0f} s wall, {rec['cpu_seconds'] / 3600:.2f} CPU-h) "
           f"val {json.dumps({t: round(v, 4) for t, v in rec['val_kcal_mae'].items()})}", flush=True)
@@ -1066,10 +1419,13 @@ def run_unit(D, u, root=UNITS, cells=None, smoke=False):
 
 # ================================================================ commands
 def cmd_smoke(stage, labels):
-    """spec 8 smoke for XGB -> results/C_smoke_xgb.json; writes only $LAD/smoke_xgb."""
-    L.assert_path(SMOKE / "probe")
-    if SMOKE.exists():
-        shutil.rmtree(SMOKE)
+    """spec 8 smoke for XGB -> results/C_smoke_xgb.json; writes only $LAD/smoke_xgb.
+    Stage 3 (XG-G2): results/C_smoke_xgb_geo.json, scratch $LAD/smoke_xgb_geo."""
+    guard_ladder_write(stage, "smoke")                 # XG-G9: before the scratch folder is removed
+    smoke_dir = SMOKE_GEO if int(stage) == GEO_STAGE else SMOKE
+    L.assert_path(smoke_dir / "probe")
+    if smoke_dir.exists():
+        shutil.rmtree(smoke_dir)
     cells = [0, len(GRID) - 1]
     out = dict(versions=versions(), n_jobs=N_JOBS, labels=str(_abs(labels)), stage=int(stage), cells=[GRID[c] for c in cells],
                configs={}, code=CODE_VERSION, code_sha256=CODE_SHA, decisions=DECISIONS)
@@ -1079,7 +1435,7 @@ def cmd_smoke(stage, labels):
             D = get_data(rung, arm, labels)
             u = dict(rung=rung, arm=arm, model=MODEL, fold=0)
             t0 = time.time()
-            rec = run_unit(D, u, root=SMOKE, cells=cells, smoke=True)
+            rec = run_unit(D, u, root=smoke_dir, cells=cells, smoke=True)
             g_ok = bool(rec["gates_ok"]) and all(rec["final"][t]["gate_M1"]["ok"] for t in TARGETS)
             ok &= g_ok
             ts, fs = rec["fit_seconds"]["tune"], rec["fit_seconds"]["final"]
@@ -1098,11 +1454,12 @@ def cmd_smoke(stage, labels):
     out["stage_cpu_hours_estimate"] = stage_cpu / 3600
     out["stage_wall_hours_estimate_4x32"] = stage_cpu / 3600 / (4 * 32)
     out["ok"] = bool(ok)
-    write_json(L.RES / "C_smoke_xgb.json", out)
+    write_json(res_out("C_smoke_xgb.json", stage), out)
     return 0 if ok else 3
 
 
 def cmd_run(i, n, stage, labels):
+    guard_ladder_write(stage, "run")                   # XG-G9
     i = os.environ.get("SLURM_ARRAY_TASK_ID", "") if str(i) == "A" else str(i)
     if not (i.isdigit() and str(n).isdigit() and 0 <= int(i) < int(n)):
         print(f"usage: run <i|A> <n> with 0 <= i < n (got i={i!r}, n={n!r}; '@I' is replaced by jobs/py.slurm)",
@@ -1114,12 +1471,24 @@ def cmd_run(i, n, stage, labels):
         return 0
     rs = sorted({u["rung"] for u in us})
     need = {str(_abs(labels))} | {str(_abs(inputs_path(r))) for r in rs}
-    add3 = gate_add3(need, rs)
-    gp = gate_p(rs, labels)
-    if int(stage) == 2:
-        gate_c_stage2()
-    print(f"[M] ADD3 ok (git {add3['git_head']}), P_report ok ({gp['sha256'][:12]}), {versions()}, n_jobs {N_JOBS}, "
-          f"slice {i}/{n}: {len(us)} units", flush=True)
+    if int(stage) == GEO_STAGE:                        # XG-G3: PREREG_GEO2B, GEO2b Phase P, D0D1 splits, C_tests_geo
+        if set(rs) - set(STAGE_RUNGS[GEO_STAGE]):
+            stop(f"stage 3 holds the geo rung only, got {rs}")
+        pre = gate_prereg_geo2(need, rs)
+        gp = gate_p_geo(rs, labels)
+        gs = gate_splits_d0d1(labels)
+        gc = gate_c_geo()
+        print(f"[M] PREREG_GEO2B ok (git {pre['git_head']}, md {_GATE['prereg_geo2'][:12]}), GEO2b P ok "
+              f"({gp['p_build_geo_sha256'][:12]}), D0D1 splits ok ({gs['s_splits_sha256'][:12]}, {gs['n_d0_ok']} D0 "
+              f"pairs), C_tests_geo ok ({gc['c_tests_geo_sha256'][:12]}), {versions()}, n_jobs {N_JOBS}, slice {i}/{n}: "
+              f"{len(us)} units", flush=True)
+    else:
+        add3 = gate_add3(need, rs)
+        gp = gate_p(rs, labels)
+        if int(stage) == 2:
+            gate_c_stage2()
+        print(f"[M] ADD3 ok (git {add3['git_head']}), P_report ok ({gp['sha256'][:12]}), {versions()}, n_jobs {N_JOBS}, "
+              f"slice {i}/{n}: {len(us)} units", flush=True)
     for u in us:
         t0 = time.time()
         D = get_data(u["rung"], u["arm"], labels)
@@ -1129,8 +1498,10 @@ def cmd_run(i, n, stage, labels):
 
 
 def cmd_check(stage, labels):
-    """every XGB unit of the rungs up to the stage is present, unchanged and current -> results/L_xgb_report.json."""
-    rungs = rungs_upto(stage)
+    """every XGB unit of the rungs up to the stage is present, unchanged and current -> results/L_xgb_report.json.
+    Stage 3 (XG-G6): the geo XGB units only -> results/L_xgb_report_geo.json."""
+    guard_ladder_write(stage, "check")                 # XG-G9: never rewrite the LADDER results/L_xgb_report.json
+    rungs = collect_rungs(stage)
     us = unit_list(rungs=rungs)
     missing = [uname(u) for u in us if not ((UNITS / f"{uname(u)}.json").is_file()
                                             and (UNITS / f"{uname(u)}.parquet").is_file())]
@@ -1178,21 +1549,25 @@ def cmd_check(stage, labels):
     rep = dict(stage=int(stage), rungs=list(rungs), n_units=len(us), labels=str(_abs(labels)), bad=bad, ok=not bad,
                code=CODE_VERSION, code_sha256=CODE_SHA, versions=versions(), units=units,
                cpu_hours=float(sum((v["cpu_seconds"] or 0) for v in units.values()) / 3600))
-    write_json(L.RES / "L_xgb_report.json", rep)
+    write_json(res_out("L_xgb_report.json", stage), rep)
     print(f"[check] {len(us)} XGB units, {len(bad)} problems" + ("" if not bad else ": " + "; ".join(bad[:5])), flush=True)
     return 3 if bad else 0
 
 
-def cmd_l6():
-    """L-6 (spec 8): g1 x S fold 0 with the original labels = the rev 9 C-XGB units (<= 1e-6) -> results/C_l6_xgb.json."""
+def cmd_l6(stage=1):
+    """L-6 (spec 8): g1 x S fold 0 with the original labels = the rev 9 C-XGB units (<= 1e-6) -> results/C_l6_xgb.json.
+    stage 3 (XG-G7, GEO2 8-2 regression 2): the same run and comparison -> results/C_l6_xgb_geo.json, scratch
+    $LAD/smoke_xgb_l6_geo (the LADDER C_l6_xgb.json and $LAD/smoke_xgb_l6 are not touched)."""
+    guard_ladder_write(stage, "l6")                    # XG-G9: l6 without --stage 3 would rewrite C_l6_xgb.json
     u = dict(rung="g1", arm="S", model=MODEL, fold=0)
-    L.assert_path(L6_DIR / "probe")
-    if L6_DIR.exists():
-        shutil.rmtree(L6_DIR)
+    l6_dir = L6_DIR_GEO if int(stage) == GEO_STAGE else L6_DIR
+    L.assert_path(l6_dir / "probe")
+    if l6_dir.exists():
+        shutil.rmtree(l6_dir)
     D = get_data("g1", "S", ORIG_LABELS)
     sp = D.split(0)
-    rec = run_unit(D, u, root=L6_DIR, smoke=True)
-    mine = pd.read_parquet(L6_DIR / f"{uname(u)}.parquet")
+    rec = run_unit(D, u, root=l6_dir, smoke=True)
+    mine = pd.read_parquet(l6_dir / f"{uname(u)}.parquet")
     dropped_test = sorted(set(map(str, D.folds[0]["test"])) - set(_ids(D, sp["test"])))
     train_identical = (sp["dropped"]["train"]["not_usable"] == 0
                        and all(f["dropped"]["train"] == 0 and f["dropped"]["val"] == 0 for f in sp["inner"]))
@@ -1220,20 +1595,72 @@ def cmd_l6():
                                  max_abs_yhat=dyh, best_equal=bool(best_eq), best=rec["chosen"][t]["cell"],
                                  best_rev9=rj.get("best_params"), inner_cv_mae_diff=dcv, train_mae_diff=dtr, ok=ok_t)
     out["ok"] = bool(ok)
-    write_json(L.RES / "C_l6_xgb.json", out)
+    write_json(res_out("C_l6_xgb.json", stage), out)
     print(f"[l6] ok {ok}: " + json.dumps({t: (v["max_abs_yhat"], v["best_equal"]) for t, v in out["targets"].items()}),
           flush=True)
     return 0 if ok else 3
 
 
+def _stats(D, rows, arm):
+    """XG-B6: per target s_y (std ddof 0 of the fit target: y for S; for SH the residual y - beta dH with beta fitted on
+    the same rows, c_ghost r = y) and beta (SH) -> dict of lists in TARGETS order."""
+    rows = np.asarray(rows, dtype=int)
+    y, dH = D.y[rows], D.dH[rows]
+    if arm == "SH":
+        beta = beta_fit(dH, y)
+        r = np.stack([y[:, j] - beta[j] * dH[:, j] if j in H_IDX else y[:, j] for j in range(NT)], 1)
+    else:
+        beta, r = np.zeros(NT), y
+    return dict(n=int(len(rows)), s_y=r.std(0).tolist(), s_y_original=y.std(0).tolist(), beta=beta.tolist(),
+                mean_abs_y=np.abs(y).mean(0).tolist())
+
+
+def cmd_diag(stage, labels):
+    """XG-B6 (GB-10): s_y / SH beta for the D1 training pairs alone and for D1 + D0 -> results/D0D1_diag_geo.json."""
+    if int(stage) != GEO_STAGE:
+        print("diag is a stage-3 (T1D0) command", file=sys.stderr)
+        return 2
+    out = dict(stage=int(stage), labels=str(_abs(labels)), targets=TARGETS, rule=DECISIONS_GEO["XG-B6"], folds={},
+               code_sha256=CODE_SHA, d0d1_code=L.sha256(CODE_D0D1), versions=versions())
+    for rung in STAGE_RUNGS[GEO_STAGE]:
+        for arm in ARMS:
+            D = get_data(rung, arm, labels)
+            for k in range(NF):
+                sp = D.split(k)
+                e = {}
+                for fit, rows in (("final_T_main", sp["train"]), ("inner_fold0", sp["inner"][0]["train"])):
+                    rows = np.asarray(rows, dtype=int)
+                    d1 = rows[~D.is_d0[rows]]
+                    e[fit] = dict(d1=_stats(D, d1, arm), d1_d0=_stats(D, rows, arm),
+                                  n_d0=int(D.is_d0[rows].sum()))
+                    a, b = np.asarray(e[fit]["d1"]["s_y"]), np.asarray(e[fit]["d1_d0"]["s_y"])
+                    e[fit]["s_y_ratio_d1_d0_over_d1"] = (b / np.where(a > 0, a, np.nan)).tolist()
+                    if arm == "SH":
+                        e[fit]["beta_diff_d1_d0_minus_d1"] = (np.asarray(e[fit]["d1_d0"]["beta"])
+                                                              - np.asarray(e[fit]["d1"]["beta"])).tolist()
+                e["n_d0"] = sp.get("n_d0")
+                out["folds"][f"{rung}/{arm}/f{k}"] = e
+    p = L.RES / DIAG_GEO                                       # a '_geo' name: outside the LADDER snapshot (GA-5)
+    write_json(p, out)
+    print(f"[diag] -> {p}", flush=True)
+    return 0
+
+
+DECISIONS_GEO = {"XG-B6": "diagnostics only: per fold / arm / target s_y (std ddof 0 of the fit target; SH residual) "
+                          "and SH beta for D1 training pairs alone vs D1 + D0, final and inner fold 0 fits"}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], add_help=True)
-    ap.add_argument("cmd", choices=("list", "smoke", "run", "check", "l6"))
+    ap.add_argument("cmd", choices=("list", "smoke", "run", "check", "l6", "diag"))
     ap.add_argument("rest", nargs="*")
-    ap.add_argument("--stage", type=int, default=1, choices=(1, 2))
-    ap.add_argument("--labels", default=str(DEFAULT_LABELS))
+    ap.add_argument("--stage", type=int, default=1, choices=(1, 2, 3))
+    ap.add_argument("--labels", default=None)                 # XG-B3: default = stage_labels(stage)
     ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args(argv)
+    a.labels = str(stage_labels(a.stage)) if a.labels is None else a.labels
+    if a.cmd == "diag":
+        return cmd_diag(a.stage, a.labels)
     if a.cmd == "list":
         print("\n".join(uname(u) for u in unit_list(a.stage)))
         return 0
@@ -1247,7 +1674,7 @@ def main(argv=None):
     if a.cmd == "check":
         return cmd_check(a.stage, a.labels)
     if a.cmd == "l6":
-        return cmd_l6()
+        return cmd_l6(a.stage)
     return 2
 
 

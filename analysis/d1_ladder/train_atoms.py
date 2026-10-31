@@ -22,6 +22,33 @@ CLI (submit from analysis/d1_ladder; exit 0 = done, 2 = not ready / units missin
         GPU hours from the 30 cached FU2 Phase M units ($D1PAIR_SCRATCH/fu2/units/*.json, read only) ->
         results/M1_gpu_estimate.json.
 
+GEO2b stage 3 (docs/specs/GEO2.md 8-1 read with GEO1B.md 4-3; user decision D0D1 2026-10-31; decisions GA-* / GB-* at
+  the end of this docstring and analysis/geo2/results/DECISIONS_lad.md): rung 'geo' = STAGE_RUNGS[3] only (30 atom units
+  L__geo__<arm>__<model>__f<k>) on D0 + D1 pairs: label file $GEO2/F_pairs_d0d1.csv and split 'T1D0' ($GEO2/splits/
+  T1D0__f<k>.json, index analysis/geo2/results/S_splits_d0d1.json; both built by analysis/geo2/d0d1_splits.py, whose
+  reader rules this file imports). Stage 1 / 2 unit lists, gates, split T1 and outputs are unchanged; but this file's
+  sha256 is no longer the one that wrote the LADDER results, so the stage-1 / 2 commands smoke, run, collect and
+  estimate STOP before writing anything (GA-13); only `list --stage 1|2` is usable here.
+  python train_atoms.py list --stage 3                   the 30 geo units
+  python train_atoms.py smoke --stage 3 [--labels P]     fold 0 geo smoke -> results/C_smoke_atoms_geo.json, scratch
+        $LAD/smoke_geo (+ a GPU-hour projection from the LADDER g1 / dft units, cap 160 GPU-h, GA-9 / GB-9)
+  python train_atoms.py run <i|@I|A> <n> --stage 3 [--labels P]
+        gates (exit 3 unless all pass): PREREG_GEO2B (analysis/geo2/results/PREREG_GEO2B.md + prereg_geo2b.json, the
+        gate_add3 rule + the LADDER result-file snapshot, GA-4 / GA-5) instead of ADD3; GEO2b Phase P
+        (analysis/geo2/results/P_build_geo.json + P_geo_report.json, GB-6) instead of results/P_report.json; the D0D1
+        split index (GB-2); analysis/geo2/results/C_tests_geo.json all_pass on this code (GA-7 / GA-14) instead of
+        C_tests.json. Units -> $LAD/units/L__geo__* (new files only).
+  python train_atoms.py collect --stage 3 [--with-xgb] [--labels P]
+        the geo units only -> results/L_predictions_geo.parquet, L_val_geo.csv, L_report_geo.json (same columns /
+        keys as the LADDER files; D0 test pairs carry ref_kind / pos 'd0' and ids D#####; --with-xgb needs
+        results/L_xgb_report_geo.json of `train_xgb.py check --stage 3`). The existing results/L_predictions.parquet,
+        L_val.csv, L_report.json are never written by stage 3.
+  geo inputs: table $GEO2/inputs/geo.parquet ($GEO2 = $GEO2_SCRATCH, default /gpfs/tmp_cpu2/yeseo1ee/geo2b = $GEO2B),
+  tokens $GEO2/fu2_geo/tokens, reports analysis/geo2/results/fu2_geo (fu2-tokens-3-geo / fu2-atoms-3-geo); D1 and D0
+  reactions in one table / one token root (D0 rxn_id = labels_all.json rxn_id < 10^6, D1 >= 1000001; disjoint,
+  checked by d0d1_splits.py build).
+  The default label file is stage dependent: --stage 3 -> $GEO2/F_pairs_d0d1.csv, else $LAD/F_pairs_cr2.csv (GB-3).
+
 Rules (spec 4-2 .. 4-4, 10; FU2 M-1 / M-2 unchanged unless named)
   pairs / folds  the FU2 T1 split files $D1PAIR_SCRATCH/fu2/splits/T1__f<k>.json (= d1_train.masks arm C + the first
                  inner GroupKFold(4) fold; sha256 checked against analysis/d1_pair/results/fu2/S_splits.json): train =
@@ -156,6 +183,63 @@ Review fixes 2026-10-23 (FIXER; recommended option each time)
         (review P-8: labels and H from one Phase P state).
   MA-17 run --stage 2: results/C_tests.json all_pass with g2_verified (review C-1).
   MA-18 token sha256 cross-check accepts the column token_sha256 or tok_sha256 (the name inputs.py writes; review P-5).
+GEO2 additions 2026-10-30 (docs/specs/GEO2.md 8-1; role LADA; reviewed and ported to GEO2b 2026-10-31, GB-*)
+  GA-1  rung list and paths only: STAGE_RUNGS[3] = ("geo",), RUNG_ORDER + "geo", RUNGS["geo"], inputs_path("geo") =
+        $GEO2/inputs/geo.parquet; models / grids / training rules (fu2 models.py, train.py, the fits here) unchanged.
+  GA-2  stage 1 / 2 code paths are unchanged (same unit lists, gates, outputs, messages); every stage-3 branch is
+        selected by int(stage) == 3, rung "geo" or split T1D0 only. Exception GA-13: the stage-1 / 2 write commands
+        refuse to run with code other than the code recorded in results/L_report.json (= always, with these additions).
+  GA-3  stage-3 outputs carry "_geo" before the extension (res_out): L_predictions_geo.parquet, L_val_geo.csv,
+        L_report_geo.json, C_smoke_atoms_geo.json; smoke scratch $LAD/smoke_geo (the stage-1 $LAD/smoke is not removed).
+  GA-4  PREREG_GEO2B gate = gate_add3 line for line on the GEO2b files (+ json rungs == ["geo"], split == "T1D0"); geo
+        units can be written to $LAD/units only after it (_check_root rung check); ADD3 does not open stage 3.
+  GA-5  the gate also verifies prereg_geo2b.json ladder_results_sha256 (every analysis/d1_ladder/results file at
+        pre-registration, repo-relative keys as D1-G3 F-13) before training and again in collect --stage 3 (spec 14:
+        an existing LADDER result file changed = STOP).
+  GA-7  C gate for stage 3 = analysis/geo2/results/C_tests_geo.json all_pass (tests/run_tests.py geo).
+  GA-8  fingerprint: geo units add prereg_geo2b (sha256 of PREREG_GEO2B.md, None in smoke) and d0d1_code (sha256 of
+        analysis/geo2/d0d1_splits.py); add3 stays the ADD3 md sha256 for every rung; the stage 1 / 2 fingerprint dicts
+        are unchanged. XGB_SHARED_KEYS + prereg_geo2b, d0d1_code.
+  GA-9  smoke --stage 3 adds 'estimate_geo' (read only): per arm x model the LADDER g1 (and dft) atom-unit wall hours
+        (results/L_report.json) x (geo smoke tuning epoch seconds / stage-1 smoke g1 (dft) epoch seconds,
+        results/C_smoke_atoms.json); the projection = the larger of the two totals, against the cap (GB-9).
+  GA-10 no absolute repo path enters a unit fingerprint (code sha256 keys are file names), so the cross-worktree rule of
+        D1-G3 F-13 is needed only for the LADDER result snapshot (GA-5). Every existing LADDER unit records the pre-GEO2
+        code_sha256 (train_atoms.py fb00f604...), so no stage-1 / 2 unit cache matches this file (GA-13).
+  GA-11 lad_common.py unchanged: no stage-3 write goes outside $LAD / analysis/d1_ladder/results.
+  GA-12 the geo rung needs inputs.py RUNGS["geo"] (inputs role) and rung_roots entries for $GEO2B and analysis/geo2/
+        results (column "geo") so that check_paths classifies the geo files (the ADD3 / PREREG skip rule, MA-15).
+  GA-13 guard_ladder_write: smoke / run / collect with --stage 1|2 and estimate STOP (exit 3) before any write or folder
+        removal when CODE_SHA != results/L_report.json code_sha256 (the code of the LADDER results; no such file = a
+        fresh LADDER tree, old behaviour). With these additions they differ always, so this file can never rewrite
+        results/C_smoke_atoms.json, L_predictions.parquet, L_val.csv, L_report.json, M1_gpu_estimate.json, $LAD/smoke or
+        a stage-1 / 2 unit. `list` is not guarded (regression 1).
+  GA-14 gate_c_geo also requires C_tests_geo.json code_sha256 of train_atoms.py, train_xgb.py, inputs.py, lad_common.py,
+        geo2/d0d1_splits.py (= run_tests.py GEO_CODE_FILES keys) = the files now: the tests ran on the code that trains.
+GEO2b D0 + D1 (user decision D0D1 2026-10-31; analysis/geo1b/results/D0D1_design_investigation.json design step 9)
+  GB-1  split 'T1D0' = the split of rung geo (RUNG_SPLIT); every other rung keeps T1 (load_folds('T1') unchanged).
+        load_folds('T1D0') = d0d1_splits.load_s_splits(): S_splits_d0d1.json all_pass / not preliminary, the label file
+        and the 5 split files with their recorded sha256, the D1 part of every list = the FU2 T1__f<k> list exactly
+        (same ids, same order), D0 pairs (ok True) after it: train / inner_train += D0 fold != k, test += D0 fold k,
+        inner_val D1 only; each ok D0 pair tested once; D0 inputs = a final GEO1b build (d0_provenance).
+  GB-2  run --stage 3 also needs that index (load_folds raises exit 3 / 2 through it before any unit).
+  GB-3  labels: the default label file of --stage 3 is $GEO2/F_pairs_d0d1.csv. label_provenance accepts it only when
+        S_splits_d0d1.json records its sha256; load_labels applies L-11' instead of L-11 to it: its first
+        len(F_pairs_cr2.csv) bytes are F_pairs_cr2.csv (D1 rows byte-identical; F_pairs_cr2.csv itself then passes the
+        LADDER provenance + L-11 rules), the remaining rows = the F_pairs columns of D0_pairs.csv as text
+        (d0d1_splits.l11_d0d1); pair ids D##### <-> ref_kind 'd0'.
+  GB-4  LadData.split for T1D0: the same filter / leak checks as T1 (test pair or test reaction in train = STOP) plus a
+        D0 pair in inner_val = STOP; counts of D0 pairs per list recorded (dropped / n_d0).
+  GB-5  run_unit: when the fit's training pairs hold D0 pairs, gate M-1' runs a second time on 200 random D0 training
+        pairs of that fit (gate_M1_d0_train; same function, tolerance, float64 recomputation; its own rng seed), on every
+        tuning and final fit; failure = STOP; collect requires it ok. T1 units: no such pairs, no key (unchanged json).
+  GB-6  GEO2b Phase P gate (gate_p_geo): P_build_geo.json all_pass, not stop, outputs sha256 of $GEO2/inputs/geo.parquet
+        = the file; P_geo_report.json stop false. The GEO2 P_geo_sets / |P_23| / LADDER P_report label checks are
+        dropped (D0D1: no geo-vs-g2 comparison; the label file is recorded by S_splits_d0d1.json, GB-3).
+  GB-9  GPU cap 160 GPU-h (DECISIONS D0D1 '상한 조정'); estimate_geo = max(g1-, dft-scaled totals) + per-slice hours of
+        the [i::n] run order for n = 1 .. 10 (launcher sizing); a prereg STOP when over the cap, not a smoke failure.
+  GB-10 diagnostics of s_y / SH beta for D1 alone and D1 + D0 come from train_xgb.py diag --stage 3 (CPU, the same pair
+        lists after the usable filter); nothing in training reads them.
 """
 from __future__ import annotations
 
@@ -230,8 +314,13 @@ MODELS = tuple(Mo.MODELS)                                     # AW, GNN, TF
 MODEL_RANK = {"GNN": 0, "AW": 1, "TF": 2}                     # long units first (MA-11)
 SPLIT, NF = "T1", 5
 FOLD_KEYS = ("train", "test", "inner_train", "inner_val")
-STAGE_RUNGS = {1: ("dft", "g1"), 2: ("g2",)}
-RUNG_ORDER = ("dft", "g1", "g2")
+STAGE_RUNGS = {1: ("dft", "g1"), 2: ("g2",), 3: ("geo",)}     # stage 3 = GEO2b (docs/specs/GEO2.md 8-1, GA-1)
+RUNG_ORDER = ("dft", "g1", "g2", "geo")
+GEO_STAGE = 3
+sys.path.insert(0, str(L.REPO / "analysis" / "geo2"))
+import d0d1_splits as DD  # noqa: E402        (GEO2b D0 + D1 label / split rules, numpy / pandas only; GB-1, GB-3)
+SPLIT_D0D1 = DD.SPLIT                                         # "T1D0"
+RUNG_SPLIT = {"geo": SPLIT_D0D1}                              # GB-1: rung -> split; other rungs T1
 TARGETS = list(F.TARGETS)                                     # d1 d2 elst pauli oi disp cpcm cds c_ghost barrier
 I_GHOST = TARGETS.index("c_ghost")
 H_TARGETS = [t for t in TARGETS if t != "c_ghost"]            # spec 4-1: the 9 HF values
@@ -246,12 +335,29 @@ ORIG_LABELS = C.RES / "F_pairs.csv"
 FU2_S_SPLITS = F.FU2_RES / "S_splits.json"
 ADD3_MD = L.RES / "PREREG_D1PAIR_ADD3.md"
 ADD3_JSON = L.RES / "prereg_d1pair_add3.json"
+# GEO2b stage 3 (docs/specs/GEO2.md 6-1, 8-1 with GEO1B.md 4-3; read only here; = analysis/geo2/geo2_common GEO2 / RES)
+GEO2 = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2b"))      # $GEO2B (= DD.GEO2)
+GEO2_RES = L.REPO / "analysis" / "geo2" / "results"
+GEO_INPUTS = {"geo": GEO2 / "inputs" / "geo.parquet"}         # the other rungs keep $LAD/inputs/<rung>.parquet
+PREREG_GEO2_MD = GEO2_RES / "PREREG_GEO2B.md"                 # analysis/geo2/prereg_geo2b.py (GA-4)
+PREREG_GEO2_JSON = GEO2_RES / "prereg_geo2b.json"
+C_TESTS_GEO = GEO2_RES / "C_tests_geo.json"                   # tests/run_tests.py geo (GA-7)
+CODE_D0D1 = Path(DD.__file__).resolve()                       # GA-8 / GA-14
+C_GEO_TRAINER_CODE = {"train_atoms.py": HERE / "train_atoms.py", "train_xgb.py": HERE / "train_xgb.py",
+                      "inputs.py": HERE / "inputs.py", "lad_common.py": HERE / "lad_common.py",
+                      "geo2/d0d1_splits.py": CODE_D0D1}       # C_tests_geo code_sha256 keys (GA-14)
+P_BUILD_GEO = GEO2_RES / "P_build_geo.json"                   # inputs role, GEO2.md 6-1 P (GB-6)
+P_GEO_REPORT = GEO2_RES / "P_geo_report.json"                 # inputs role, GEO2.md 7 (GB-6)
+SMOKE_GEO = L.LAD / "smoke_geo"
+GEO_LIMIT_GPU_H = 160.0                                       # GEO1b DECISIONS D0D1 '상한 조정' (GB-9; GEO2.md 8-4 had 80)
+D0_GATE_SEED = 500                                            # GB-5: gate M-1' rng seed offset of the D0 training pairs
 PRED_COLS = ["pair_id", "ref_kind", "pos", "fold", "rung", "arm", "model", "target", "y", "yhat", "base", "beta",
              "yhat_seed_sd"]
-RUNGS = {   # spec 4-1 columns (token rows); the input table is $LAD/inputs/<rung>.parquet for every rung
+RUNGS = {   # spec 4-1 columns (token rows); the input table is $LAD/inputs/<rung>.parquet for every rung but geo
     "dft": dict(fu2_res=L.RES / "fu2", tokens=L.LAD / "fu2" / "tokens", tag="dft"),
     "g1": dict(fu2_res=F.FU2_RES, tokens=F.TOKENS, tag=""),
     "g2": dict(fu2_res=L.G2_DIR / "results" / "fu2", tokens=L.G2 / "fu2" / "tokens", tag="g2"),
+    "geo": dict(fu2_res=GEO2_RES / "fu2_geo", tokens=GEO2 / "fu2_geo" / "tokens", tag="geo"),     # GEO2 8-1
 }
 # hashed once at import: the code this process runs (fu2 train.py review F3 rule)
 CODE_SHA = {"train_atoms.py": L.sha256(Path(__file__).resolve()), "lad_common.py": L.sha256(Path(L.__file__).resolve()),
@@ -301,7 +407,28 @@ def norm(obj):
 
 
 def inputs_path(rung):
-    return INPUTS / f"{rung}.parquet"
+    return GEO_INPUTS[rung] if rung in GEO_INPUTS else INPUTS / f"{rung}.parquet"
+
+
+def res_out(name, stage):
+    """results/<name> for stages 1 / 2; results/<stem>_geo<suffix> for stage 3 (GA-3: never the LADDER files)."""
+    p = L.RES / name
+    return p.with_name(f"{p.stem}_geo{p.suffix}") if int(stage) == GEO_STAGE else p
+
+
+def collect_rungs(stage):
+    """rungs of collect: every rung of the stages <= stage (LADDER); stage 3 = the geo rung only (GEO2 8-1)."""
+    return tuple(STAGE_RUNGS[GEO_STAGE]) if int(stage) == GEO_STAGE else rungs_upto(stage)
+
+
+def rung_split(rung):
+    """GB-1: the split of a rung (geo -> T1D0, every other rung -> T1)."""
+    return RUNG_SPLIT.get(rung, SPLIT)
+
+
+def stage_labels(stage):
+    """GB-3: the default label file of a stage (3 -> $GEO2B/F_pairs_d0d1.csv, else $LAD/F_pairs_cr2.csv)."""
+    return Path(DD.LABELS) if int(stage) == GEO_STAGE else DEFAULT_LABELS
 
 
 def uname(u):
@@ -473,8 +600,25 @@ def load_inputs(rung, tok):
     return H9, usable, info
 
 
+def _dd(fn, *a, **k):
+    """a d0d1_splits rule -> exit 3 (Stop) / exit 2 (NotReady) with its message."""
+    try:
+        return fn(*a, **k)
+    except DD.NotReady as e:
+        not_ready(str(e))
+    except DD.Stop as e:
+        stop(str(e))
+
+
 def label_provenance(path, sha):
-    """MA-9: the label file must be a passed Q / V output or the original D1PAIR file (tests: others, recorded)."""
+    """MA-9: the label file must be a passed Q / V output or the original D1PAIR file (tests: others, recorded).
+    GB-3: or the GEO2b D0 + D1 file whose sha256 S_splits_d0d1.json records (d0d1_splits.load_s_splits)."""
+    if path == _abs(DD.LABELS):
+        rec = _dd(DD.load_s_splits)[0]
+        if (rec.get("outputs") or {}).get(str(path)) != sha:
+            stop(f"{path}: sha256 differs from {DD.S_SPLITS.name} outputs")
+        return (f"{DD.S_SPLITS.name} all_pass (preliminary {rec.get('preliminary')}), outputs sha256 equal; D0 = GEO1b "
+                f"build {(rec.get('d0') or {}).get('g2_source')} (D0_pairs.csv {str((rec.get('d0') or {}).get('d0_pairs_sha256'))[:12]})")
     if path == _abs(ORIG_LABELS):
         want = json.loads(FU2_S_SPLITS.read_text()).get("inputs_sha256", {}).get("F_pairs")
         if sha != want:
@@ -509,23 +653,56 @@ def load_labels(labels):
     if P.pair_id.duplicated().any():
         stop(f"{path}: duplicated pair_id")
     l11 = "original labels"
-    if path != _abs(ORIG_LABELS):                           # L-11 invariant on every load (MA-9)
+    if path == _abs(DD.LABELS):                             # GB-3: L-11' on the D0 + D1 file
+        l11 = l11_d0d1(path, P)
+    elif path != _abs(ORIG_LABELS):                         # L-11 invariant on every load (MA-9)
         O = pd.read_csv(ORIG_LABELS)
-        if list(P.columns) != list(O.columns) or P.pair_id.tolist() != O.pair_id.tolist():
-            stop(f"{path}: columns / pair order differ from {ORIG_LABELS}")
-        ch = {f"dd_{t}" for t in CHANGED_DD}
-        other = [c for c in O.columns if not c.startswith("dd_") and not P[c].equals(O[c])]
-        dmax = {t: _maxdiff(P[f"dd_{t}"], O[f"dd_{t}"]) for t in TARGETS if f"dd_{t}" not in ch}
-        if other or max(dmax.values()) > 1e-12:
-            stop(f"{path}: differs from F_pairs.csv outside dd_d1 / dd_d2 / dd_barrier: columns {other}, dd {dmax}")
-        l11 = dict(non_dd_columns_identical=True, unchanged_dd_max_abs=dmax)
+        l11 = _l11_vs_orig(path, P, O)
     P = P.assign(pair_id=P.pair_id.astype(str), ref_kind=P.ref_kind.fillna("").astype(str),
                  pos=P.pos.fillna("").astype(str), a_rxn=P.a_rxn.astype(int), b_rxn=P.b_rxn.astype(int))
     return P.set_index("pair_id"), dict(path=str(path), sha256=sha, provenance=prov, l11=l11, n_pairs=int(len(P)))
 
 
-def load_folds():
-    """the FU2 T1 split files (sha256 = FU2 S_splits.json), rung independent."""
+def _l11_vs_orig(path, P, O):
+    """L-11 (MA-9): a re-referenced label file = F_pairs.csv outside dd_d1 / dd_d2 / dd_barrier."""
+    if list(P.columns) != list(O.columns) or P.pair_id.tolist() != O.pair_id.tolist():
+        stop(f"{path}: columns / pair order differ from {ORIG_LABELS}")
+    ch = {f"dd_{t}" for t in CHANGED_DD}
+    other = [c for c in O.columns if not c.startswith("dd_") and not P[c].equals(O[c])]
+    dmax = {t: _maxdiff(P[f"dd_{t}"], O[f"dd_{t}"]) for t in TARGETS if f"dd_{t}" not in ch}
+    if other or max(dmax.values()) > 1e-12:
+        stop(f"{path}: differs from F_pairs.csv outside dd_d1 / dd_d2 / dd_barrier: columns {other}, dd {dmax}")
+    return dict(non_dd_columns_identical=True, unchanged_dd_max_abs=dmax)
+
+
+def l11_d0d1(path, P):
+    """GB-3 (L-11'): the D1 rows of the D0 + D1 file are F_pairs_cr2.csv byte for byte, F_pairs_cr2.csv passes the LADDER
+    provenance (V_report) and L-11, the D0 rows are the F_pairs columns of D0_pairs.csv; ids D##### <-> ref_kind d0."""
+    rec = _dd(DD.l11_d0d1, path=path)
+    cr2 = _abs(DEFAULT_LABELS)
+    if _abs(DD.CR2) != cr2:
+        stop(f"d0d1_splits CR2 {DD.CR2} != {cr2}")
+    prov2 = label_provenance(cr2, L.sha256(cr2))
+    O = pd.read_csv(ORIG_LABELS)
+    n1 = len(O)
+    l11 = _l11_vs_orig(cr2, pd.read_csv(cr2), O)           # the D1 prefix IS this file (byte check above)
+    d0 = P.ref_kind.fillna("").astype(str).eq("d0").to_numpy()
+    ids = P.pair_id.astype(str)
+    if len(P) != n1 + rec["n_d0_rows"] or d0[:n1].any() or not d0[n1:].all() \
+            or (ids.str.startswith("D").to_numpy() != d0).any():
+        stop(f"{path}: rows are not 'the {n1} D1 rows, then {rec['n_d0_rows']} D0 rows' (ref_kind d0 <-> D#####)")
+    return dict(rec, F_pairs_cr2_provenance=prov2, F_pairs_cr2_l11=l11, n_rows=int(len(P)))
+
+
+def load_folds(split=SPLIT):
+    """the FU2 T1 split files (sha256 = FU2 S_splits.json), rung independent. split 'T1D0' (GB-1): the GEO2b D0 + D1
+    split files through d0d1_splits.load_s_splits (every rule of its reader contract) -> (rec, folds, files)."""
+    if split == SPLIT_D0D1:
+        if _abs(DD.FU2_SPLITS) != _abs(F.SPLITS) or _abs(DD.FU2_S_SPLITS) != _abs(FU2_S_SPLITS):
+            stop(f"d0d1_splits FU2 paths {DD.FU2_SPLITS}, {DD.FU2_S_SPLITS} != {F.SPLITS}, {FU2_S_SPLITS}")
+        return _dd(DD.load_s_splits)
+    if split != SPLIT:
+        stop(f"split {split}: LADDER uses T1 only (spec 4-3)")
     srep = json.loads(FU2_S_SPLITS.read_text())
     folds, files = {}, {}
     for k in range(NF):
@@ -549,14 +726,21 @@ def rung_base(rung, labels):
     if rung not in RUNGS:
         stop(f"unknown rung {rung}")
     t0, i0 = time.time(), len(_OPEN_LOG)
+    split = rung_split(rung)
+    if split == SPLIT_D0D1 and _abs(GEO2) != _abs(DD.GEO2):
+        stop(f"$GEO2_SCRATCH roots differ: train_atoms {GEO2} vs d0d1_splits {DD.GEO2}")
     tok = load_tokens(rung)
     H9, ur, hinfo = load_inputs(rung, tok)
     P, linfo = load_labels(labels)
-    srep, folds, sfiles = load_folds()
+    srep, folds, sfiles = load_folds(split)
+    s_index = FU2_S_SPLITS if split == SPLIT else Path(DD.S_SPLITS)
     fold_ids = {q for f in folds.values() for k in FOLD_KEYS for q in f[k]}
     miss = sorted(fold_ids - set(P.index))
     if miss:
         stop(f"{len(miss)} split pair ids are not in {linfo['path']}: {miss[:5]}")
+    is_d0 = P.ref_kind.eq("d0").to_numpy()
+    if split == SPLIT and is_d0[np.isin(P.index.to_numpy(), sorted(fold_ids))].any():
+        stop(f"split T1 holds D0 pairs (ref_kind d0) of {linfo['path']}")
     y = P[[f"dd_{t}" for t in TARGETS]].to_numpy(float)
     row = tok["row"]
     ra = np.array([row.get(int(r), -1) for r in P.a_rxn])
@@ -572,16 +756,21 @@ def rung_base(rung, labels):
     in_folds = np.isin(pid, sorted({q for f in folds.values() for q in f["train"] + f["test"]}))
     pair_list = sorted(pid[usable_pair & in_folds].tolist())
     inputs = dict(tok.pop("inputs"), inputs_table=hinfo["path"], labels=linfo["path"], labels_original_l11=(
-        str(ORIG_LABELS) if linfo["path"] != str(_abs(ORIG_LABELS)) else None), split_s_splits=str(FU2_S_SPLITS),
+        str(ORIG_LABELS) if linfo["path"] != str(_abs(ORIG_LABELS)) else None), split_s_splits=str(s_index),
         **sfiles)
-    sha = dict(tok.pop("sha"), inputs_table=hinfo["sha256"], labels=linfo["sha256"], s_splits=L.sha256(FU2_S_SPLITS))
+    if split == SPLIT_D0D1:                                         # GB-3: the L-11' sources are inputs too (L-4)
+        inputs.update(labels_cr2_l11=str(_abs(DEFAULT_LABELS)), labels_v_report=str(L.RES / "V_report.json"))
+    sha = dict(tok.pop("sha"), inputs_table=hinfo["sha256"], labels=linfo["sha256"], s_splits=L.sha256(s_index))
     b = dict(tok, H9=H9, H10=H10, usable_rxn=ur, hinfo=hinfo, P=P, linfo=linfo, srep=srep, folds=folds, y=y,
              pid_row={p: k for k, p in enumerate(pid)}, ra=ra, rb=rb, has_tok=has_tok, usable_pair=usable_pair, dH=dH,
              pair_list=pair_list, pair_list_sha=C.list_sha([(q,) for q in pair_list]), inputs=inputs, sha=sha,
-             labels_path=linfo["path"], opened=list(_OPEN_LOG[i0:]), load_seconds=time.time() - t0)
+             labels_path=linfo["path"], opened=list(_OPEN_LOG[i0:]), load_seconds=time.time() - t0, split=split,
+             is_d0=is_d0)
+    n_d0 = int((usable_pair & in_folds & is_d0).sum())
     print(f"[data] rung {rung}: {len(tok['rids'])} token reactions, {hinfo['n_usable']} usable, {len(pair_list)} pairs "
-          f"in P_{rung} ({int(usable_pair.sum())} usable of {len(P)}), labels {Path(linfo['path']).name} "
-          f"({b['load_seconds']:.0f} s)", flush=True)
+          f"in P_{rung} ({int(usable_pair.sum())} usable of {len(P)}), labels {Path(linfo['path']).name}"
+          + (f", split {split} ({n_d0} D0 pairs, nmax {tok['nmax']} atoms)" if split == SPLIT_D0D1 else "")
+          + f" ({b['load_seconds']:.0f} s)", flush=True)
     _BASE[key] = b
     return b
 
@@ -598,19 +787,21 @@ class LadData(FT.Data):
         for k in ("trep", "elements", "num_cols", "bin_cols", "rids", "row", "nmax", "n", "onehot", "bin", "num", "pos",
                   "mask", "etype", "frag", "d_in", "P", "y", "pid_row", "ra", "rb", "has_tok", "usable_rxn",
                   "usable_pair", "H10", "dH", "srep", "folds", "pair_list", "pair_list_sha", "inputs", "sha", "opened",
-                  "hinfo", "linfo"):
+                  "hinfo", "linfo", "is_d0"):
             setattr(self, k, b[k])
         self.rung, self.arm, self.labels = rung, arm, b["labels_path"]
+        self.split_name = b["split"]
         self.glob = b["glob182"] if arm == "S" else np.concatenate([b["glob182"], b["H10"][:, H_IDX]], 1)
         self.d_glob = self.glob.shape[1]
         self.s_splits_sha = self.sha["s_splits"]
 
     def split(self, a, b=None):
         """split(k) or split("T1", k) (= fu2 train.Data.split argument order) -> {train, test, inner_train, inner_val}:
-        pair-table rows of the usable pairs + dropped counts, list sha256; leak checks."""
-        split, k = (SPLIT, a) if b is None else (a, b)
-        if split != SPLIT:
-            stop(f"split {split}: LADDER uses T1 only (spec 4-3)")
+        pair-table rows of the usable pairs + dropped counts, list sha256; leak checks. Rung geo: split T1D0 (GB-4)."""
+        split, k = (self.split_name, a) if b is None else (a, b)
+        if split != self.split_name:
+            stop(f"split {split}: LADDER uses T1 only (spec 4-3)" if self.split_name == SPLIT else
+                 f"split {split}: rung {self.rung} uses {self.split_name} only (GB-1)")
         rec = self.folds[int(k)]
         out, dropped = {}, {}
         for key in FOLD_KEYS:
@@ -626,6 +817,10 @@ class LadData(FT.Data):
         rx = lambda r: set(self.ra[r].tolist()) | set(self.rb[r].tolist())          # noqa: E731
         if rx(out["test"]) & rx(out["train"]):
             stop(f"{self.rung} fold {k}: test reaction in train")
+        if self.split_name == SPLIT_D0D1:                         # GB-4: validation stays D1 only
+            if self.is_d0[out["inner_val"]].any():
+                stop(f"{self.rung} fold {k}: D0 pairs in inner_val")
+            out["n_d0"] = {key: int(self.is_d0[out[key]].sum()) for key in FOLD_KEYS}
         ids = {key: _ids(self, out[key]) for key in FOLD_KEYS}
         out.update(dropped=dropped,
                    pairs_sha=C.list_sha([(q,) for q in ids["train"] + ["|"] + ids["test"] + ["|"] + ids["inner_train"]
@@ -633,11 +828,23 @@ class LadData(FT.Data):
                    val_sha=C.list_sha([(q,) for q in ids["inner_val"]]), test_sha=C.list_sha([(q,) for q in ids["test"]]))
         return out
 
+    def d0_rows(self, rows):
+        """GB-5: the D0 pairs among pair-table rows (empty for T1)."""
+        rows = np.asarray(rows, dtype=int)
+        return rows[self.is_d0[rows]] if len(rows) else rows
+
 
 _DATA: dict = {}
 
 
-def get_data(rung, arm, labels=DEFAULT_LABELS):
+def get_data(rung, arm, labels=None):
+    """rung x arm data; labels None -> the rung's default label file (geo: $GEO2B/F_pairs_d0d1.csv, else cr2; GB-3)."""
+    if labels is None:
+        labels = stage_labels(GEO_STAGE) if rung_split(rung) == SPLIT_D0D1 else DEFAULT_LABELS
+    return _get_data(rung, arm, labels)
+
+
+def _get_data(rung, arm, labels):
     key = (rung, arm, str(_abs(labels)))
     if key not in _DATA:
         _DATA[key] = LadData(rung, arm, labels)
@@ -759,6 +966,15 @@ def arm_fns(arm):
     return (FT.fit, FT.gate_m1) if arm == "S" else (fit_sh, gate_m1_sh)
 
 
+def gate_d0_train(gatef, r, D, rows, seed):
+    """GB-5: gate M-1' (the arm's gate function, inputs only) on 200 random D0 training pairs of the fit; None when the
+    fit has no D0 pairs (split T1)."""
+    d0 = D.d0_rows(rows) if hasattr(D, "d0_rows") else np.zeros(0, dtype=int)
+    if not len(d0):
+        return None
+    return gatef(r["model"], D, r["std"], d0, seed=seed)
+
+
 def final_kcal(D, r, rows):
     """final prediction (kcal/mol, float64) of a fit for pair-table rows: S = FU2 (predict * sy), SH = baseline + residual."""
     if D.arm == "S":
@@ -865,21 +1081,167 @@ def gate_c_stage2():
     return dict(c_tests_sha256=L.sha256(L.RES / "C_tests.json"))
 
 
-def _check_root(root, smoke):
+# ---------------------------------------------------------------- GEO2b stage 3 gates (GA-4 .. GA-7, GA-14, GB-2, GB-6)
+def ladder_results_changed(rec):
+    """GA-5: prereg_geo2b.json ladder_results_sha256 {repo-relative path: sha256} -> the paths whose file is missing or
+    has another sha256 now (repo-relative keys: the snapshot does not depend on the worktree path, D1-G3 F-13)."""
+    snap = rec.get("ladder_results_sha256")
+    if not isinstance(snap, dict) or not snap:
+        return [f"{PREREG_GEO2_JSON.name} has no ladder_results_sha256 snapshot"]
+    bad = []
+    for rel, s in sorted(snap.items()):
+        p = L.REPO / rel
+        if not p.is_file() or L.sha256(p) != s:
+            bad.append(rel)
+    return bad
+
+
+def gate_prereg_geo2(need, rungs=()):
+    """GEO2 spec 8-1 / 8-3 read for GEO2b (GA-4; = gate_add3 on the GEO2b files): analysis/geo2/results/PREREG_GEO2B.md
+    and prereg_geo2b.json tracked by git and unchanged since HEAD, sha256(md) = json md_sha256, json rungs = ["geo"] and
+    split = "T1D0", json inputs_sha256 {absolute path: sha256} contains `need` (the label file + $GEO2/inputs/geo.parquet)
+    and every listed file still has its sha256 (files of other rungs' columns only are not opened, MA-15), and every
+    LADDER result file of the json snapshot is unchanged (GA-5). Exit 3 otherwise."""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(L.HERE), *a], capture_output=True, text=True)
+    bad = []
+    for p in (PREREG_GEO2_MD, PREREG_GEO2_JSON):
+        if not p.is_file():
+            bad.append(f"{p.name} missing")
+        elif git("ls-files", "--error-unmatch", str(p)).returncode != 0:
+            bad.append(f"{p.name} not committed")
+        elif git("diff", "--quiet", "HEAD", "--", str(p)).returncode != 0:
+            bad.append(f"{p.name} modified since its commit")
+    rec = {}
+    if not bad:
+        rec = json.loads(PREREG_GEO2_JSON.read_text())
+        if L.sha256(PREREG_GEO2_MD) != rec.get("md_sha256"):
+            bad.append(f"{PREREG_GEO2_MD.name} sha256 differs from {PREREG_GEO2_JSON.name} md_sha256")
+        if list(rec.get("rungs") or []) != list(STAGE_RUNGS[GEO_STAGE]) or rec.get("split") != SPLIT_D0D1:
+            bad.append(f"{PREREG_GEO2_JSON.name} rungs {rec.get('rungs')} / split {rec.get('split')} != "
+                       f"{list(STAGE_RUNGS[GEO_STAGE])} / {SPLIT_D0D1}")
+        ins = rec.get("inputs_sha256") or {}
+        lack = sorted(set(need) - set(ins))
+        if lack:
+            bad.append(f"{PREREG_GEO2_JSON.name} inputs_sha256 lacks {lack}")
+        skipped = []
+        for path, s in ins.items():
+            if path not in need and _foreign_to(path, rungs):
+                skipped.append(path)
+                continue
+            if not Path(path).is_file() or L.sha256(path) != s:
+                bad.append(f"input {path} changed or missing")
+        _GATE["prereg_geo2_not_opened_other_rungs"] = skipped
+        changed = ladder_results_changed(rec)
+        if changed:
+            bad.append(f"LADDER result files changed since the pre-registration (spec 14): {changed[:8]}")
+    if bad:
+        print("PREREG_GEO2B gate (GEO2 spec 8-3: commit PREREG_GEO2B.md + prereg_geo2b.json before any stage-3 training):"
+              "\n  " + "\n  ".join(bad), file=sys.stderr, flush=True)
+        sys.exit(3)
+    _GATE["prereg_geo2"] = L.sha256(PREREG_GEO2_MD)
+    return dict(rec, git_head=git("rev-parse", "HEAD").stdout.strip())
+
+
+def gate_p_geo(rungs, labels):
+    """GB-6 (the gate_p rule for the geo rung): analysis/geo2/results/P_build_geo.json all_pass, not stop, outputs sha256
+    of $GEO2/inputs/geo.parquet = the file; P_geo_report.json (GEO2.md 7) stop false. Exit 2 while a report is missing /
+    being written, 3 on a difference. The label file is checked by its own rule (GB-3, S_splits_d0d1.json)."""
+    for p in (P_BUILD_GEO, P_GEO_REPORT):
+        if not p.is_file():
+            not_ready(f"{p} missing (GEO2b Phase P of the inputs role: GEO2.md 6-1 P / 7)")
+    b = json.loads(P_BUILD_GEO.read_text())
+    pr = json.loads(P_GEO_REPORT.read_text())
+    if b.get("running") or pr.get("running"):
+        not_ready(f"{P_BUILD_GEO.name} / {P_GEO_REPORT.name} is being written")
+    bad = [] if b.get("all_pass") and not b.get("stop") else [f"P_build_geo all_pass {b.get('all_pass')}, stop "
+                                                              f"{b.get('stop')}"]
+    for r in rungs:
+        t = inputs_path(r)
+        want = (b.get("outputs") or {}).get(str(t))
+        if want is None or not t.is_file() or L.sha256(t) != want:
+            bad.append(f"{t} sha256 != {P_BUILD_GEO.name} outputs ({want})")
+    if pr.get("stop"):
+        bad.append(f"{P_GEO_REPORT.name} stop: {pr.get('stop_reasons') or pr.get('stop_reason')}")
+    if bad:
+        stop("GEO2b Phase P state differs from what training needs (rerun the inputs role's P step): " + "; ".join(bad))
+    return dict(p_build_geo_sha256=L.sha256(P_BUILD_GEO), p_geo_report_sha256=L.sha256(P_GEO_REPORT),
+                sha256=L.sha256(P_BUILD_GEO), rungs=list(rungs), labels=str(_abs(labels)))
+
+
+def gate_splits_d0d1(labels):
+    """GB-2: the stage-3 label file is the D0 + D1 file and S_splits_d0d1.json passes the d0d1_splits reader contract now
+    (final, not preliminary; label + split files + D0 inputs unchanged). Exit 3 / 2 otherwise."""
+    if _abs(labels) != _abs(DD.LABELS):
+        stop(f"stage 3 trains on {DD.LABELS} only (GB-3), got --labels {labels}")
+    rec, folds, files = load_folds(SPLIT_D0D1)
+    return dict(s_splits_sha256=L.sha256(DD.S_SPLITS), preliminary=rec.get("preliminary"),
+                n_d0_ok=(rec.get("d0") or {}).get("n_ok"), labels_sha256=(rec.get("labels") or {}).get("sha256"))
+
+
+def gate_c_geo():
+    """GA-7: stage 3 trains only after analysis/geo2/results/C_tests_geo.json passed (tests/run_tests.py geo).
+    GA-14: and its code_sha256 of the trainer files (C_GEO_TRAINER_CODE keys) = the files now."""
+    c = json.loads(C_TESTS_GEO.read_text()) if C_TESTS_GEO.is_file() else {}
+    if not c.get("all_pass") or c.get("mode") not in (None, "geo"):
+        stop(f"stage 3 needs {C_TESTS_GEO} all_pass in the full geo mode (tests/run_tests.py geo, GEO2 spec 8-2): "
+             f"all_pass {c.get('all_pass')}, mode {c.get('mode')}")
+    rec = c.get("code_sha256") if isinstance(c.get("code_sha256"), dict) else {}
+    diff = [k for k, p in C_GEO_TRAINER_CODE.items() if rec.get(k) != L.sha256(p)]
+    if diff:
+        stop(f"{C_TESTS_GEO.name} code_sha256 differs from the code now for {diff}: the C tests did not run on the code "
+             f"that would train (GA-14; rerun tests/run_tests.py geo gpu + cpu + merge)")
+    return dict(c_tests_geo_sha256=L.sha256(C_TESTS_GEO), code_checked=list(C_GEO_TRAINER_CODE))
+
+
+def guard_ladder_write(stage, what):
+    """GA-13: the stage-1 / 2 commands smoke / run / collect and estimate write LADDER files (results/C_smoke_atoms.json,
+    L_predictions.parquet, L_val.csv, L_report.json, M1_gpu_estimate.json, $LAD/smoke, $LAD/units). STOP (exit 3) before
+    any write unless CODE_SHA = results/L_report.json code_sha256, the code that wrote the LADDER results (no such file =
+    a fresh LADDER tree: the old behaviour). Stage 3 is not affected; `list` never calls this."""
+    if int(stage) == GEO_STAGE:
+        return
+    ref = L.RES / "L_report.json"
+    if not ref.is_file():
+        return
+    try:
+        rec = json.loads(ref.read_text()).get("code_sha256")
+    except (OSError, ValueError, AttributeError) as e:
+        stop(f"{what} --stage {stage}: {ref} unreadable ({type(e).__name__}); refusing to write LADDER files (GA-13)")
+    rec = rec if isinstance(rec, dict) else {}
+    diff = sorted(k for k in set(rec) | set(CODE_SHA) if rec.get(k) != CODE_SHA.get(k))
+    if diff:
+        stop(f"{what} --stage {stage} refused: this code differs from the code of the LADDER results (results/"
+             f"L_report.json code_sha256: {diff}); with the GEO2 additions the stage-1 / 2 commands other than list "
+             f"would rewrite or invalidate LADDER files (GEO2 8-1 / 13 / 14; GA-13)")
+
+
+def _check_root(root, smoke, rung=None):
     r = _abs(root)
     u = _abs(UNITS)
     inside = r == u or u in r.parents
     if smoke and inside:
         stop("--smoke never writes to $LAD/units")
-    if inside and not _GATE.get("add3"):
+    if inside and not _GATE.get("add3") and not (rung in GEO_INPUTS and _GATE.get("prereg_geo2")):
         stop("writing $LAD/units needs the ADD3 gate (train_atoms.py run)")
+    if inside and rung in GEO_INPUTS and not _GATE.get("prereg_geo2"):          # GA-4: ADD3 does not open stage 3
+        stop("writing geo units to $LAD/units needs the PREREG_GEO2B gate (train_atoms.py run --stage 3)")
     L.assert_path(r / "probe")
     return r
 
 
 def fingerprint(D, u, sp, smoke=False):
+    fp = _fingerprint_dict(D, u, sp, smoke)
+    if D.rung in GEO_INPUTS:                    # GA-8: geo units also record the GEO2b pre-registration and D0D1 code
+        fp["prereg_geo2b"] = None if smoke else (L.sha256(PREREG_GEO2_MD) if PREREG_GEO2_MD.is_file() else None)
+        fp["d0d1_code"] = L.sha256(CODE_D0D1)
+        fp["split"] = D.split_name
+    return norm(fp)
+
+
+def _fingerprint_dict(D, u, sp, smoke=False):
     sh = D.arm == "SH"
-    return norm(dict(
+    return dict(
         code=CODE_VERSION, code_sha256=CODE_SHA, rung=D.rung, arm=D.arm, variant=VARIANT,
         inputs_table=D.sha["inputs_table"], labels=D.sha["labels"], pair_list=D.pair_list_sha, split_pairs=sp["pairs_sha"],
         s_splits=D.sha["s_splits"], t_report=D.sha["t_report"], t_manifest=D.sha["t_manifest"], q_report=D.sha["q_report"],
@@ -890,7 +1252,7 @@ def fingerprint(D, u, sp, smoke=False):
                    antisym_n=F.ANTISYM_N, val="first inner fold (FU2 split files)",
                    sh=("beta = sum(dH dy) / sum(dH^2) no intercept on the fit pairs, c_ghost 0; residual / SD(train "
                        "residual); penalty and metric on the final prediction") if sh else None),
-        **FT.versions()))
+        **FT.versions())
 
 
 def save_torch(path, obj):
@@ -909,7 +1271,7 @@ def save_torch(path, obj):
 def run_unit(D, u, root=UNITS, n_epochs=F.MAX_EPOCHS, seeds=F.FINAL_SEEDS, cells=None, log=50, smoke=False):
     """tune (grid cells on inner_train, early stopping on inner_val) -> final (seeds, best epoch, train) -> test
     predictions + gate M-1' for one unit (= fu2 train.run_unit + rung / arm / SH baseline / validation kcal MAE)."""
-    root = _check_root(root, smoke)
+    root = _check_root(root, smoke, getattr(D, "rung", None))
     root.mkdir(parents=True, exist_ok=True)
     if (u["rung"], u["arm"]) != (D.rung, D.arm) or u["model"] not in MODELS:
         stop(f"unit {u} does not match the data ({D.rung}, {D.arm})")
@@ -938,15 +1300,20 @@ def run_unit(D, u, root=UNITS, n_epochs=F.MAX_EPOCHS, seeds=F.FINAL_SEEDS, cells
         r = fitf(D, u["model"], cell, VARIANT, itr, iva, seed=F.SEED, n_epochs=n_epochs, log=log)
         lk = leak_check(D, r["std"], itr, (iva, te), te)
         g = gatef(r["model"], D, r["std"], te, seed=F.SEED + ci)            # inputs only, no labels (M-1)
+        gd = gate_d0_train(gatef, r, D, itr, F.SEED + D0_GATE_SEED + ci)    # GB-5 (None for T1)
         vk = np.abs(final_kcal(D, r, iva) - D.y[iva]).mean(0)
         tune.append(dict(cell=cell, grid_index=gi, best_epoch=r["best_epoch"], val=r["best_val"],
                          val_per_target=r["best_val_per_target"], val_kcal_mae=dict(zip(TARGETS, vk.tolist())),
                          epochs_run=len(r["history"]), seconds=r["seconds"], gate_M1=g, sy=r["sy"].tolist(),
                          sr=r["sr"].tolist() if sh else None, beta=r["beta"].tolist() if sh else None, leak=lk))
+        if gd is not None:
+            tune[-1]["gate_M1_d0_train"] = gd
         print(f"  {name} cell {cell}: val {r['best_val']:.4f} at epoch {r['best_epoch']} ({r['seconds']:.0f} s) "
-              f"gate {g}", flush=True)
+              f"gate {g}" + (f" gate D0 train {gd}" if gd is not None else ""), flush=True)
         if not g["ok"]:
             stop(f"gate M-1' failed ({name}, tuning cell {cell}): {g}")
+        if gd is not None and not gd["ok"]:
+            stop(f"gate M-1' failed on D0 training pairs ({name}, tuning cell {cell}): {gd}")
         del r
     best = min(range(len(tune)), key=lambda i: (tune[i]["val"], i))
     cell, ep = tune[best]["cell"], tune[best]["best_epoch"]
@@ -957,13 +1324,18 @@ def run_unit(D, u, root=UNITS, n_epochs=F.MAX_EPOCHS, seeds=F.FINAL_SEEDS, cells
         r = fitf(D, u["model"], cell, VARIANT, tr, None, seed=s, n_epochs=ep, log=log)
         lk = leak_check(D, r["std"], tr, (te,), te)
         g = gatef(r["model"], D, r["std"], te, seed=s)
+        gd = gate_d0_train(gatef, r, D, tr, s + D0_GATE_SEED)              # GB-5 (None for T1)
         if not g["ok"]:
             stop(f"gate M-1' failed ({name}, seed {s}): {g}")
+        if gd is not None and not gd["ok"]:
+            stop(f"gate M-1' failed on D0 training pairs ({name}, seed {s}): {gd}")
         preds.append(final_kcal(D, r, te))
         betas.append(r["beta"] if sh else np.zeros(len(TARGETS)))
         finals.append(dict(seed=s, epochs=ep, seconds=r["seconds"], gate_M1=g, sy=r["sy"].tolist(),
                            sr=r["sr"].tolist() if sh else None, beta=r["beta"].tolist() if sh else None, leak=lk,
                            history_tail=r["history"][-3:]))
+        if gd is not None:
+            finals[-1]["gate_M1_d0_train"] = gd
         st = dict(mu=r["std"].mu, sd=r["std"].sd, gmu=r["std"].gmu, gsd=r["std"].gsd, sy=r["sy"])
         if sh:
             st.update(sr=r["sr"], beta=r["beta"])
@@ -991,17 +1363,75 @@ def run_unit(D, u, root=UNITS, n_epochs=F.MAX_EPOCHS, seeds=F.FINAL_SEEDS, cells
                inputs_table=D.hinfo, labels=D.linfo, opened_inputs=opened_summary(D.opened),
                wall_seconds=time.time() - t_unit, host=socket.gethostname(), slurm_job=os.environ.get("SLURM_JOB_ID"),
                slurm_array_task=os.environ.get("SLURM_ARRAY_TASK_ID"))
+    if "n_d0" in sp:                                                       # GB-4 (T1D0 only)
+        rec.update(split=D.split_name, n_d0=sp["n_d0"])
     write_json(js, rec)
     return rec
 
 
+def gates_ok(r):
+    """every gate M-1' of a unit json ok (test pairs; GB-5 D0 training pairs where recorded)."""
+    fits = list(r.get("tune") or []) + list(r.get("final") or [])
+    return bool(fits) and all(f["gate_M1"]["ok"] for f in fits) and \
+        all(f["gate_M1_d0_train"]["ok"] for f in fits if f.get("gate_M1_d0_train") is not None)
+
+
 # ================================================================ commands
+def smoke_estimate_geo(out):
+    """GA-9 / GB-9 (GEO2 spec 8-4 with the GEO2b cap of 160 GPU-h; STOP above it is judged by prereg_geo2b.py): per
+    arm x model and reference rung r in (g1, dft), the LADDER r atom units' wall hours (results/L_report.json, 5 folds;
+    the full tuning + 5 final seeds with early stopping) x the ratio of the geo smoke tuning epoch seconds to the stage-1
+    smoke r ones (results/C_smoke_atoms.json; mean of the smallest and the largest cell; GPU types may differ, both are
+    recorded). Projection = the larger of the two totals (dft trained longest in LADDER). Also the hours of the busiest
+    slice of `run i n --stage 3` for n = 1 .. 10 (the [i::n] run order; per-unit hours = the arm x model projection / 5).
+    Read only; never changes the smoke verdict."""
+    try:
+        sm = json.loads((L.RES / "C_smoke_atoms.json").read_text())
+        lr = json.loads((L.RES / "L_report.json").read_text())
+        rows, tot = {}, {}
+        for ref in ("g1", "dft"):
+            tot[ref] = 0.0
+            for arm in ARMS:
+                for m in MODELS:
+                    g = out["configs"][f"L__geo__{arm}__{m}__f0"]["tune_epoch_seconds"]
+                    b = sm["configs"][f"L__{ref}__{arm}__{m}__f0"]["tune_epoch_seconds"]
+                    eg = 0.5 * (float(g["smallest"]) + float(g["largest"]))
+                    eb = 0.5 * (float(b["smallest"]) + float(b["largest"]))
+                    hb = sum(float(lr["units"][f"L__{ref}__{arm}__{m}__f{k}"]["wall_seconds"]) for k in range(NF)) / 3600
+                    rows.setdefault(f"{arm}__{m}", {})[ref] = dict(ladder_hours=hb, epoch_s_geo=eg, epoch_s_ref=eb,
+                                                                   ratio=eg / eb, geo_hours=hb * eg / eb)
+                    tot[ref] += hb * eg / eb
+        use = max(tot, key=tot.get)
+        unit_h = {k: v[use]["geo_hours"] / NF for k, v in rows.items()}
+        us = unit_list(GEO_STAGE)
+        slices = {str(n): float(max(sum(unit_h[f"{u['arm']}__{u['model']}"] for u in us[i::n]) for i in range(n)))
+                  for n in range(1, 11)}
+        rung_h = {}
+        for r in ("dft", "g1", "g2"):
+            rung_h[r] = float(sum(float(v.get("wall_seconds") or 0.0) for k, v in lr["units"].items()
+                                  if k.startswith(f"L__{r}__") and "__XGB__" not in k) / 3600)
+        h = float(tot[use])
+        return dict(ok=True, geo_gpu_hours=h, by_reference=tot, reference_used=use, limit_gpu_hours=GEO_LIMIT_GPU_H,
+                    over_limit=bool(h > GEO_LIMIT_GPU_H), per_arm_model=rows, busiest_slice_hours=slices,
+                    ladder_rung_atom_gpu_hours=rung_h, gpu_geo_smoke=(out.get("versions") or {}).get("gpu"),
+                    gpu_ladder_smoke=(sm.get("versions") or {}).get("gpu"),
+                    rule="max over reference rungs (g1, dft) of sum over arm x model of LADDER unit wall hours x (geo / "
+                         "reference smoke tuning epoch seconds); cap 160 GPU-h (GEO1b DECISIONS D0D1)",
+                    sources=dict(c_smoke_atoms=str(L.RES / "C_smoke_atoms.json"),
+                                 l_report=str(L.RES / "L_report.json")))
+    except (OSError, ValueError, KeyError, TypeError, ZeroDivisionError) as e:
+        return dict(ok=False, why=f"{type(e).__name__}: {e}", limit_gpu_hours=GEO_LIMIT_GPU_H)
+
+
 def cmd_smoke(stage, labels):
-    """spec 8 smoke (FU2 smoke rules per config) -> results/C_smoke_atoms.json; writes only $LAD/smoke."""
+    """spec 8 smoke (FU2 smoke rules per config) -> results/C_smoke_atoms.json; writes only $LAD/smoke.
+    Stage 3 (GA-3 / GA-9): results/C_smoke_atoms_geo.json, scratch $LAD/smoke_geo, + 'estimate_geo'."""
+    guard_ladder_write(stage, "smoke")                 # GA-13: before the scratch folder is removed
     FT.require_gpu()
-    L.assert_path(SMOKE / "probe")
-    if SMOKE.exists():
-        shutil.rmtree(SMOKE)
+    smoke_dir = SMOKE_GEO if int(stage) == GEO_STAGE else SMOKE
+    L.assert_path(smoke_dir / "probe")
+    if smoke_dir.exists():
+        shutil.rmtree(smoke_dir)
     out = dict(versions=FT.versions(), device=str(FT.DEV), labels=str(_abs(labels)), stage=int(stage), configs={},
                code=CODE_VERSION, code_sha256=CODE_SHA)
     ok = True
@@ -1013,9 +1443,9 @@ def cmd_smoke(stage, labels):
                 t0 = time.time()
                 if torch.cuda.is_available():
                     torch.cuda.reset_peak_memory_stats()
-                rec = run_unit(D, u, root=SMOKE, n_epochs=2, seeds=F.FINAL_SEEDS[:1], cells=[0, len(Mo.GRID[m]) - 1],
-                               log=1, smoke=True)
-                g_ok = all(t["gate_M1"]["ok"] for t in rec["tune"]) and all(f["gate_M1"]["ok"] for f in rec["final"])
+                rec = run_unit(D, u, root=smoke_dir, n_epochs=2, seeds=F.FINAL_SEEDS[:1],
+                               cells=[0, len(Mo.GRID[m]) - 1], log=1, smoke=True)
+                g_ok = gates_ok(rec)                     # test pairs + (GB-5) D0 training pairs where present
                 ok &= g_ok
                 eps = [t["seconds"] / max(1, t["epochs_run"]) for t in rec["tune"]]
                 n_par = [sum(p.numel() for p in Mo.build(m, Mo.GRID[m][c], D.d_in, len(TARGETS), D.d_glob,
@@ -1029,6 +1459,11 @@ def cmd_smoke(stage, labels):
                     n_test=rec["n_test"], n_inner_train=rec["n_inner_train"], n_inner_val=rec["n_inner_val"],
                     dropped=rec["dropped"], beta=rec["beta"], d_glob=int(D.d_glob), pair_list_n=len(D.pair_list),
                     opened_dirs=rec["opened_inputs"]["dirs"], ok=g_ok)
+                if rec.get("n_d0") is not None:          # GB-4 / GB-5 (T1D0 only)
+                    out["configs"][uname(u)].update(
+                        n_d0=rec["n_d0"], nmax_atoms=int(D.nmax),
+                        gate_M1_d0_train_tune=[t.get("gate_M1_d0_train") for t in rec["tune"]],
+                        gate_M1_d0_train_final=rec["final"][0].get("gate_M1_d0_train"))
                 print(f"[smoke] {uname(u)}: ok {g_ok} {out['configs'][uname(u)]['seconds']:.0f} s", flush=True)
     # upper bound without early stopping (FU2 smoke formula): 4 tuning cells (middle ~ mean of the two measured) on the
     # inner-training pairs + 5 final seeds on all training pairs (x 4/3) with the largest cell, 300 epochs, x 5 folds
@@ -1037,12 +1472,15 @@ def cmd_smoke(stage, labels):
         s, lg = c["tune_epoch_seconds"]["smallest"], c["tune_epoch_seconds"]["largest"]
         ub += (s + lg + (s + lg)) * F.MAX_EPOCHS + 5 * lg * 4 / 3 * F.MAX_EPOCHS
     out["stage_upper_bound_gpu_hours"] = float(ub * NF / 3600)
+    if int(stage) == GEO_STAGE:
+        out["estimate_geo"] = smoke_estimate_geo(out)
     out["ok"] = bool(ok)
-    write_json(L.RES / "C_smoke_atoms.json", out)
+    write_json(res_out("C_smoke_atoms.json", stage), out)
     return 0 if ok else 3
 
 
 def cmd_run(i, n, stage, labels):
+    guard_ladder_write(stage, "run")                   # GA-13
     FT.require_gpu()
     i = os.environ.get("SLURM_ARRAY_TASK_ID", "") if str(i) == "A" else str(i)
     if not (i.isdigit() and str(n).isdigit() and 0 <= int(i) < int(n)):
@@ -1056,12 +1494,24 @@ def cmd_run(i, n, stage, labels):
         return 0
     rs = sorted({u["rung"] for u in us})
     need = {str(_abs(labels))} | {str(_abs(inputs_path(r))) for r in rs}
-    add3 = gate_add3(need, rs)
-    gp = gate_p(rs, labels)
-    if int(stage) == 2:
-        gate_c_stage2()
-    print(f"[M] ADD3 ok (git {add3['git_head']}), P_report ok ({gp['sha256'][:12]}), {FT.versions()}, slice {i}/{n}: "
-          f"{len(us)} units", flush=True)
+    if int(stage) == GEO_STAGE:      # GEO2 8-1 (GA-4 .. GA-7, GB-2, GB-6): PREREG_GEO2B, P, D0D1 splits, C_tests_geo
+        if set(rs) - set(STAGE_RUNGS[GEO_STAGE]):
+            stop(f"stage 3 holds the geo rung only, got {rs}")
+        pre = gate_prereg_geo2(need, rs)
+        gp = gate_p_geo(rs, labels)
+        gs = gate_splits_d0d1(labels)
+        gc = gate_c_geo()
+        print(f"[M] PREREG_GEO2B ok (git {pre['git_head']}, md {_GATE['prereg_geo2'][:12]}), GEO2b P ok "
+              f"({gp['p_build_geo_sha256'][:12]}), D0D1 splits ok ({gs['s_splits_sha256'][:12]}, {gs['n_d0_ok']} D0 "
+              f"pairs), C_tests_geo ok ({gc['c_tests_geo_sha256'][:12]}), {FT.versions()}, slice {i}/{n}: "
+              f"{len(us)} units", flush=True)
+    else:
+        add3 = gate_add3(need, rs)
+        gp = gate_p(rs, labels)
+        if int(stage) == 2:
+            gate_c_stage2()
+        print(f"[M] ADD3 ok (git {add3['git_head']}), P_report ok ({gp['sha256'][:12]}), {FT.versions()}, slice {i}/{n}: "
+              f"{len(us)} units", flush=True)
     for u in us:
         t0 = time.time()
         D = get_data(u["rung"], u["arm"], labels)
@@ -1076,13 +1526,14 @@ def _no_gpu(fp):
 
 # fingerprint keys that train_xgb.py computes from the same files with the same rule (MA-14)
 XGB_SHARED_KEYS = ("code", "rung", "arm", "inputs_table", "labels", "pair_list", "split_pairs", "s_splits", "t_report",
-                   "t_manifest", "q_report", "add3", "h_cols")
+                   "t_manifest", "q_report", "add3", "h_cols", "prereg_geo2b", "d0d1_code", "split")  # last 3: geo (GA-8)
 
 
-def check_xgb_report(xn, labels):
+def check_xgb_report(xn, labels, stage=1):
     """MA-14 (review M-4): results/L_xgb_report.json of `train_xgb.py check` (which recomputes the full XGB fingerprints in
-    env_espley) passed on the same labels and train_xgb.py, and no XGB unit json / parquet changed since."""
-    p = L.RES / "L_xgb_report.json"
+    env_espley) passed on the same labels and train_xgb.py, and no XGB unit json / parquet changed since.
+    Stage 3: results/L_xgb_report_geo.json of `train_xgb.py check --stage 3` (GA-3)."""
+    p = res_out("L_xgb_report.json", stage)
     if not p.is_file():
         not_ready(f"{p} missing (run train_xgb.py check before collect --with-xgb)")
     r = json.loads(p.read_text())
@@ -1103,8 +1554,18 @@ def check_xgb_report(xn, labels):
 
 
 def cmd_collect(stage, with_xgb, labels):
-    """atom units (+ XGB units) of the rungs up to the stage -> results/L_predictions.parquet, L_val.csv, L_report.json."""
-    rungs = rungs_upto(stage)
+    """atom units (+ XGB units) of the rungs up to the stage -> results/L_predictions.parquet, L_val.csv, L_report.json.
+    Stage 3 (GEO2 8-1, GA-3 / GA-5): the geo units only -> results/L_predictions_geo.parquet, L_val_geo.csv,
+    L_report_geo.json; the LADDER result files of the PREREG_GEO2B snapshot must be unchanged."""
+    geo = int(stage) == GEO_STAGE
+    guard_ladder_write(stage, "collect")               # GA-13
+    rungs = collect_rungs(stage)
+    if geo:
+        if not PREREG_GEO2_JSON.is_file():
+            stop(f"{PREREG_GEO2_JSON} missing: stage-3 units cannot exist without the pre-registration")
+        changed = ladder_results_changed(json.loads(PREREG_GEO2_JSON.read_text()))
+        if changed:
+            stop(f"LADDER result files changed since the GEO2b pre-registration (spec 14): {changed[:8]}")
     au = unit_list(rungs=rungs)
     names = [uname(u) for u in au]
     xn = [f"L__{r}__{a}__XGB__f{k}" for r in rungs for a in ARMS for k in range(NF)] if with_xgb else []
@@ -1120,7 +1581,7 @@ def cmd_collect(stage, with_xgb, labels):
             stop(f"{x}: val_kcal_mae missing or not per target")
     for x in names:
         r = recs[x]
-        if r.get("smoke") or not all(t["gate_M1"]["ok"] for t in r["tune"]) or not all(f["gate_M1"]["ok"] for f in r["final"]):
+        if r.get("smoke") or not gates_ok(r):            # GB-5: incl. the D0 training-pair gates of geo units
             stop(f"gate M-1' failed (or smoke unit) in {x}")
     xgb_check = None
     for u in au:                                     # every unit must carry the CURRENT fingerprint (FU2 collect rule)
@@ -1137,7 +1598,7 @@ def cmd_collect(stage, with_xgb, labels):
             if diff:
                 stop(f"{x} was computed with other inputs than the atom units / the current files: keys {diff}")
     if with_xgb:
-        xgb_check = check_xgb_report(xn, labels)
+        xgb_check = check_xgb_report(xn, labels, stage)
     parts = []
     for x in names + xn:
         q = pd.read_parquet(UNITS / f"{x}.parquet")
@@ -1160,7 +1621,9 @@ def cmd_collect(stage, with_xgb, labels):
         stop(f"test-pair lists differ between models / arms: {bad_te}; validation-pair lists differ (L-9): {bad_va}")
     if pred.duplicated(["pair_id", "rung", "arm", "model", "target"]).any():
         stop("duplicated prediction rows (a pair in two test folds?)")
-    out = L.RES / "L_predictions.parquet"
+    if geo and set(pred.rung) != set(rungs):
+        stop(f"stage-3 predictions hold rungs {sorted(set(pred.rung))}, not {list(rungs)} only")
+    out = res_out("L_predictions.parquet", stage)
     L.write_atomic(out, lambda t: pred.to_parquet(t, index=False))
     vrows = []
     for x in names + xn:
@@ -1171,7 +1634,7 @@ def cmd_collect(stage, with_xgb, labels):
                               val_kcal_mae=float(r["val_kcal_mae"][t]), n_val=r.get("n_val"),
                               val_pairs_sha256=r.get("val_pairs_sha256")))
     V = pd.DataFrame(vrows)
-    vout = L.RES / "L_val.csv"
+    vout = res_out("L_val.csv", stage)
     L.write_atomic(vout, lambda t: V.to_csv(t, index=False))
     rep = dict(stage=int(stage), rungs=list(rungs), models=list(MODELS) + (["XGB"] if with_xgb else []),
                n_units=len(names) + len(xn), labels=str(_abs(labels)), code=CODE_VERSION, code_sha256=CODE_SHA,
@@ -1185,13 +1648,23 @@ def cmd_collect(stage, with_xgb, labels):
                       for x in names + xn},
                gpu_hours_atoms=float(sum(recs[x].get("wall_seconds") or 0 for x in names) / 3600),
                xgb_check=xgb_check, predictions=str(out), predictions_sha256=L.sha256(out), val_csv=str(vout), val_csv_sha256=L.sha256(vout))
-    write_json(L.RES / "L_report.json", rep)
+    if geo:
+        d0 = pred.ref_kind.eq("d0")
+        rep["geo2"] = dict(prereg_geo2b_md_sha256=L.sha256(PREREG_GEO2_MD) if PREREG_GEO2_MD.is_file() else None,
+                           ladder_results_unchanged=True, spec="docs/specs/GEO2.md 8-1 (GEO2b: D0D1, split T1D0)",
+                           split=SPLIT_D0D1, s_splits_d0d1_sha256=L.sha256(DD.S_SPLITS) if Path(DD.S_SPLITS).is_file()
+                           else None,
+                           n_test_pairs=dict(d1=int(pred.loc[~d0 & (pred.target == TARGETS[0])].pair_id.nunique()),
+                                             d0=int(pred.loc[d0 & (pred.target == TARGETS[0])].pair_id.nunique())),
+                           note="D0 test pairs: ref_kind / pos 'd0', pair_id D#####; report D1 and D0 separately")
+    write_json(res_out("L_report.json", stage), rep)
     print(f"[collect] {rep['n_units']} units -> {out.name} ({len(pred)} rows)", flush=True)
     return 0
 
 
 def cmd_estimate():
     """GPU hours of stage 1 from the 30 FU2 Phase M unit records (variant A+G; tuning + final fit seconds)."""
+    guard_ladder_write(1, "estimate")                  # GA-13: writes results/M1_gpu_estimate.json (a LADDER file)
     recs = []
     for p in sorted(F.UNITS.glob("T1__*__f*.json")):
         r = json.loads(p.read_text())
@@ -1226,11 +1699,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], add_help=True)
     ap.add_argument("cmd", choices=("list", "smoke", "run", "collect", "estimate"))
     ap.add_argument("rest", nargs="*")
-    ap.add_argument("--stage", type=int, default=1, choices=(1, 2))
-    ap.add_argument("--labels", default=str(DEFAULT_LABELS))
+    ap.add_argument("--stage", type=int, default=1, choices=(1, 2, 3))
+    ap.add_argument("--labels", default=None)                 # GB-3: default = stage_labels(stage)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--with-xgb", action="store_true")
     a = ap.parse_args(argv)
+    a.labels = str(stage_labels(a.stage)) if a.labels is None else a.labels
     if a.cmd == "list":
         print("\n".join(uname(u) for u in unit_list(a.stage)))
         return 0
