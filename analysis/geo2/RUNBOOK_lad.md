@@ -2,7 +2,8 @@
 
 Authority: `docs/specs/GEO2.md` 8-1 .. 8-4 read with `docs/specs/GEO1B.md` 4-3 and the user decision D0D1 (GEO1b
 `analysis/geo1b/results/DECISIONS.md`, design `D0D1_design_investigation.json` steps 9–12). Decisions: `results/DECISIONS_lad.md`.
-Tests: `RUNBOOK_tests.md`. Code: `analysis/d1_ladder/{train_atoms.py, train_xgb.py, tests/run_tests.py}` (stage 3 = rung geo,
+Tests: `RUNBOOK_tests.md`. The single end-to-end run order of GEO2b (Z, inputs, this slice, E; merge points; queue
+arithmetic) is `RUNBOOK_geo2b.md`. Code: `analysis/d1_ladder/{train_atoms.py, train_xgb.py, tests/run_tests.py}` (stage 3 = rung geo,
 split T1D0), `analysis/geo2/{d0d1_splits.py, prereg_geo2b.py, lad_selftest.py, m3_launch.sh, jobs/m3_gpu.slurm, jobs/m3_cpu.slurm}`.
 
 ## 0. Rules for every step
@@ -42,11 +43,11 @@ training files (gate_c_geo) and the PREREG `inputs_sha256`.
 
 ## 2. Steps
 
-### S-0 GEO1b final results into this worktree (git, login; orchestrator)
+### S-0 GEO1b final results into this worktree (git, login; orchestrator) = merge point M1 of RUNBOOK_geo2b.md (file list there)
 - After GEO1b `d0_pairs.py build` ran with `g2_source` `g2c` (preliminary false, status ok) on branch geo1b, bring at least
   `analysis/geo1b/results/{D0_pairs_report.json, Q_d0_report.json}` (and the GEO1b E results the Z step needs) into
-  geo2b. d0d1_splits.py reads THIS worktree's reports and STOPs while they are preliminary or do not match
-  `$GEO1B/d0/{D0_pairs.csv, d0_folds.csv, d0_twins.csv}` (LD-4 / LD-5).
+  geo2b. d0d1_splits.py reads THIS worktree's reports: exit 2 while they are preliminary (연결 S-4), STOP when they do
+  not match `$GEO1B/d0/{D0_pairs.csv, d0_folds.csv, d0_twins.csv}` (LD-4 / LD-5).
 
 ### S-1 D0 + D1 labels and splits (design step 9) — 1 CPU task, < 1 min
 ```bash
@@ -60,7 +61,8 @@ cd $REPO && bash analysis/geo2/m3_launch.sh splits
 - Outputs: `$GEO2B/F_pairs_d0d1.csv` (8,389 D1 rows byte-identical to F_pairs_cr2.csv + every D0_pairs.csv row),
   `$GEO2B/splits/T1D0__f{0..4}.json`, `analysis/geo2/results/S_splits_d0d1.json` (written last; `all_pass` true,
   `preliminary` false).
-- Done: log `=== exit 0` twice. STOP (exit 3): preliminary / inconsistent GEO1b D0 build, a D0 pair across folds, a D0 /
+- Done: log `=== exit 0` twice. Exit 2 (not ready, nothing written): an input missing or the GEO1b D0 build still
+  preliminary (연결 S-4: merge M1 first). STOP (exit 3): inconsistent GEO1b D0 build, a D0 pair across folds, a D0 /
   D1 rxn_id overlap, a twin bound to a training fold, cr2 provenance. Rerun is byte-identical for the same inputs.
 - Preliminary dry run (tests only, already done 2026-10-31): `d0d1_splits.py build --test-dir
   $GEO2B/tests_lad/splits_prelim --allow-preliminary` (3,804 D0 pairs, 3,564 ok; RUNBOOK_tests T-0).
@@ -75,7 +77,8 @@ cd $REPO && bash analysis/geo2/m3_launch.sh prereg
 ```
 - Needs (exit 2 while missing): GEO1b `E_report.json`, `results/Z_report.json`, `P_build_geo.json`, `P_geo_report.json`,
   final `S_splits_d0d1.json`, `C_tests_geo.json` all_pass, `analysis/d1_ladder/results/{C_smoke_atoms_geo.json,
-  C_smoke_xgb_geo.json, D0D1_diag_geo.json}`, the gated files.
+  C_smoke_xgb_geo.json, D0D1_diag_geo.json}`, the gated files. Also exit 2 while `Z_report.json` is running / not
+  complete or `P_geo_report.json` is running / of another geo table (연결 S-2, S-3).
 - Outputs: `analysis/geo2/results/PREREG_GEO2B.md`, `prereg_geo2b.json`.
 - STOP: a PREREG file already tracked (written once), Z / P stop, D0D1 index not final, C tests not on the code / inputs
   now, smoke not ok, GPU projection missing or > 160 GPU-h, a geo unit / prediction / evaluation file exists, a tracked
@@ -128,4 +131,12 @@ sbatch --time=48:00:00 -p cpu1,cpu2 -J geo2b_Rc2 --cpus-per-task=1 --mem=4G --ou
   changed = GEO2.md 14 STOP).
 - Budget: cap 160 GPU-h (GEO1b DECISIONS D0D1). Projection from the C-test smoke (`C_tests_geo.json gpu_estimate_geo`),
   measured afterwards in `L_report_geo.json gpu_hours_atoms`. XGB: `C_smoke_xgb_geo.json stage_cpu_hours_estimate`.
-- Then: Phase E (Z/E role: eval_geo2 restricted to geo, D1 and D0 separately; LADDER `evaluate.py e3`).
+- Then: Phase E = `eval_d0d1.py run` (Z/E role; D1 and D0 separately; it imports the LADDER evaluate.py E2 functions
+  unchanged — there is no `evaluate.py e3` and `eval_geo2.py run` exits 2 by design under D0D1; 연결 S-1). 1 CPU task:
+```bash
+cd $REPO/analysis/geo2 && sbatch --time=48:00:00 -p cpu1,cpu2 -J geo2b_e --cpus-per-task=4 --mem=32G \
+  --output=$GL/%x_%j.out --export=ALL,M3ENV=espley jobs/m3_cpu.slurm ../geo2/eval_d0d1.py run
+```
+  Needs (exit 2 while missing): `L_report_geo.json`, `L_xgb_report_geo.json`, `L_predictions_geo.parquet`, GEO1b
+  `E_rxn.csv`, the final D0 build (D0_pairs_report g2_source g2c); STOP if `D0_pairs.csv` != the `S_splits_d0d1.json`
+  record (E-9). Done = `results/E_report.json` without `status` 'running' and the 8 tables; full order in RUNBOOK_geo2b.md.

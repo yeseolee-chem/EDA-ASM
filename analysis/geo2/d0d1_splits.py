@@ -13,7 +13,8 @@ Compute nodes only (sbatch / srun). Any env with numpy + pandas: conda reactot, 
                                                   true and the trainers refuse it). Tests only.
   python d0d1_splits.py check [--test-dir D] [--allow-preliminary]
                                                   the trainers' reader check (load_s_splits) on the written files
-  exit 0 = done / passed, 2 = not ready (an input missing; nothing written), 3 = STOP (nothing written).
+  exit 0 = done / passed, 2 = not ready (an input missing, or the GEO1b D0 build still preliminary: 연결 S-4; nothing
+  written), 3 = STOP (nothing written).
 
 Inputs (read only): $LAD/F_pairs_cr2.csv (LADDER y; results/V_report.json all_pass and outputs sha256),
   analysis/d1_pair/results/F_pairs.csv (header / D1 pair order), the FU2 T1 split files $D1PAIR_SCRATCH/fu2/splits/
@@ -35,7 +36,7 @@ Rules (fixed before any geo result; DECISIONS_lad.md LD-*)
   D0 fold  of a pair = d0_folds.csv fold of a_rxn = fold of b_rxn (0..4; a pair across folds or with a D-1 overlap
            reaction = STOP). Folds are frozen in GEO1b (d0_pairs.py P-frozen); D0_pairs.csv is rebuilt after G2c.
   D0 inputs must be the final GEO1b build: D0_pairs_report.json stop false, g2_source 'g2c', preliminary false, status
-           'ok', outputs sha256 = the files; Q_d0_report.json all_pass true, stop false, its sha256 = the D0_pairs_report
+           'ok' (a preliminary report = not ready, exit 2), outputs sha256 = the files; Q_d0_report.json all_pass true, stop false, its sha256 = the D0_pairs_report
            inputs record and its labels_d0_q.json sha256 = the one D0_pairs_report read (design 'provenance via the
            Q_d0_report sha'). Twins: no D0 training reaction of fold k has a D1 twin bound to fold k (d0_twins.csv
            kind forced / iso_resolved; accepted conflicts are reported only).
@@ -74,7 +75,8 @@ ORIG = REPO / "analysis" / "d1_pair" / "results" / "F_pairs.csv"         # = tra
 V_REPORT = REPO / "analysis" / "d1_ladder" / "results" / "V_report.json"
 FU2_S_SPLITS = REPO / "analysis" / "d1_pair" / "results" / "fu2" / "S_splits.json"
 FU2_SPLITS = D1PAIR_SCR / "fu2" / "splits"                              # = fu2_common.SPLITS
-D0_DIR = Path("/gpfs/tmp_cpu2/yeseo1ee/geo1b/d0")                       # $GEO1B/d0 (GEO1b d0_pairs.py; read only)
+D0_DIR = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo1b")) / "d0"   # $GEO1B/d0 (read only; = geo2_common
+#                                                                         GEO1 / d0d1.GEO1B, 연결 S-5)
 D0_PAIRS = D0_DIR / "D0_pairs.csv"
 D0_FOLDS = D0_DIR / "d0_folds.csv"
 D0_TWINS = D0_DIR / "d0_twins.csv"
@@ -201,7 +203,8 @@ def fu2_t1():
 
 
 def d0_provenance(allow_preliminary=None):
-    """the GEO1b D0 inputs are a passed, final build (module docstring 'D0 inputs'); -> record. Stop / NotReady."""
+    """the GEO1b D0 inputs are a passed, final build (module docstring 'D0 inputs'); -> record. Stop / NotReady (a
+    preliminary report = NotReady, exit 2, as feat_geo p_report: 연결 S-4)."""
     allow = ALLOW_PRELIMINARY if allow_preliminary is None else bool(allow_preliminary)
     rep = read_json(D0_REPORT, "GEO1b d0_pairs.py build")
     bad = []
@@ -209,7 +212,7 @@ def d0_provenance(allow_preliminary=None):
         bad.append(f"{D0_REPORT.name} stop = {rep.get('stop')!r}")
     prelim = bool(rep.get("preliminary") is not False or rep.get("g2_source") != "g2c" or rep.get("status") != "ok")
     if prelim and not allow:
-        raise Stop(f"{D0_REPORT} is preliminary (g2_source {rep.get('g2_source')!r}, preliminary "
+        raise NotReady(f"{D0_REPORT} is preliminary (g2_source {rep.get('g2_source')!r}, preliminary "
                    f"{rep.get('preliminary')!r}, status {rep.get('status')!r}): rerun d0_pairs.py build after "
                    f"select_g2c.py build (GEO1b DECISIONS_PAIR P-g2-source) and bring that analysis/geo1b/results "
                    f"commit into this worktree")

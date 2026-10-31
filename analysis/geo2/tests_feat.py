@@ -338,16 +338,25 @@ def cmd_unit():
                 (fin / str(r)).mkdir(parents=True, exist_ok=True)
                 (fin / str(r) / ".done").write_text("x\n")
             zs.write_text("rxn_id,status\n1000001,ok\n1000002,no_g2\n3,kept\n4,ok\n")
-            z.write_text(json.dumps(dict(stop=False, n_folders=3)))
+            z.write_text(json.dumps(dict(stop=False, running=False, complete=True, n_folders=3)))
             base, info = FG.geo_state()
             assert not info["problems"] and [r for r, _ in base] == [3, 4, 1000001], (info["problems"], base)
-            z.write_text(json.dumps(dict(stop=False, n_folders=dict(D1=1, D0=2))))
+            z.write_text(json.dumps(dict(stop=False, running=False, complete=True, n_folders=dict(D1=1, D0=2))))
             assert not FG.geo_state()[1]["problems"]
-            z.write_text(json.dumps(dict(stop=False, n_folders=2)))
+            z.write_text(json.dumps(dict(stop=False, running=False, complete=True, n_folders=2)))
             assert FG.geo_state()[1]["problems"][0][0] == 3
-            z.write_text(json.dumps(dict(stop=True, n_folders=3)))
+            z.write_text(json.dumps(dict(stop=True, running=False, complete=True, n_folders=3)))
             assert FG.geo_state()[1]["problems"][0][0] == 3
-            return dict(base=base, by_dataset=info["n_base_by_dataset"])
+            # 연결 S-2: build_geo's start marker (stop true + running true) and a report without complete = exit 2
+            z.write_text(json.dumps(dict(stop=True, running=True, complete=False, stop_reasons=["running"])))
+            pr = FG.geo_state()[1]["problems"]
+            assert [c for c, _ in pr] == [2], pr
+            z.write_text(json.dumps(dict(stop=False, n_folders=3)))
+            pr2 = FG.geo_state()[1]["problems"]
+            assert [c for c, _ in pr2] == [2], pr2
+            z.write_text(json.dumps(dict(stop=True, running=False, complete=False, stop_reasons=["STOP: x"])))
+            assert max(c for c, _ in FG.geo_state()[1]["problems"]) == 3
+            return dict(base=base, by_dataset=info["n_base_by_dataset"], running=pr[0][1][:80])
         finally:
             FG.Z_REPORT, FG.Z_STATUS = save
             FG._LAB.clear()
@@ -481,6 +490,29 @@ def cmd_unit():
         finally:
             XD.D0_PAIRS_REPORT, XD.D0_FOLDS, XD.D0_PAIRS = save
 
+    def t_d0_s3d():
+        """연결 S-8: feat_geo.d0_s3d_check (report only) on rel<k>.xyz = the Coley label references the keys' s3d came
+        from (0 differences expected) and, as information, on the D0-G2 orig rel files of the first D0 reactions."""
+        K = pd.read_parquet(IN.Q_KEYS_D0)
+        rids = [0, 1, 5, 3312, 3323]
+        fin = scr / "s3d_final"
+        for rid in rids:
+            d = fin / str(rid)
+            d.mkdir(parents=True, exist_ok=True)
+            for r in K[K.rxn_id == rid].itertuples(index=False):
+                shutil.copyfile(r.xyz, d / f"rel{int(r.frag)}.xyz")
+        a = FG.d0_s3d_check(set(rids), final=fin)
+        assert "error" not in a and a["n_checked"] + a["n_skipped_err_keys"] == 2 * len(rids), a
+        assert a["n_differs"] == 0 and a["n_s3d_not_computable"] == 0, a
+        g2 = Path("/gpfs/tmp_cpu2/yeseo1ee/d0_g2/g2_final")
+        rg = {r for r in range(60) if all((g2 / str(r) / f"rel{k}.xyz").is_file() for k in (1, 2))}
+        b = FG.d0_s3d_check(rg, final=g2)
+        assert "error" not in b and b["n_checked"] > 0, b
+        return dict(coley={k: a[k] for k in ("n_checked", "n_differs", "n_skipped_err_keys")},
+                    d0g2_orig_info={k: b[k] for k in ("n_checked", "n_differs", "n_differs_grouped",
+                                                     "n_s3d_not_computable", "n_skipped_err_keys")},
+                    d0g2_orig_examples=b["examples"][:3])
+
     def t_listing_digest():
         d = scr / "lnk"
         d.mkdir(parents=True, exist_ok=True)
@@ -500,7 +532,7 @@ def cmd_unit():
                          ("comb_build", t_comb_build), ("comb_state_inputs_check", t_comb_state_and_labels),
                          ("geo_state", t_geo_state), ("g_scan", t_g_scan), ("rel_gate", t_rel_gate),
                          ("refs_min_geo", t_refs_min_geo), ("d0_pairs_state", t_d0_pairs_state),
-                         ("listing_digest", t_listing_digest)]:
+                         ("d0_s3d_count", t_d0_s3d), ("listing_digest", t_listing_digest)]:
             check(name, fn)
     finally:
         shutil.rmtree(scr, ignore_errors=True)

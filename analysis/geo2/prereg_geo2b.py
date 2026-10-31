@@ -10,7 +10,9 @@ CLI (exit 0 = done, 2 = not ready (an input missing; nothing written), 3 = STOP 
         file is tracked by git (a committed pre-registration is never rewritten; an untracked draft is replaced).
         Needs (else exit 2): analysis/geo1b/results/E_report.json (GEO1b E1), results/Z_report.json, P_build_geo.json,
         P_geo_report.json, S_splits_d0d1.json (final), C_tests_geo.json, analysis/d1_ladder/results/C_smoke_atoms_geo.json,
-        C_smoke_xgb_geo.json, D0D1_diag_geo.json, the gated input files. STOP (exit 3): Z / P stop, the geo table sha256
+        C_smoke_xgb_geo.json, D0D1_diag_geo.json, the gated input files; also exit 2 while Z_report.json is running /
+        not complete or P_geo_report.json is running / stale (its inputs[geo table] != the table now; 연결 S-2, S-3).
+        STOP (exit 3): Z / P stop, the geo table sha256
         != P_build_geo outputs, the D0D1 index not final / not current (d0d1_splits.load_s_splits), Z_report.json
         inputs.d0_folds_sha256 != d0_folds.csv now / the index record (review R-1), F_pairs_cr2.csv !=
         V_report outputs, C_tests_geo.json not all_pass or not run on the code / geo table / labels now, a stage-3 smoke
@@ -24,7 +26,9 @@ json keys the stage-3 gate reads (train_atoms.gate_prereg_geo2 / train_xgb.gate_
   split "T1D0"; inputs_sha256 {absolute unresolved path: sha256} holding need = $GEO2B/F_pairs_d0d1.csv and
   $GEO2B/inputs/geo.parquet plus the other training inputs and the training code; ladder_results_sha256
   {repo-relative path: sha256} = every analysis/d1_ladder/results file except GEO2 outputs ('geo' in the name, E3_*,
-  *.tmp). For evaluate.py e3 (not read by the gate): code.fingerprint_keys {train_atoms: {...}, train_xgb: {...}}.
+  *.tmp). Record only, read by no later step (GEO2b Phase E is eval_d0d1.py, which does not compare unit fingerprints;
+  LADDER evaluate.py has no e3; 연결 S-1): code.fingerprint_keys {train_atoms: {...}, train_xgb: {...}, d0d1_code} = the
+  code sha256 every geo unit fingerprint is expected to carry (write uses it only for its own drift check).
 Everything else is a record (numbers copied from the files, sha256 of evidence files, git states). Decisions: results/
 DECISIONS_lad.md (LP-*).
 """
@@ -175,12 +179,12 @@ def quote(text):
 
 
 def section(text, head, name):
-    """verbatim lines of a spec from the line starting with `head` up to (not including) the next heading of the same
-    or a higher level, a code fence or a code-introduction line; STOP when `head` is not unique."""
+    """verbatim lines of a spec from the first line starting with `head` up to (not including) the next heading of the
+    same or a higher level, a code fence or a code-introduction line; STOP only when `head` is absent (연결 S-9)."""
     lines = text.split("\n")
     hits = [i for i, ln in enumerate(lines) if ln.startswith(head)]
-    if len(hits) != 1:
-        stop(f"{name}: heading {head!r} found {len(hits)} times (the spec changed; nothing written)")
+    if not hits:
+        stop(f"{name}: heading {head!r} not found (the spec changed; nothing written)")
     i0 = hits[0]
     lev = len(lines[i0]) - len(lines[i0].lstrip("#"))
     out = [lines[i0]]
@@ -196,11 +200,12 @@ def section(text, head, name):
 
 
 def bullet(text, prefix, name):
-    """a top-level markdown bullet (line starting with `prefix`) with its indented continuation lines; STOP if absent."""
+    """the first top-level markdown bullet (line starting with `prefix`) with its indented continuation lines; STOP only
+    if absent (연결 S-9: the geo1b merge may add later bullets with the same prefix)."""
     lines = text.split("\n")
     hits = [i for i, ln in enumerate(lines) if ln.startswith(prefix)]
-    if len(hits) != 1:
-        stop(f"{name}: bullet {prefix!r} found {len(hits)} times")
+    if not hits:
+        stop(f"{name}: bullet {prefix!r} not found")
     out = [lines[hits[0]]]
     for ln in lines[hits[0] + 1:]:
         if ln.startswith("- ") or ln.startswith("#"):
@@ -490,8 +495,12 @@ def gather():
     yp = GEO1B_RES / "Y_plan.json"                            # review R-3: GEO2.md 8-3 item 1 'Y 설정'
     D["Y_plan"] = json.loads(yp.read_text()) if yp.is_file() else None
     z = read_json(Z_REPORT, "build_geo.py build (GEO2.md 4)")
+    if z.get("running"):                                      # 연결 S-2: running / killed = wait, not STOP
+        not_ready(f"{Z_REPORT}: running (build_geo.py build not finished, or killed: resubmit Z)")
     if z.get("stop"):
         stop(f"{Z_REPORT}: stop {z.get('stop_reasons')} (GEO2.md 4-3)")
+    if z.get("complete") is not True:
+        not_ready(f"{Z_REPORT}: complete {z.get('complete')!r} (rerun build_geo.py build)")
     D["Z_report"] = compact(z)
     b = read_json(P_BUILD, "inputs role P (GEO2.md 6-1)")
     if not b.get("all_pass") or b.get("stop"):
@@ -502,6 +511,11 @@ def gather():
     D["P_build"] = dict(file=rel(P_BUILD), sha256=DD.sha256(P_BUILD), table=str(TABLE), table_sha256=want,
                         rung_cfg=b.get("rung_cfg"), table_summary=compact(b.get("table")))
     pr = read_json(P_REPORT, "inputs role P report (GEO2.md 7)")
+    if pr.get("running"):                                     # 연결 S-3: running / early exit / stale = exit 2
+        not_ready(f"{P_REPORT}: running (feat_geo.py p_report not finished or exited early: rerun p_report)")
+    if (pr.get("inputs") or {}).get(str(TABLE)) != want:
+        not_ready(f"{P_REPORT} inputs[{TABLE}] {str((pr.get('inputs') or {}).get(str(TABLE)))[:12]} != the table now "
+                  f"{str(want)[:12]} (stale: rerun feat_geo.py p_report)")
     if pr.get("stop"):
         stop(f"{P_REPORT}: stop {pr.get('stop_reasons') or pr.get('stop_reason')} (GEO2.md 7)")
     D["P_geo_report"] = compact(pr)
@@ -704,6 +718,13 @@ def md_text(D):
       "'보지 못한 core' 주장은 약해진다. D-1 겹침 5개는 모든 집합에서 빠지고, 반응물이 같은 D0 twin은 그 D1 twin의 fold를 "
       "따른다.")
     A("- D0 Phase V(DFT 형태 탐색)는 없다(D0 d1·d2·barrier는 Q 규칙만, GEO1b DECISIONS D0D1).")
+    s3 = (D["P_geo_report"] or {}).get("d0_reference_s3d") or {}
+    A("- D0 Q-2 키의 `|s3d:`(3D 입체 표지)는 Coley 라벨 기준 구조에서 나온다(GEO1b d0_labels.py). rung geo의 refs 'min'은 "
+      "D0 G2c 기준 구조를 이 키로 묶는다(alt / cfg 행만 자기 기준). D0D1 설계와 같고, 탐색에서 D0 G2 기준 조각 21,092개의 "
+      "formula·WL 불일치는 0개였다. G2c 기준 구조 자체의 입체가 키와 다른 경우는 P 보고에 개수만 적는다(판정 아님; "
+      f"`P_geo_report.json` d0_reference_s3d: 검사 {s3.get('n_checked')}, 다름 {s3.get('n_differs')}, 그중 묶이는 행 "
+      f"{s3.get('n_differs_grouped')}, 계산 불가 {s3.get('n_s3d_not_computable')}{', 오류 ' + s3['error'] if s3.get('error') else ''}"
+      "; DECISIONS_feat 연결 S-8).")
     A("- D0 라벨 TS는 Gaussian 16, D1은 ORCA RIJCOSX로 최적화했다(A5-eng: pauli·oi RMS 1.6 / 0.8 kcal/mol, n = 24).")
     A("- XGB의 제곱 손실과 SH β(절편 없는 최소제곱)는 더 큰 D0 ΔΔ에 끌릴 수 있다(D0 짝 |dd|가 D1의 2.5–6배). 7-3절의 s_y·β "
       "진단은 설명용이며 학습 규칙을 바꾸지 않는다.")
@@ -762,13 +783,14 @@ def md_text(D):
     A("- json `inputs_sha256`에 라벨 파일과 geo 입력표가 있고(need), 아래 표의 파일이 모두 그 sha256 그대로다.")
     A(f"- `analysis/d1_ladder/results`의 LADDER 결과 파일 {len(D['ladder_snapshot'])}개(json `ladder_results_sha256`)가 "
       "그대로다(작성 때 git HEAD와 같음을 확인; `collect --stage 3`도 다시 확인).")
-    A("- P: `P_build_geo.json` all_pass·입력표 sha256, `P_geo_report.json` stop false. 분할 색인: d0d1_splits 읽기 규칙 전부"
+    A("- P: `P_build_geo.json` all_pass·입력표 sha256, `P_geo_report.json` stop false이고 그 inputs의 입력표 sha256 = 지금 "
+      "(연결 S-3). 분할 색인: d0d1_splits 읽기 규칙 전부"
       "(final). C: `C_tests_geo.json` all_pass(geo 모드)와 그 code_sha256의 학습 코드 5개 = 지금 파일.")
     A("")
     a += table(["파일", "역할", "열", "sha256"], [[f"`{rel(p)}`", r, c, f"`{s}`"] for p, r, c, s in D["inputs"]])
     A("")
     A(f"- 학습 코드 git 상태(작성 시): {D['code_git']}")
-    A("- geo unit 지문의 code_sha256 기준값(json `code.fingerprint_keys`): " + "; ".join(
+    A("- geo unit 지문의 code_sha256 기준값(json `code.fingerprint_keys`; 기록만, 뒤 단계가 읽지 않음): " + "; ".join(
         f"{t}: " + (", ".join(f"{k} `{v[:12]}`" for k, v in m.items()) if isinstance(m, dict) else f"`{str(m)[:12]}`")
         for t, m in D["fingerprint_keys"].items()))
     A("")
@@ -802,7 +824,8 @@ def json_rec(D, md_sha):
                        "gate_splits_d0d1 and gate_c_geo"),
         units=units(), d0d1_index=D["index"],
         code=dict(fingerprint_keys=D["fingerprint_keys"],
-                  rule="every geo unit json fingerprint code_sha256 = fingerprint_keys of its trainer; d0d1_code = "
+                  rule="record only (read by no later step; eval_d0d1.py does not compare unit fingerprints): the code "
+                       "sha256 every geo unit json fingerprint code_sha256 is expected to carry, per trainer; d0d1_code = "
                        "sha256 of analysis/geo2/d0d1_splits.py (fingerprint key d0d1_code)",
                   c_tests_geo_code_sha256=D["C_tests"]["code_sha256"]),
         selection=dict(rep="LADDER 13-1 per rung x arm x target, lowest 5-fold mean D1 inner-val kcal MAE, ties AW, GNN, "

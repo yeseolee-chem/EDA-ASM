@@ -4,7 +4,10 @@
 (analysis/geo1b/jobs/gpu.slurm; it reads the GEO1b pickles).
 
   python build_geo.py build     -> $GEO2/geo_final/<rxn_id>/{ts.xyz, rel1.xyz, rel2.xyz, result.json, .done}
-                                   + results/Z_status.csv + results/Z_report.json   (exit 3 = STOP, spec 4-3)
+                                   + results/Z_status.csv + results/Z_report.json
+                                   exit 0 = done; 2 = not ready (an upstream file missing: GEO1b pickles, E_rxn*.csv,
+                                   D_dataset_report.json, d0 folds / report, G2c C_select.csv; nothing written);
+                                   3 = STOP (spec 4-3)
 Targets: D1 = the 9,266 rows of labels_d1_g2.json (uid D1_<rid>, rid >= 1000001, label TS d1_jobs/<job_id>/ts.xyz);
 D0 = the status-ok rows of labels_all.json without the 5 D-1 overlaps of d0_folds.csv (uid D0_<rid>, rid 0-5973,
 job_id D0G2_<rid:04d>, label TS = the Coley profile TS full_dataset_profiles/<rid>/<ts_file>, as GEO1b data.py).
@@ -17,9 +20,12 @@ Gates (STOP), D1 and D0 checked separately: forming-distance errors of the mean 
 E_rxn_d0.csv (D0) to 1e-6 A, and the file rows = exactly the reactions built from folds 0-4 (D1 fold -1 = fm1 is in no
 file); fallback share <= 2 %. Also STOP: a reaction predicted by two folds, a D0 prediction in another fold than
 d0_folds.csv (checked before any write), a prediction that is no target, G2c folders that disagree with C_select.csv /
-g2c.json, a .done geo_final folder of a target that is not built now (stale).
+g2c.json, a C_select.csv other than the one GEO1b trained on (D_dataset_report.json g2_input.c_select_sha256), a .done
+geo_final folder of a target that is not built now (stale).
 Idempotent: an existing .done folder whose sources are unchanged is kept. results/Z_report.json is first rewritten with
-stop true ('running') and gets its final content last, so a killed or stopped run never leaves a passing report.
+stop true + running true and gets its final content (running false, complete true) last; a STOP inside the run rewrites
+it with stop true, running false and the reason. A killed run leaves running true (readers: exit 2, resubmit Z), so a
+killed or stopped run never leaves a passing report.
 """
 from __future__ import annotations
 
@@ -46,6 +52,27 @@ E_RXN_TOL = 1e-6            # A, forming-distance errors vs GEO1b E_rxn.csv / E_
 SRCS = ("D1", "D0")
 E_RXN_FILE = {"D1": "E_rxn.csv", "D0": "E_rxn_d0.csv"}      # GEO1b evaluate.py (D0: GB-eval-d0, same columns)
 Z_FIELDS = ["rxn_id", "job_id", "src", "status", "source", "fallback", "reason", "g2c"]
+D_REPORT = C.GEO1_RES / "D_dataset_report.json"            # GEO1b data.py: g2_input.c_select_sha256 (the G2c it read)
+Z_REPORT = C.RES / "Z_report.json"
+
+
+def upstream_missing():
+    """GEO1b / G2c files Z needs that do not exist yet (-> exit 2, nothing written; they arrive with the GEO1b runs, the
+    geo1b -> geo2b merge M1 and the G2c build)."""
+    need = [C.GEO1 / "preds" / f"final_{t}_s{s}.pkl" for t in [f"f{k}" for k in FOLDS] + ["fm1"] for s in C.SEEDS]
+    need += [C.GEO1_RES / f for f in E_RXN_FILE.values()] + [D_REPORT, C.D0_FOLDS, C.D0_PAIRS_REPORT, C.G2C_SELECT]
+    return [str(p) for p in need if not p.is_file()]
+
+
+def c_select_vs_geo1b():
+    """DECISIONS_ZE 연결 S-6: the G2c selection Z reads (C_select.csv) = the one GEO1b data.py read (D_dataset_report.json
+    g2_input.c_select_sha256), else STOP (structures and GEO1b inputs from different G2c builds)."""
+    want = (json.loads(D_REPORT.read_text()).get("g2_input") or {}).get("c_select_sha256")
+    got = C.sha256(C.G2C_SELECT)
+    if want != got:
+        C.stop(f"{C.G2C_SELECT} sha256 {got[:12]} != GEO1b {D_REPORT.name} g2_input.c_select_sha256 {str(want)[:12]} "
+               f"(the G2c selection changed after GEO1b data.py read it)")
+    return dict(d_report=str(D_REPORT), d_report_sha256=C.sha256(D_REPORT), c_select_sha256=got, equal=True)
 
 
 def load_preds():
@@ -201,12 +228,10 @@ def read_erxn(src):
 # ---------------------------------------------------------------- build
 def build():
     t0 = time.time()
-    C.write_json(C.RES / "Z_report.json", dict(stop=True, stop_reasons=["build_geo.py build running (or killed / "
-                                                                       "stopped before its final report)"],
-                                                started=time.strftime("%Y-%m-%dT%H:%M:%S")))
     d0f = load_d0_folds()
     T, n_ov = load_targets(d0f)
     sel = load_g2c_select()
+    g2c_geo1b = c_select_vs_geo1b()                                      # before any write
     prov = {t["uid"]: g2c_state(t["g2"], t["src"], t["rid"], sel) for t in T}          # all checked before any write
     P = load_preds()
     stray = sorted(set(P) - {t["uid"] for t in T})
@@ -331,15 +356,37 @@ def build():
                inputs=dict(d1_labels=str(C.D1_LABELS_G2), d0_labels=str(C.D0_LABELS), d0_folds=str(C.D0_FOLDS),
                            d0_folds_sha256=C.sha256(C.D0_FOLDS), g2c_select=str(C.G2C_SELECT),
                            g2c_select_sha256=C.sha256(C.G2C_SELECT), g2_final_d1=str(C.G2_FINAL),
-                           g2_final_d0=str(C.G2_FINAL_D0), preds=str(C.GEO1 / "preds")),
+                           g2_final_d0=str(C.G2_FINAL_D0), preds=str(C.GEO1 / "preds"), g2c_vs_geo1b=g2c_geo1b),
                decisions="results/DECISIONS.md (A-G2c, D0D1), results/DECISIONS_ZE.md",
-               stop=bool(stops), stop_reasons=stops, wall_s=time.time() - t0)
-    C.write_json(C.RES / "Z_report.json", rep)
+               stop=bool(stops), stop_reasons=stops, running=False, complete=True, wall_s=time.time() - t0)
+    C.write_json(Z_REPORT, rep)
     print(json.dumps({k: v for k, v in rep.items() if k not in ("inputs", "layout")}, indent=1, default=str), flush=True)
     return 3 if stops else 0
 
 
+def main():
+    """DECISIONS_ZE 연결 S-2: upstream missing = exit 2 with nothing written; then the running report, build(), and on a
+    STOP / crash inside build() a stopped report (stop true, running false, the reason)."""
+    miss = upstream_missing()
+    if miss:
+        print(f"NOT READY: {len(miss)} upstream file(s) missing: {miss[:6]} (GEO1b R / E1 / Y, the geo1b -> geo2b merge "
+              f"M1, the G2c build; RUNBOOK_geo2b.md)", file=sys.stderr, flush=True)
+        return 2
+    started = time.strftime("%Y-%m-%dT%H:%M:%S")
+    C.write_json(Z_REPORT, dict(stop=True, running=True, complete=False, started=started,
+                                stop_reasons=["build_geo.py build running (or killed before its final report: resubmit)"]))
+    try:
+        return build()
+    except BaseException as e:                                           # noqa: BLE001 — record, then re-raise
+        code = e.code if isinstance(e, SystemExit) else None
+        if not (isinstance(e, SystemExit) and code in (0, None)):
+            why = [f"STOP: {m}" for m in C.LAST_STOP] or [f"{type(e).__name__}: {e}"]
+            C.write_json(Z_REPORT, dict(stop=True, running=False, complete=False, started=started,
+                                        finished=time.strftime("%Y-%m-%dT%H:%M:%S"), stop_reasons=why))
+        raise
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["build"]:
-        sys.exit(build())
+        sys.exit(main())
     raise SystemExit(__doc__)

@@ -39,7 +39,7 @@ as `$SLURM_ARRAY_TASK_ID` itself.
 ```
 now (no GEO1b / Z dependency):   X ──> S-1 (D0 B3LYP reproduction, ~3–5 core-h)
                                    └─> T: t2_g+td0_g ──> t2_f+td0_f ;  t3+td0_h
-after Z (build_geo.py: results/Z_report.json stop false, complete; Z/E role) and T passed:
+after Z (build_geo.py: results/Z_report.json stop false, complete true; running = exit 2; Z/E role) and T passed:
                                    G (6 slices) ──> g_report ──> f_slice (4) ──> f_merge ──> f_atoms (4) ──> f_rest
 after Z, T and S-1 passed:         h_inputs 10 + h_pilot ──> h_batch (10) ──> h_build + h_report
 after F + H complete, the final GEO1b results merged into geo2b (analysis/geo1b/results/Q_d0_report.json,
@@ -50,21 +50,28 @@ P_report / P_build_{dft,g2} / P_{dft,g2} set files as they are:
 Everything in G/F/H/P re-checks the combined root (`results/X_d0d1_report.json` sha256 + link digests), the four T
 records against the current code, `Z_report.json`, and (H) `results/X_S1.json`.
 
-## 2. Wave A — Phase X, S-1, T (submit now; 5 tasks)
+Queue rule for every wave (연결 S-7): before each submission `N=$(squeue -u $USER -h -r | wc -l)` and submit only if
+`N + <tasks of that submission> <= 20` (MaxSubmit counts array tasks; the 12 G2c tasks — 10 g2c_dyn + g2c_build +
+g2c_report — may still be queued, so N >= 12 until they drain). Every dependent line carries
+`--kill-on-invalid-dep=yes` (as m3_launch.sh): a job whose dependency failed is cancelled instead of pending forever.
+The single end-to-end order (with the GEO1b merge points) is `RUNBOOK_geo2b.md`.
+
+## 2. Wave A — Phase X, S-1, T (submit now; 5 tasks: N <= 15)
 ```bash
 cd $R/d1_hf
 JX=$(sbatch --parsable -p cpu1,cpu2 -J g2b_x --time=48:00:00 --cpus-per-task=4 --mem=16G --output=$L/%x_%j.out \
   jobs/hf.slurm ../geo2/d0d1.py x 4)
 JS1=$(sbatch --parsable -p cpu1,cpu2 -J g2b_s1 --time=48:00:00 --cpus-per-task=3 --mem=24G --dependency=afterok:$JX \
-  --output=$L/%x_%j.out jobs/hf.slurm ../geo2/d0d1.py s1 3)
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out jobs/hf.slurm ../geo2/d0d1.py s1 3)
 JTH=$(sbatch --parsable -p cpu1,cpu2 -J g2b_th --time=48:00:00 --cpus-per-task=10 --mem=64G --dependency=afterok:$JX \
-  --output=$L/%x_%j.out jobs/hf.slurm ../geo2/feat_geo.py t3 ';;;' ../geo2/feat_geo.py td0_h)
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out jobs/hf.slurm ../geo2/feat_geo.py t3 ';;;' ../geo2/feat_geo.py td0_h)
 cd $R/geo2
 JTG=$(sbatch --parsable -p cpu1,cpu2 -J g2b_tg --time=48:00:00 --cpus-per-task=8 --mem=16G --dependency=afterok:$JX \
-  --output=$L/%x_%j.out --export=ALL,GEO2ENV=d1 jobs/geo2.slurm feat_geo.py t2_g ';;;' feat_geo.py td0_g)
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out --export=ALL,GEO2ENV=d1 jobs/geo2.slurm \
+  feat_geo.py t2_g ';;;' feat_geo.py td0_g)
 cd $R/d1_pair
 JTF=$(sbatch --parsable -p cpu1,cpu2 -J g2b_tf --time=48:00:00 --cpus-per-task=8 --mem=32G --dependency=afterok:$JTG \
-  --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
   ../geo2/feat_geo.py t2_f ::: ../geo2/feat_geo.py td0_f)
 ```
 Pass checks:
@@ -81,31 +88,42 @@ Pass checks:
   `$GEO2B/t2`, `t3`, `td0`, `td0h`). `--rerun` forces a fresh work dir. After any code edit the T records are stale
   (exit 2 downstream): resubmit wave A's T lines.
 
-## 3. Wave B — G, F, H pilot (after Z and T; G + g_report + F 17 tasks, pilot 1 = 18 queued tasks: at most 2 other tasks may be queued)
+## 3. Wave B — G, F, H pilot (after Z and T), in two submissions (연결 S-7)
+B1 = G (6) + g_report (1) + H pilot (1) = 8 tasks: submit when N <= 12. B2 = the F chain f_slice (4) + f_merge (1) +
+f_atoms (4) + f_rest (1) = 10 tasks: submit when N <= 10 (normally after the G array has drained). Together they never
+put more than 20 tasks in the queue (the old single wave B was 18 tasks + the other queued tasks).
 ```bash
+# ---- B1 (8 tasks)
 cd $R/geo2
 JG=$(sbatch --parsable -p cpu1,cpu2 -J g2b_g --time=48:00:00 --cpus-per-task=16 --mem=32G --array=0-5 \
   --output=$L/%x_%A_%a.out --export=ALL,GEO2ENV=d1 jobs/geo2.slurm feat_geo.py g A 6)
 cd $R/d1_pair
 JGR=$(sbatch --parsable -p cpu1,cpu2 -J g2b_gr --time=48:00:00 --cpus-per-task=16 --mem=32G --dependency=afterany:$JG \
-  --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm ../geo2/feat_geo.py g_report)
-JFS=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fs --time=48:00:00 --cpus-per-task=32 --mem=64G --array=0-3 \
-  --dependency=afterok:$JGR --output=$L/%x_%A_%a.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
-  ../geo2/feat_geo.py f_slice @I 4)
-JFM=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fm --time=48:00:00 --cpus-per-task=4 --mem=32G --dependency=afterok:$JFS \
-  --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm ../geo2/feat_geo.py f_merge)
-JFA=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fa --time=48:00:00 --cpus-per-task=32 --mem=64G --array=0-3 \
-  --dependency=afterok:$JFM --output=$L/%x_%A_%a.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
-  ../geo2/feat_geo.py f_atoms @I 4)
-JFR=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fr --time=48:00:00 --cpus-per-task=32 --mem=64G --dependency=afterany:$JFA \
-  --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm ../geo2/feat_geo.py f_rest)
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
+  ../geo2/feat_geo.py g_report)
 cd $R/d1_hf          # needs results/X_S1.json pass as well
 JHP=$(sbatch --parsable -p cpu2 -J g2b_hp --time=48:00:00 --cpus-per-task=64 --mem=256G --output=$L/%x_%j.out \
   jobs/hf.slurm ../geo2/feat_geo.py h_inputs 10 ::: ../geo2/feat_geo.py h_pilot)
+# ---- B2 (10 tasks). DEP=--dependency=afterok:$JGR while g2b_gr is still queued; once it has finished, check
+#      results/G_report.json (complete true, stop false) and submit the first line with DEP empty.
+cd $R/d1_pair
+DEP="--dependency=afterok:$JGR"
+JFS=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fs --time=48:00:00 --cpus-per-task=32 --mem=64G --array=0-3 \
+  $DEP --kill-on-invalid-dep=yes --output=$L/%x_%A_%a.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
+  ../geo2/feat_geo.py f_slice @I 4)
+JFM=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fm --time=48:00:00 --cpus-per-task=4 --mem=32G --dependency=afterok:$JFS \
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
+  ../geo2/feat_geo.py f_merge)
+JFA=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fa --time=48:00:00 --cpus-per-task=32 --mem=64G --array=0-3 \
+  --dependency=afterok:$JFM --kill-on-invalid-dep=yes --output=$L/%x_%A_%a.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F \
+  jobs/g.slurm ../geo2/feat_geo.py f_atoms @I 4)
+JFR=$(sbatch --parsable -p cpu1,cpu2 -J g2b_fr --time=48:00:00 --cpus-per-task=32 --mem=64G --dependency=afterany:$JFA \
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out --export=ALL,PYENV=venv5,D1PAIR_PHASE=F jobs/g.slurm \
+  ../geo2/feat_geo.py f_rest)
 ```
 - G: slices write `$GEO2B/geo_feat/<rxn_id>/` (.done | .fail_<reason>), `results/F_steps/g_<ii>of06.json`. A slice
-  that exits 2 (open reactions) is resubmitted alone (`--array=<i>`), then g_report and the F lines again (a pending
-  `afterok` job whose dependency failed never starts; it must be resubmitted). `g A 6 retry` (explicit) moves that
+  that exits 2 (open reactions) is resubmitted alone (`--array=<i>`), then g_report and the F lines again (a dependent
+  job whose dependency failed is cancelled by `--kill-on-invalid-dep=yes`; it must be resubmitted). `g A 6 retry` (explicit) moves that
   slice's .fail_freq_* / .fail_error_* / stale folders aside and recomputes them. Bytes per slice (review estimate from
   the LADDER dft_final / D0-G2 folders: 0.57 MB per D1, 0.86 MB per D0 folder) about 1.6 GB of the 2 GB
   `GEO2_G_BUDGET_GB` default.
@@ -114,20 +132,27 @@ JHP=$(sbatch --parsable -p cpu2 -J g2b_hp --time=48:00:00 --cpus-per-task=64 --m
 - F: `$GEO2B/X182_d1_geo.parquet` (D1 + D0 rows), `$GEO2B/fu2_geo/` atoms + tokens, `results/fu2_geo/{Q,T}_report.json`,
   `results/F_steps/f_report.json` summary per dataset (F-1, B6, Q-a, T-a <= 1 %; Q-a limit = ceil(0.5 % x n)).
   Expect the F-1 rule to STOP for D1: the same feature code gave 1.14 % (D1PAIR G1), 1.42 % (LADDER F0) and 1.36 %
-  (D1-G2, `analysis/d1_g2/results/F_DECISION.md`, accepted by the user), mostly `ext:B1:engine_gate1`. Report it; only
-  a user decision continues with `p --accept=F-1` (GEO-7).
+  (D1-G2, `analysis/d1_g2/results/F_DECISION.md`, accepted by the user), mostly `ext:B1:engine_gate1`. Report it. The
+  user's standing policy is "take the recommended option at a spec STOP and record it": continue with
+  `p --accept=F-1` plus a `results/DECISIONS_feat_runtime.md` entry citing that precedent only when each dataset's F-1
+  rate is no worse than the precedent band (<= 1.42 %; D0 checked separately) with the precedent failure kinds;
+  otherwise stop and report (RUNBOOK_geo2b.md wave D, 연결 S-10; GEO-7).
 - pilot: `results/H_pilot.json` `pass` true: 25 D1 + 25 D0 stratified by n_atoms quartile, stratified projection
   <= 4,000 core-h, rel-energy gate on the D1 orig rows. A projection over the cap is a STOP (report the numbers).
   On cpu1 use `-p cpu1 --cpus-per-task=48 --mem=200G` (D1-HF precedent: %maxcore 3500 x workers).
 
-## 4. Wave C — H batch (after the pilot passed; 11 tasks; 10 x 64 cores = the whole 640-CPU account cap)
+## 4. Wave C — H batch (after the pilot passed; 11 tasks: N <= 9; 10 x 64 cores = the whole 640-CPU account cap)
 ```bash
 cd $R/d1_hf
 JHB=$(sbatch --parsable -p cpu2 -J g2b_hb --time=48:00:00 --cpus-per-task=64 --mem=256G --array=0-9 \
-  --dependency=afterok:$JHP --output=$L/%x_%A_%a.out jobs/hf.slurm ../geo2/feat_geo.py h_batch @I 10)
+  --dependency=afterok:$JHP --kill-on-invalid-dep=yes --output=$L/%x_%A_%a.out jobs/hf.slurm \
+  ../geo2/feat_geo.py h_batch @I 10)
 JHR=$(sbatch --parsable -p cpu1,cpu2 -J g2b_hr --time=48:00:00 --cpus-per-task=4 --mem=32G --dependency=afterany:$JHB \
-  --output=$L/%x_%j.out jobs/hf.slurm ../geo2/feat_geo.py h_build ::: ../geo2/feat_geo.py h_report)
+  --kill-on-invalid-dep=yes --output=$L/%x_%j.out jobs/hf.slurm ../geo2/feat_geo.py h_build ::: \
+  ../geo2/feat_geo.py h_report)
 ```
+(`--dependency=afterok:$JHP` only while g2b_hp is still queued; after it finished with `results/H_pilot.json` pass,
+drop the dependency.)
 - The array size must equal the `h_inputs` W (10). Runs under `$GEO2B/hf_geo/runs/g2/<job_id>/`; per batch
   `results/F_steps/h_batch_w<k>of10.json`. h_build: `results/hf_geo/labels_d1_hf_g2.parquet` (D1 + D0 rows; the name is
   the inputs.py interface), `results/hf_geo/H_status.csv`. h_report: `results/H_report.json` complete, stop false;
@@ -135,7 +160,8 @@ JHR=$(sbatch --parsable -p cpu1,cpu2 -J g2b_hr --time=48:00:00 --cpus-per-task=4
 - Submit after G/F are done if other CPU work must run: while these 10 jobs run nothing else fits under the cap.
   A slice hit by the wall: resubmit `--array=<k>`, then the h_build line.
 
-## 5. Wave D — P (after F and H complete and GEO1b final merged; 1 task)
+## 5. Wave D — P (after F and H complete and GEO1b final merged (M1); 1 task: N <= 19; with the F-1 policy of 연결 S-10 the
+p / report commands carry `--accept=F-1`, see RUNBOOK_geo2b.md)
 ```bash
 cd $R/geo2
 JP=$(sbatch --parsable -p cpu1,cpu2 -J g2b_p --time=48:00:00 --cpus-per-task=4 --mem=32G --output=$L/%x_%j.out \
@@ -144,17 +170,20 @@ JP=$(sbatch --parsable -p cpu1,cpu2 -J g2b_p --time=48:00:00 --cpus-per-task=4 -
 - p: `$GEO2B/inputs/geo.parquet`, `results/P_build_geo.json` `all_pass` true, `stop` false, `outputs` = sha256 of the
   table (the LADDER gate_p_geo reads exactly these). Needs `inputs.RUNGS['geo'] == rung_cfg('geo')`, the LADDER
   Phase Q report (repo-relative rule F-13) and `Q_d0_report.json` all_pass with the current `Q_keys_d0.parquet`.
-  `p --accept=F-1[,B6]` only on a user decision (GEO-7).
+  `p --accept=F-1[,B6]` only on a user decision or the standing policy of 연결 S-10 (GEO-7; RUNBOOK_geo2b.md wave D).
 - p_report: `results/P_geo_report.json` (+ `P_geo_sets.json`, `$GEO2B/inputs/sets/P_geo_d0.csv`): D1 P_geo / P_23 / P_023
   over S_folds.csv (STOP |P_23| < 0.98 |P_g2|, kept as a pipeline check), D0 usable pairs per fold and edge kind,
-  D0 pairs lost because an end is unusable, usable reactions per dataset and fold. Exit 2 while
+  D0 pairs lost because an end is unusable, usable reactions per dataset and fold, and (report only) `d0_reference_s3d`:
+  D0 rung references whose 3D stereo differs from their key's `|s3d:` (연결 S-8). The old report is first replaced by a
+  `running` marker, so an early exit never leaves an old passing report; readers (trainers' gate_p_geo, prereg,
+  `report`) also require `inputs[<geo table>]` = its sha256 now (else exit 2, rerun p_report; 연결 S-3). Exit 2 while
   `D0_pairs_report.json` `g2_source` is not `g2c` (the preliminary D0 build), also when the final GEO1b d0_pairs.py run
   has already rewritten `$GEO1B/d0/D0_pairs.csv` but its report is not merged into this tree yet (review R-1); a
   sha256 difference against a final (`g2c`) report is exit 3.
 - report: `results/F_report.json` + `results/F_G_status.csv`.
 
 ## 6. Tests (no ORCA / xtb; foreground `srun --jobid=<running job> --overlap -n1 -c1 timeout 500 ...`)
-`tests_feat.py lint` (undefined names), `unit` (21 tests -> `results/U_feat_tests.json`), `wrap` (Phase X into
+`tests_feat.py lint` (undefined names), `unit` (22 tests -> `results/U_feat_tests.json`), `wrap` (Phase X into
 `$GEO2B/_selftest` + the GEO-15 HF wrappers on 3 D1 + 6 D0 reactions -> `results/U_feat_wrap.json`), `gorder` (D1 env;
 G atom-order gate on D1 + D0 folders -> `results/U_feat_gorder.json`). `lint` / `unit` / `wrap` in conda reactot,
 `gorder` in the D1 env.

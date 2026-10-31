@@ -1145,8 +1145,9 @@ def gate_prereg_geo2(need, rungs=()):
 
 def gate_p_geo(rungs, labels):
     """GB-6 (the gate_p rule for the geo rung): analysis/geo2/results/P_build_geo.json all_pass, not stop, outputs sha256
-    of $GEO2/inputs/geo.parquet = the file; P_geo_report.json (GEO2.md 7) stop false. Exit 2 while a report is missing /
-    being written, 3 on a difference. The label file is checked by its own rule (GB-3, S_splits_d0d1.json)."""
+    of $GEO2/inputs/geo.parquet = the file; P_geo_report.json (GEO2.md 7) stop false and made for that table (its
+    inputs[<table>] = the sha256 now, GEO2b 연결 S-3). Exit 2 while a report is missing / being written / stale, 3 on a
+    difference. The label file is checked by its own rule (GB-3, S_splits_d0d1.json)."""
     for p in (P_BUILD_GEO, P_GEO_REPORT):
         if not p.is_file():
             not_ready(f"{p} missing (GEO2b Phase P of the inputs role: GEO2.md 6-1 P / 7)")
@@ -1161,6 +1162,9 @@ def gate_p_geo(rungs, labels):
         want = (b.get("outputs") or {}).get(str(t))
         if want is None or not t.is_file() or L.sha256(t) != want:
             bad.append(f"{t} sha256 != {P_BUILD_GEO.name} outputs ({want})")
+    stale = [str(t) for t in map(inputs_path, rungs) if t.is_file() and (pr.get("inputs") or {}).get(str(t)) != L.sha256(t)]
+    if stale and not bad:
+        not_ready(f"{P_GEO_REPORT.name} inputs do not record {stale} as it is now (stale: rerun feat_geo.py p_report)")
     if pr.get("stop"):
         bad.append(f"{P_GEO_REPORT.name} stop: {pr.get('stop_reasons') or pr.get('stop_reason')}")
     if bad:

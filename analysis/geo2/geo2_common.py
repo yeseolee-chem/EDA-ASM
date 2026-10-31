@@ -47,9 +47,11 @@ GEO_FINAL = GEO2 / "geo_final"
 COV = dict(H=0.31, B=0.84, C=0.76, N=0.71, O=0.66, F=0.57, Si=1.11, P=1.07, S=1.05, Cl=1.02, As=1.19, Se=1.20,
            Br=1.20, I=1.39)                                                         # Cordero et al. 2008 (A)
 SEEDS = (0, 1, 2)
+LAST_STOP = []                                     # messages of stop() (build_geo writes them into a stopped Z_report)
 
 
 def stop(msg):
+    LAST_STOP.append(str(msg))
     print(f"STOP: {msg}", file=sys.stderr, flush=True)
     sys.exit(3)
 

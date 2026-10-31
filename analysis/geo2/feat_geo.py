@@ -35,7 +35,9 @@ Z_report.json stop false). D1 rxn_id >= 1,000,001, D0 rxn_id 0 .. 5973 (job_id D
      $GEO2B/inputs/geo.parquet + results/P_build_geo.json.
   p_report  spec 7 for D1 (P_geo, P_23, P_023 over S_folds.csv; STOP |P_23| < 0.98 |P_g2|) and the D0 pairs of
      $GEO1B/d0/D0_pairs.csv (usable pairs per fold and edge kind, pairs lost because an end is unusable) ->
-     results/P_geo_sets.json, results/P_geo_report.json.
+     results/P_geo_sets.json, results/P_geo_report.json (first replaced by a running marker, so an early exit leaves no
+     old report; readers also require inputs[<geo table>] = its sha256 now: 연결 S-3; report-only D0 reference s3d count
+     d0_reference_s3d: 연결 S-8).
 T-2  $GEO2B/t2/root = byte copies of 3 $LAD/dft_final folders -> G + F with the combined inputs: 182 columns vs
      X182_d1_dft (<= 1e-8), token sha256 vs F0_tokens_manifest.csv -> results/T_2.json
 T-3  the H path of this file (_geominputs, run.py, _allgeom, parse_rxn) with D1HF_G2_ROOT = $LAD/dft_final for T00003,
@@ -133,7 +135,7 @@ D1_G2_FINAL = C.G2 / "g2_final"                          # single-run D1-G2 fold
 G2C_SELECT = Path(os.environ.get("G2C_RESULTS", "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-g2c/analysis/g2c/"
                                  "results")) / "C_select.csv"   # = geo1b geo_common.G2C_SELECT (src, rxn_id, chosen)
 Q_KEYS_D1 = C.LAD / "Q_keys.parquet"                     # = inputs.Q_KEYS
-GEO1B = Path("/gpfs/tmp_cpu2/yeseo1ee/geo1b")
+GEO1B = XD.GEO1B                                        # = d0d1.GEO1B = $GEO_SCRATCH (default .../geo1b; 연결 S-5)
 Q_KEYS_D0 = GEO1B / "d0" / "Q_keys_d0.parquet"           # geo1b d0_labels.py (keys within D0)
 Q_D0_REPORT = C.REPO / "analysis" / "geo1b" / "results" / "Q_d0_report.json"
 S_FOLDS = C.P_DIR / "results" / "S_folds.csv"
@@ -167,7 +169,8 @@ DEC_LOG = C.RES / "DECISIONS_feat_runtime.md"
 
 DECISIONS = {
     "GEO-1 base": "기준 집합 = 결합 라벨($GEO2B/comb/labels_d0d1.json: D1 9,266 + D0 5,255) 중 $GEO2B/geo_final/<rxn_id>/"
-                  ".done인 반응 전부(job_id 순서). 전제: results/Z_report.json stop false(없음 = exit 2, stop = exit 3)이고 "
+                  ".done인 반응 전부(job_id 순서). 전제: results/Z_report.json stop false·complete true(없음·running·"
+                  "complete 아님 = exit 2, stop = exit 3)이고 "
                   "Z_status.csv ok/kept 행 = Z_report n_folders(정수 또는 dataset별 정수의 합) = .done 표지. 대체(fallback) "
                   "폴더도 .done이므로 들어간다(명령서 0-2). D1 rxn_id >= 1,000,001, D0 0..5973(5,255행)이라 rxn_id 범위로 dataset을 정한다.",
     "GEO-2 G slices": "G = 'g <i|A> <n>'(LADDER g0f0 g0 방식): 기준 반응(job_id 순서)의 i::n 조각에 feat.py의 g_one / run_pool "
@@ -521,8 +524,8 @@ def inputs_args():
 # ================================================================ the geo base (Phase Z folders; decision GEO-1)
 def geo_state():
     """(base [(rxn_id, job_id)] in job_id order, info with 'problems' [(rc, why)]): the combined targets with
-    $GEO2B/geo_final/<rxn_id>/.done; Z_report.json (build_geo.py) present with stop false, and its Z_status.csv ok / kept
-    rows and n_folders equal to these markers."""
+    $GEO2B/geo_final/<rxn_id>/.done; Z_report.json (build_geo.py) present with stop false and complete true (running /
+    not complete = exit 2, 연결 S-2), and its Z_status.csv ok / kept rows and n_folders equal to these markers."""
     info = dict(z_report=str(Z_REPORT), present=Z_REPORT.is_file(), problems=[])
     probs = info["problems"]
     if not Z_REPORT.is_file():
@@ -530,8 +533,13 @@ def geo_state():
         return [], info
     z = G0F.read_json(Z_REPORT)
     info.update(sha256=C.sha256(Z_REPORT), stop=z.get("stop"), stop_reasons=z.get("stop_reasons"),
+                running=z.get("running"), complete=z.get("complete"),
                 n_folders=z.get("n_folders"), n_fallback=z.get("n_fallback"), by_status=z.get("by_status"),
                 by_source=z.get("by_source"), fallback_reasons=z.get("fallback_reasons"), e_rxn_check=z.get("e_rxn_check"))
+    if z.get("running") or (z.get("stop") is False and z.get("complete") is not True):   # 연결 S-2: wait, not STOP
+        probs.append((2, f"Z_report.json running {z.get('running')!r}, complete {z.get('complete')!r}: build_geo.py build "
+                         f"has not finished (or was killed: resubmit Z)"))
+        return [], info
     if z.get("stop") is not False:
         probs.append((3, f"Z_report.json stop = {z.get('stop')!r}: {z.get('stop_reasons')} (spec 4-3 / 14 Z: report and "
                          f"wait)"))
@@ -2527,9 +2535,53 @@ def d1_fold_map():
     return {int(r.rxn_id): int(fm.get(f"{r.dipole}/{r.skeleton}", -9)) for r in Cc.itertuples()}
 
 
+def d0_s3d_check(base_ids, final=None, keys=None):
+    """연결 S-8 (report only, never a gate): every D0 Q-2 key carries '|s3d:' = refs_q.stereo3d_sig of the Coley label
+    reference (geo1b d0_labels.py), and refs 'min' groups the D0 rung references by that key (alt / cfg rows keep their
+    own). Count the D0 rung references (geo_final/<rxn_id>/rel<k>.xyz of the base reactions, = the HF frag<k>_rel
+    geometry) whose own refs_q.stereo3d_sig (same function, same arguments as d0_labels.py) differs from the stereo3d of
+    their key row. Keys with a state error (|err:) carry no s3d and are skipped."""
+    import pandas as pd
+    final = Path(final) if final else paths(GEO).final
+    rule = ("D0 rung reference (geo_final rel<k>.xyz) refs_q.stereo3d_sig != the Q_keys_d0 stereo3d (= its key's |s3d:, "
+            "from the Coley label reference); report only (DECISIONS_feat 연결 S-8)")
+    try:
+        Q = import_inputs()._Q()
+        fr = Q.fragmenter()
+        K = pd.read_parquet(keys or Q_KEYS_D0, columns=["job_id", "rxn_id", "frag", "key", "smiles", "charge", "stereo3d",
+                                                        "state_error", "constrained"])
+        n, n_err_key, n_err, diff = 0, 0, 0, []
+        for r in K.itertuples(index=False):
+            rid = int(r.rxn_id)
+            if rid not in base_ids:
+                continue
+            if r.state_error:
+                n_err_key += 1
+                continue
+            try:
+                syms, xyz = fr.read_xyz(final / str(rid) / f"rel{int(r.frag)}.xyz")
+                s = Q.stereo3d_sig(list(syms), np.asarray(xyz, float), r.smiles, int(r.charge))
+            except Exception as e:                                     # noqa: BLE001
+                s = f"error:{type(e).__name__}"
+            n += 1
+            if s.startswith("error"):
+                n_err += 1
+            elif s != r.stereo3d:
+                diff.append(dict(job_id=r.job_id, frag=int(r.frag), constrained=bool(r.constrained), key=r.key,
+                                 rung_s3d=s))
+        return dict(rule=rule, n_checked=n, n_differs=len(diff),
+                    n_differs_grouped=sum(1 for d in diff if not d["constrained"]),
+                    n_s3d_not_computable=n_err, n_skipped_err_keys=n_err_key, examples=diff[:50])
+    except Exception as e:                                             # noqa: BLE001 — report only
+        return dict(rule=rule, error=f"{type(e).__name__}: {e}")
+
+
 def cmd_p_report():
     def body(rec):
         import pandas as pd
+        # 연결 S-3: replace any earlier report first (atomic), so an early exit never leaves an old passing report
+        write_json(P_SETS_REPORT, dict(running=True, stop=True, started=now(), stop_reasons=[
+            "feat_geo.py p_report running, or it exited before its final report (results/F_steps/p_report.json)"]))
         env_reactot(rec)
         inputs_check(rec)
         IN = import_inputs()
@@ -2690,7 +2742,8 @@ def cmd_p_report():
                                          end_reason_classes=dict(cls.most_common(60)), pairs=rows[:3000]),
                    usable=dict(geo=len(U["geo"]), g2=len(U["g2"]), dft=len(U["dft"])),
                    reactions_by_dataset=usable_tab, d0_pairs=d0sum,
-                   outputs=dict({str(sj): C.sha256(sj)}, **files), stop=bool(stop), stop_reasons=stop)
+                   d0_reference_s3d=d0_s3d_check({r for r in base_ids if ds_of(r) == "D0"}),
+                   outputs=dict({str(sj): C.sha256(sj)}, **files), stop=bool(stop), stop_reasons=stop, running=False)
         write_json(P_SETS_REPORT, rep)
         rec["report"] = dict(n=n, n_P_main_reference=nm, ratio=ratio, ratio_P_main_reference=ratio_m,
                              d0_pairs_usable=d0sum["usable_geo"].get("n"), stop=bool(stop), stop_reasons=stop)
@@ -3310,10 +3363,16 @@ def cmd_report(accept=()):
                 incomplete.append(f"{GEO} P: no passing P_build_{GEO}.json / table")
             elif ps["stale"]:
                 incomplete.append(f"{GEO} P: inputs changed since the build {ps['stale'][:3]} (rerun p)")
-            if pr.get("stop"):
+            tp = paths(GEO).table                          # 연결 S-3: the pair report must be of the table now
+            pr_stale = bool(pr) and (pr.get("inputs") or {}).get(str(tp)) != (C.sha256(tp) if tp.is_file() else None)
+            if pr.get("running"):
+                incomplete.append(f"{GEO} pairs: {P_SETS_REPORT.name} running or p_report exited early (rerun p_report)")
+            elif pr.get("stop") and not pr_stale:
                 stop.append(f"{GEO} pairs (spec 7): {pr.get('stop_reasons')}")
             elif not pr:
                 incomplete.append(f"{GEO} pairs: no {P_SETS_REPORT.name} (run p_report)")
+            elif pr_stale:
+                incomplete.append(f"{GEO} pairs: {P_SETS_REPORT.name} is of another {tp.name} (stale: rerun p_report)")
             rep["methods"][GEO] = mrep
         G = pd.DataFrame(grows)
         C.write_atomic(G_STATUS, lambda t: G.to_csv(t, index=False))

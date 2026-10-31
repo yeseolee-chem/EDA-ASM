@@ -8,8 +8,9 @@ descriptively. D1 and D0 are reported separately and never pooled; there is no c
   python eval_d0d1.py selftest   -> results/selftest_d0d1/ (the same files + E_selftest.json): geo := the LADDER g2
                                     predictions and unit records (D1; must reproduce the E2 numbers) + synthetic D0
                                     predictions on the real D0 pairs; exit 3 when a check fails
-Exit 0 = done, 2 = an input missing, 3 = STOP. env_espley (analysis/d1_pair/jobs/py.slurm PYENV=espley, = LADDER
-evaluate.py E1-1: the FU2 Phase E scoring code, scipy for the bend CIs).
+Exit 0 = done, 2 = an input missing or the GEO1b D0 build still preliminary (E-9), 3 = STOP (e.g. D0_pairs.csv rebuilt
+after the splits: E-9). env_espley (analysis/geo2/jobs/m3_cpu.slurm M3ENV=espley or analysis/d1_pair/jobs/py.slurm
+PYENV=espley, = LADDER evaluate.py E1-1: the FU2 Phase E scoring code, scipy for the bend CIs; RUNBOOK_geo2b.md E).
 
 Selections (all from the geo unit validation records, which are D1 inner-validation pairs only in T1D0):
   REP·S / REP·SH (LADDER 13-1), REP8 (GEO2.md 9-1), ENS4·S / ENS4·SH, and every model x arm; the D0 rows use the same
@@ -55,6 +56,7 @@ TARGETS, MODELS, ARMS = EG.TARGETS, EG.MODELS, ("S", "SH")     # ARMS in LADDER 
 PRED_COLS = ["pair_id", "ref_kind", "pos", "fold", "rung", "arm", "model", "target", "y", "yhat", "base", "beta",
              "yhat_seed_sd"]                                     # = train_atoms.PRED_COLS (LADDER L_predictions.parquet)
 D0_REF_KIND = "d0"                                               # D0_pairs.csv ref_kind / pos (DECISIONS_PAIR P-layout)
+S_SPLITS = C.RES / "S_splits_d0d1.json"                          # = d0d1_splits.S_SPLITS (d0.d0_pairs_sha256; E-9)
 EDGE_KINDS = ("sibling", "dipole", "leaf")
 Y_TOL = 1e-9                                                     # = FU2 Y_TOL (y = label dd)
 E2_TOL, LINE_TOL = 1e-12, 1e-8                                   # selftest: E2 reproduction (LINE = SH base: E1-5 1e-9)
@@ -80,6 +82,9 @@ DECISIONS_E = {
     "E-7": "D0 subsets all and no_m1_twin (neither end has a stereo-free D1 twin of T1 fold -1, d0_twins.csv m1; "
            "DECISIONS_PAIR P-y-m1 recommendation); edge kinds all / sibling / dipole / leaf",
     "E-8": "no verdict, no g2 / dft rows or columns; eval_geo2.py run (the GEO2 comparison) is disabled under D0D1",
+    "E-9": "run scores only the final D0 build the energy models were trained on: D0_pairs_report.json g2_source 'g2c' "
+           "(else not ready, exit 2) and D0_pairs.csv sha256 = S_splits_d0d1.json d0.d0_pairs_sha256 (else STOP: rebuilt "
+           "after the splits / training); selftest reads the D0 files without these two rules (DECISIONS_ZE 연결 S-4)",
 }
 
 
@@ -347,9 +352,28 @@ def d1_part(P1, rep, rep8):
 
 
 # ---------------------------------------------------------------- D0
-def load_d0():
+def load_d0(final=True):
     """D0_pairs.csv / d0_folds.csv / d0_twins.csv under the reader rule P-stop (D0_pairs_report.json stop false and
-    its outputs sha256 = each file) -> (pairs frame indexed by pair_id, {rxn_id: fold}, m1 rxn ids, info)."""
+    its outputs sha256 = each file) -> (pairs frame indexed by pair_id, {rxn_id: fold}, m1 rxn ids, info). final (run;
+    E-9): the report must be the final build (g2_source 'g2c', else exit 2) and D0_pairs.csv = the one the splits
+    recorded (S_splits_d0d1.json d0.d0_pairs_sha256, else STOP); checked first, so a preliminary report is exit 2."""
+    split_rec = None
+    if final:
+        try:
+            src = json.loads(C.D0_PAIRS_REPORT.read_text()).get("g2_source")
+        except (OSError, ValueError) as e:
+            _not_ready(f"{C.D0_PAIRS_REPORT} unreadable ({type(e).__name__})")
+        if src != "g2c":
+            _not_ready(f"{C.D0_PAIRS_REPORT.name} g2_source {src!r}: the preliminary GEO1b D0 build (the final one comes "
+                       f"with the geo1b -> geo2b merge M1)")
+        if not S_SPLITS.is_file() or not C.D0_PAIRS_CSV.is_file():
+            _not_ready(f"{S_SPLITS} or {C.D0_PAIRS_CSV} missing (d0d1_splits.py build)")
+        want = (json.loads(S_SPLITS.read_text()).get("d0") or {}).get("d0_pairs_sha256")
+        now_ = C.sha256(C.D0_PAIRS_CSV)
+        if want != now_:
+            C.stop(f"{C.D0_PAIRS_CSV} sha256 {now_[:12]} != {S_SPLITS.name} d0.d0_pairs_sha256 {str(want)[:12]}: D0 pairs "
+                   f"rebuilt after the splits / training cannot be scored (E-9)")
+        split_rec = {str(S_SPLITS): C.sha256(S_SPLITS)}
     bad = [w for w in (C.report_output_ok(C.D0_PAIRS_REPORT, p) for p in (C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS)) if w]
     if bad:
         C.stop("D0 inputs: " + "; ".join(bad))
@@ -365,6 +389,7 @@ def load_d0():
     Tw = pd.read_csv(C.D0_TWINS, dtype=str, keep_default_na=False)
     m1 = {int(r) for r, x in zip(Tw.rxn_id, Tw.m1) if x == "True"} if len(Tw) else set()
     info = {str(p): C.sha256(p) for p in (C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS, C.D0_PAIRS_REPORT)}
+    info.update(split_rec or {})
     return D.set_index("pair_id"), folds, m1, info
 
 
@@ -473,7 +498,7 @@ def evaluate(U, G, out, mode, extra=None):
     import evaluate as LE  # noqa: E402
     Sf = pd.read_csv(LE.S_FOLDS, usecols=["pair_id", "fold_T1"], dtype={"pair_id": str})
     S_ids = set(Sf.pair_id)
-    D, folds, m1, d0_info = load_d0()
+    D, folds, m1, d0_info = load_d0(final=mode == "run")                 # E-9: the final D0 build only in run
     P1, P0 = check_predictions(G, S_ids, set(D.index), dict(zip(Sf.pair_id, Sf.fold_T1.astype(int))))
     d1 = d1_part(P1, rep, rep8)
     fr0, d0chk = d0_frames(P0, D, folds, rep, rep8)
@@ -537,6 +562,7 @@ def cmd_run():
     psha = C.sha256(GEO_PRED)
     if rep_geo.get("predictions_sha256") not in (None, psha):
         C.stop(f"{GEO_PRED.name} changed after {GEO_UNITS[0].name} (predictions_sha256)")
+    load_d0(final=True)                                 # E-9 before anything is written (exit 2 / 3)
     G = pd.read_parquet(GEO_PRED)
     extra = dict(predictions_sha256=psha, unit_reports={str(p): C.sha256(p) for p in GEO_UNITS if p.is_file()},
                  geo1b_e_rxn={str(EG.GEO1B_RXN): C.sha256(EG.GEO1B_RXN)},
@@ -742,7 +768,7 @@ def cmd_selftest():
     U = U[U.rung == "g2"].assign(rung=RUNG)
     L0 = pd.read_parquet(EG.BASE_PRED)
     G1 = L0[L0.rung == "g2"].assign(rung=RUNG)
-    D, folds, m1, _ = load_d0()
+    D, folds, m1, _ = load_d0(final=False)              # E-9 rules are for run (the preliminary D0 build is fine here)
     G = pd.concat([G1, synthetic_d0(D, folds)], ignore_index=True)
     report, res = _stop3(evaluate, U, G, OUT_SELFTEST, "selftest",
                          dict(selftest="geo := LADDER g2 predictions / units (L_predictions.parquet, L_report.json, "

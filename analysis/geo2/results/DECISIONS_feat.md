@@ -102,3 +102,34 @@ DECISIONS(GEO-*, F-*), `d0d1.py` DECISIONS(X-*), `inputs.py` 독스트링(PG-*);
   D1-G2 HF 기준 입력의 rel 좌표 = 지금 d1_g2/g2_final rel 파일(17,232개 모두 같음) → rel gate는 같은 입력을 비교한다.
   D0 HF 템플릿(3312 +1, 3323 −2): 'HF D3BJ 6-31G*', FRAG 문자열 2개, %pal nprocs 1, CPCM(water) + %cpcm smd, 전하·다중도·
   (1)/(2) 태그 = 라벨. S-1 후보(3217, 3216, 3393)의 라벨 eda.out은 g_bond_ref·g2_sum 기준 안.
+
+## 11. 연결 검토 (2026-10-31, 조각 사이 인터페이스 검토 후 고침; 계산 job 없음, 검사는 srun --overlap -c1)
+- 연결 S-2 (m-1, feat_geo.py `geo_state`): Z_report running true, 또는 stop false인데 complete true가 아님 = exit 2(기다림,
+  Z 다시 제출), stop true = exit 3. running이면 표지·Z_status 대조를 하지 않는다(쓰는 중이라 어긋남이 STOP으로 보이지
+  않게). GEO-1 문구 갱신. unit 시험 geo_state에 시작 표지·complete 없음(exit 2)과 멈춘 보고(exit 3)를 더했다.
+- 연결 S-3 (m-2, feat_geo.py `cmd_p_report`·`cmd_report`): p_report는 시작할 때 P_geo_report.json을 running 표지(stop
+  true)로 원자적으로 바꾼다 → 일찍 끝나도 옛 stop false 보고가 남지 않는다. 최종 보고에 running false. report는 running
+  = 미완, inputs[<geo 표>] ≠ 지금 sha256 = 미완(stale, p_report 다시)으로 본다. 학습 gate·prereg 쪽은 DECISIONS_lad 연결 S-3.
+- 연결 S-5 (m-4): feat_geo.py GEO1B = d0d1.GEO1B(`$GEO_SCRATCH`, 기본 /gpfs/tmp_cpu2/yeseo1ee/geo1b), inputs.py GEO1B_D0 =
+  같은 변수 / d0. 이제 geo2_common·d0d1·feat_geo·d0d1_splits·inputs가 모두 같은 변수와 기본값을 읽는다. job 파일 중
+  GEO_SCRATCH를 다르게 주는 것은 없다(geo1b gpu.slurm은 같은 기본값). inputs.py sha256이 바뀌었으므로 C 검사·prereg는
+  이 판으로 돈다(아직 돌지 않음).
+- 연결 S-7 (m-6, RUNBOOK_feat.md): 모든 의존 sbatch 줄에 `--kill-on-invalid-dep=yes`(m3_launch.sh와 같음). wave B를 B1(G 6 +
+  g_report 1 + H pilot 1 = 8, N ≤ 12)과 B2(F 사슬 10, N ≤ 10)로 나눴다. 규칙: 매 제출 전 N = `squeue -u $USER -h -r | wc
+  -l`, N + 그 제출의 task ≤ 20(G2c 12 task가 아직 있으면 N ≥ 12). wave C 11 task(N ≤ 9), wave D 1 task.
+- 연결 S-8 (m-7, 한계로 받아들임 + 보고만 개수): 모든 D0 Q-2 키는 Coley 라벨 기준 구조의 3D 입체 표지 `|s3d:`를 가진다
+  (geo1b d0_labels.py, refs_q.stereo3d_sig). rung geo의 refs 'min'은 D0 G2c 기준 구조를 이 키로 묶는다(alt/cfg 행만 자기
+  기준). 추천안대로 받아들인다: D0D1 설계와 같고, 탐색에서 D0 G2 기준 조각 21,092개의 formula·WL 불일치는 0개였다.
+  한계: G2c(xTB) 기준 구조의 입체가 키와 다르면 다른 입체 이성질체의 HF 기준이 섞일 수 있다(D1의 refs 'min'에는 없는
+  D0만의 성질). 보고만: `feat_geo.d0_s3d_check`가 기준 D0 반응의 geo_final rel<k>.xyz에 d0_labels.py와 같은 함수·같은
+  인자(fragmenter.read_xyz, smiles, charge)를 다시 적용해 키 행 stereo3d와 다른 개수(그중 묶이는 행 = constrained 아님,
+  계산 불가, |err 키 건너뜀)를 P_geo_report.json `d0_reference_s3d`에 적는다. 판정에 쓰지 않고, 실패해도 p_report를 멈추지
+  않는다(error 문자열만). 비용 = 약 10,500회 template_match(d0_labels 전체가 129 s). prereg 한계 목록에도 넣었다.
+  unit 시험 d0_s3d_count: Coley 기준 구조 10조각 다름 0; 정보로 D0-G2 orig rel 78조각 중 2개 다름(묶이는 행 1).
+- 연결 S-10 (F-1, 기록만): D1의 F-1 STOP은 예상된다(같은 feature 코드가 1.14–1.42 %, D1-G2 1.36 %는 사용자 수용,
+  analysis/d1_g2/results/F_DECISION.md). 사용자 정책("spec STOP에서는 추천안을 고르고 기록")에 따른 처리:
+  D1과 따로 본 D0 모두 F-1 비율이 선례 범위(≤ 1.42 %)이고 실패 종류가 선례와 같을 때만 `p --accept=F-1`(+ report
+  --accept=F-1)과 DECISIONS_feat_runtime.md 'F-1 accept' 기록(선례 인용, 빠지는 반응 = 이탈). 범위 밖·다른 종류·다른
+  STOP이면 멈추고 보고. RUNBOOK_geo2b.md 4절, RUNBOOK_feat.md F·P 항목.
+- 연결 뒤 검사: `tests_feat.py lint` 미정의 이름 0(4개 파일), `unit` 22/22 PASS(reactot; d0_s3d_count 추가, geo_state 확장),
+  `wrap` all_pass true(reactot), `gorder` all_pass true(D1 run env).

@@ -3,9 +3,10 @@
 
   python tests_ze.py z   build_geo.py on a synthetic D1 + D0 fixture (60 + 62 reactions) in a throwaway directory,
                          run as a subprocess with the test-only root overrides of geo2_common: layout, idempotent rerun,
-                         and every STOP path -> results/Z_tests_synth.json         (GPU env or D1 run env: numpy only)
-  python tests_ze.py e   the D0 part of eval_d0d1.py (unit records, prediction checks, D0 frames / metrics / bootstrap)
-                         on synthetic frames -> results/E_tests_synth.json              (any pandas env, e.g. reactot)
+                         every STOP path (stopped report: running false), upstream files missing (exit 2, nothing
+                         written), a crash inside the run -> results/Z_tests_synth.json   (GPU env or D1 run env: numpy only)
+  python tests_ze.py e   the D0 part of eval_d0d1.py (unit records, prediction checks, D0 frames / metrics / bootstrap,
+                         load_d0 final rules E-9) on synthetic frames -> results/E_tests_synth.json   (any pandas env)
 Exit 0 = every check passed, 3 = a check failed. The throwaway directory (tempfile) is removed at the end.
 """
 from __future__ import annotations
@@ -58,6 +59,14 @@ def write_csv(path, rows, fields):
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         w.writerows(rows)
+
+
+def _expect_exit(fn, code):
+    try:
+        fn()
+    except SystemExit as e:
+        return e.code == code
+    return False
 
 
 def fixture(root, mods=()):
@@ -147,13 +156,27 @@ def fixture(root, mods=()):
     for (k, s), P in preds.items():
         with open(root / "geo1" / "preds" / f"final_{k}_s{s}.pkl", "wb") as f:
             pickle.dump(P, f, protocol=4)
-    write_csv(root / "g2cres" / "C_select.csv", sel, ["src", "rxn_id", "chosen", "n_done"])
+    if "no_pkl" in mods:                                          # GEO1b R / Y not finished (exit 2)
+        (root / "geo1" / "preds" / "final_f3_s1.pkl").unlink()
+    if "bad_pkl" in mods:                                         # a crash inside build() (stopped report, not running)
+        (root / "geo1" / "preds" / "final_f2_s0.pkl").write_bytes(b"not a pickle")
+    sp = root / "g2cres" / "C_select.csv"
+    write_csv(sp, sel, ["src", "rxn_id", "chosen", "n_done"])
+    dsha = C.sha256(sp)                                           # GEO1b data.py D_dataset_report g2_input (S-6)
+    if "no_c_select" in mods:
+        sp.unlink()
+    if "d_report_c_select" in mods:
+        dsha = "0" * 64
+    if "no_d_report" not in mods:
+        (root / "geo1res" / "D_dataset_report.json").write_text(json.dumps(dict(
+            g2_input=dict(kind="G2c (decision A-G2c)", c_select=str(sp), c_select_sha256=dsha))))
     (root / "labels_d1.json").write_text(json.dumps(lab1))
     (root / "labels_all.json").write_text(json.dumps(lab0))
     write_csv(root / "geo1" / "d0" / "d0_folds.csv", d0rows, ["rxn_id", "component", "fold", "twin_of", "overlap"])
     fields = ["rxn_id", "core", "e_short_model", "e_long_model", "abs_max", "bin"]
     write_csv(root / "geo1res" / "E_rxn.csv", erxn, fields)
-    write_csv(root / "geo1res" / "E_rxn_d0.csv", erxn0, fields)
+    if "no_e_rxn" not in mods:
+        write_csv(root / "geo1res" / "E_rxn_d0.csv", erxn0, fields)
     fp = root / "geo1" / "d0" / "d0_folds.csv"
     (root / "geo1res" / "D0_pairs_report.json").write_text(json.dumps(dict(
         stop=False, outputs={str(fp): dict(sha256=C.sha256(fp))})))
@@ -190,7 +213,9 @@ def cmd_z():
         rep = report(root)
         det["base_rc"], det["base_stderr"] = rc, err[-1500:]
         bs = rep.get("by_src", {})
-        ck["base_exit0_stop_false"] = rc == 0 and rep.get("stop") is False
+        ck["base_exit0_stop_false"] = (rc == 0 and rep.get("stop") is False and rep.get("running") is False
+                                       and rep.get("complete") is True
+                                       and rep["inputs"]["g2c_vs_geo1b"]["equal"] is True)        # S-2, S-6
         ck["base_counts"] = (bs.get("D1", {}).get("n_folders") == 57 and bs.get("D0", {}).get("n_folders") == 59
                              and bs["D1"]["by_status"] == {"ok": 57, "no_g2": 2, "no_geo1_prediction": 1}
                              and bs["D0"]["by_status"] == {"ok": 59, "no_g2": 1} and rep["n_d0_overlap_excluded"] == 2
@@ -243,8 +268,12 @@ def cmd_z():
         r1.write_bytes(keep + b"\n")
         rc3, _, err3 = build(env)
         r1.write_bytes(keep)
-        ck["changed_source_stops"] = rc3 == 3 and "exists with other sources" in err3 and report(root).get("stop") is True
-        cases = {"e_rxn_d0": ("D0: forming-distance errors", "D1: forming"),
+        r3 = report(root)
+        ck["changed_source_stops"] = (rc3 == 3 and "exists with other sources" in err3 and r3.get("stop") is True
+                                      and r3.get("running") is False and "exists with other sources"
+                                      in json.dumps(r3.get("stop_reasons")))      # S-2: a stopped report, not 'running'
+        cases = {"d_report_c_select": ("g2_input.c_select_sha256", None),        # S-6
+                 "e_rxn_d0": ("D0: forming-distance errors", "D1: forming"),
                  "d0_fallback_excess": ("D0: fallback rate", "D1: fallback"),
                  "d0_wrong_fold": ("predicted by f2 but its d0_folds.csv fold is 1", None),
                  "two_folds": ("predicted by two folds", None),
@@ -260,12 +289,28 @@ def cmd_z():
             rcc, _, errc = build(envc)
             repc = report(rootc)
             text = errc + json.dumps(repc.get("stop_reasons", []))
-            okc = rcc == 3 and want in text and (notwant is None or notwant not in text) and repc.get("stop") is True
-            if name in ("c_select", "d0_folds_sha", "stray", "two_folds", "d0_wrong_fold"):
+            okc = rcc == 3 and want in text and (notwant is None or notwant not in text) and repc.get("stop") is True \
+                and repc.get("running") is False                                 # S-2: STOP is never 'running'
+            if name in ("c_select", "d0_folds_sha", "stray", "two_folds", "d0_wrong_fold", "d_report_c_select"):
                 okc &= not (rootc / "geo2" / "geo_final").exists()               # stopped before any folder write
             if name == "d0_fallback_excess":
                 okc &= json.loads((rootc / "geo2" / "geo_final" / "6" / "result.json").read_text())["fallback"] is True
             ck[f"stop_{name}"], det[f"stop_{name}"] = okc, dict(rc=rcc, tail=errc[-400:])
+        for name in ("no_pkl", "no_c_select", "no_e_rxn", "no_d_report"):        # S-2: upstream missing = exit 2
+            rootc = tmp / name
+            envc, _ = fixture(rootc, mods=(name,))
+            rcc, _, errc = build(envc)
+            okc = rcc == 2 and "NOT READY" in errc and not (rootc / "res" / "Z_report.json").exists() \
+                and not (rootc / "geo2" / "geo_final").exists()                  # nothing written
+            ck[f"not_ready_{name}"], det[f"not_ready_{name}"] = okc, dict(rc=rcc, tail=errc[-400:])
+        rootc = tmp / "bad_pkl"                                                  # S-2: a crash = stopped report
+        envc, _ = fixture(rootc, mods=("bad_pkl",))
+        rcc, _, errc = build(envc)
+        repc = report(rootc)
+        ck["crash_stopped_report"] = (rcc not in (0, 2) and repc.get("stop") is True and repc.get("running") is False
+                                      and repc.get("complete") is False and "Unpickling" in json.dumps(repc)
+                                      and not (rootc / "geo2" / "geo_final").exists())
+        det["crash_stopped_report"] = dict(rc=rcc, report=repc, tail=errc[-400:])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     ok = all(ck.values())
@@ -374,8 +419,40 @@ def cmd_e():
     ck["check_predictions_d1_fold_ok"] = len(p1f) == len(G1)
     ck["stop_d1_wrong_fold"] = E._expect_stop(lambda: E.check_predictions(
         G, set(G1.pair_id), set(D.index), dict(f1, P00000=(f1["P00000"] + 1) % 5)))
-    # unit records: robust names, two reports, folds 0-4
     tmp = Path(tempfile.mkdtemp(prefix="geo2b_etest_"))
+    # load_d0 final rules (E-9, 연결 S-4): g2_source g2c, D0_pairs.csv = the S_splits_d0d1.json record
+    save = (C.D0_PAIRS_REPORT, C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS, E.S_SPLITS)
+    try:
+        C.D0_PAIRS_REPORT, C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS, E.S_SPLITS = (
+            tmp / "D0_pairs_report.json", tmp / "D0_pairs.csv", tmp / "d0_folds.csv", tmp / "d0_twins.csv",
+            tmp / "S_splits_d0d1.json")
+        D.reset_index().to_csv(C.D0_PAIRS_CSV, index=False)
+        write_csv(C.D0_FOLDS, [dict(rxn_id=r, fold=f) for r, f in folds.items()], ["rxn_id", "fold"])
+        write_csv(C.D0_TWINS, [dict(rxn_id=r, m1="True") for r in m1], ["rxn_id", "m1"])
+
+        def d0rep(src, csv_sha=None):
+            outs = {str(p): dict(sha256=C.sha256(p)) for p in (C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS)}
+            if csv_sha:
+                outs[str(C.D0_PAIRS_CSV)] = dict(sha256=csv_sha)
+            C.D0_PAIRS_REPORT.write_text(json.dumps(dict(stop=False, g2_source=src, outputs=outs)))
+        sha0 = C.sha256(C.D0_PAIRS_CSV)
+        E.S_SPLITS.write_text(json.dumps(dict(d0=dict(d0_pairs_sha256=sha0))))
+        d0rep("g2c")
+        Dl, fl, ml, info = E.load_d0(final=True)
+        ck["load_d0_final_ok"] = (len(Dl) == n and fl == folds and ml == m1 and str(E.S_SPLITS) in info)
+        d0rep("d0_g2_orig")
+        ck["load_d0_preliminary_not_ready"] = _expect_exit(lambda: E.load_d0(final=True), 2)
+        ck["load_d0_preliminary_selftest_ok"] = len(E.load_d0(final=False)[0]) == n
+        d0rep("d0_g2_orig", csv_sha="f" * 64)                    # preliminary report + D0_pairs.csv rebuilt: still 2
+        ck["load_d0_preliminary_rebuilt_not_ready"] = _expect_exit(lambda: E.load_d0(final=True), 2)
+        d0rep("g2c")
+        E.S_SPLITS.write_text(json.dumps(dict(d0=dict(d0_pairs_sha256="0" * 64))))
+        ck["stop_load_d0_rebuilt_after_splits"] = E._expect_stop(lambda: E.load_d0(final=True))
+        E.S_SPLITS.unlink()
+        ck["load_d0_no_splits_not_ready"] = _expect_exit(lambda: E.load_d0(final=True), 2)
+    finally:
+        C.D0_PAIRS_REPORT, C.D0_PAIRS_CSV, C.D0_FOLDS, C.D0_TWINS, E.S_SPLITS = save
+    # unit records: robust names, two reports, folds 0-4
     try:
         u1 = {f"L__geo__T1D0__{a}__{m}__f{k}": dict(val_kcal_mae={t: 0.1 + 0.01 * M.index(m) + 0.001 * k for t in T})
               for a in A for m in M if m != "XGB" for k in range(5)}

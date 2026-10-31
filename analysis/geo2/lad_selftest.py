@@ -6,7 +6,8 @@ production unit, never writes $LAD/units or any LADDER / analysis/*/results file
 
   python lad_selftest.py splits     any pandas env: d0d1_splits build --test-dir on the current GEO1b D0 files
                                     (--allow-preliminary while GEO1b is preliminary), idempotency, reader check, negative
-                                    rule tests, production refusal of a preliminary build
+                                    rule tests, production refusal of a preliminary build (reader: STOP on a preliminary
+                                    index; GEO1b report preliminary: d0_provenance NotReady, build exit 2)
   python lad_selftest.py lists      any env: `train_atoms.py list --stage 1|2|3` (env_d1fu2) and `train_xgb.py list
                                     --stage 1|2|3` (env_espley) in fresh processes = the LADDER unit lists recorded in
                                     results/L_report.json / L_xgb_report.json (regression 1) and the 30 / 10 geo units
@@ -157,7 +158,17 @@ def part_splits():
             return False, dict(why="build --allow-preliminary without --test-dir accepted")
         except DD.Stop as e:
             r2 = str(e)
-        return True, dict(reader=r[:200], build=r2[:200])
+        try:                                       # 연결 S-4: a preliminary GEO1b report = not ready (exit 2), not STOP
+            DD.d0_provenance(allow_preliminary=False)
+            return False, dict(why="d0_provenance accepted the preliminary GEO1b report")
+        except DD.NotReady as e:
+            r3 = str(e)
+        except DD.Stop as e:
+            return False, dict(why=f"preliminary GEO1b report = Stop (exit 3), expected NotReady (exit 2): {e}"[:300])
+        rc = DD.main(["build"])                    # production build: exit 2 before any write
+        if rc != 2:
+            return False, dict(why=f"production build on the preliminary report exited {rc}, expected 2")
+        return True, dict(reader=r[:200], build=r2[:200], provenance_not_ready=r3[:200], production_build_exit=rc)
     return run("splits", [("build_test_dir", build), ("reader", reader), ("negatives", negatives),
                           ("production_refuses_preliminary", production_refuses_preliminary)])
 
@@ -244,7 +255,44 @@ def _trainer_checks(M, tool):
         info["gate_d0_train_without_usable_d0"] = g
         ok &= g is None or tool != "atoms"
         return ok, info
-    return [("labels_l11_prime", labels), ("load_folds_T1D0", folds), ("g2_forced_T1D0_equals_T1", forced_g2)]
+    return [("labels_l11_prime", labels), ("load_folds_T1D0", folds), ("g2_forced_T1D0_equals_T1", forced_g2),
+            ("gate_p_geo_rules", lambda: _gate_p_geo_rules(M, tool))]
+
+
+def _gate_p_geo_rules(M, tool):
+    """연결 S-3: M.gate_p_geo on synthetic P reports below $GEO2B/tests_lad (module paths patched in this process only):
+    fresh = pass, a P_geo_report.json of another table (stale, even with stop true) = exit 2, running = exit 2, stop with
+    the current table = exit 3."""
+    d = TEST / f"gate_p_{tool}"
+    d.mkdir(parents=True, exist_ok=True)
+    tab, pb, pr = d / "geo.parquet", d / "P_build_geo.json", d / "P_geo_report.json"
+    tab.write_bytes(b"synthetic geo table\n")
+    s = DD.sha256(tab)
+    save = (M.P_BUILD_GEO, M.P_GEO_REPORT, dict(M.GEO_INPUTS))
+    res = {}
+    try:
+        M.P_BUILD_GEO, M.P_GEO_REPORT = pb, pr
+        M.GEO_INPUTS["geo"] = tab
+        pb.write_text(json.dumps(dict(all_pass=True, stop=False, outputs={str(tab): s})))
+        for name, rep in (("fresh", dict(stop=False, inputs={str(tab): s})),
+                          ("stale", dict(stop=False, inputs={str(tab): "0" * 64})),
+                          ("stale_stop", dict(stop=True, stop_reasons=["old"], inputs={str(tab): "0" * 64})),
+                          ("running", dict(running=True, stop=True)),
+                          ("stop", dict(stop=True, stop_reasons=["x"], inputs={str(tab): s}))):
+            pr.write_text(json.dumps(rep))
+            try:
+                M.gate_p_geo(("geo",), DD.LABELS)
+                res[name] = 0
+            except SystemExit as e:
+                res[name] = e.code
+    finally:
+        import shutil
+        M.P_BUILD_GEO, M.P_GEO_REPORT = save[0], save[1]
+        M.GEO_INPUTS.clear()
+        M.GEO_INPUTS.update(save[2])
+        shutil.rmtree(d, ignore_errors=True)
+    want = dict(fresh=0, stale=2, stale_stop=2, running=2, stop=3)
+    return res == want, dict(got=res, want=want)
 
 
 def part_xgb():

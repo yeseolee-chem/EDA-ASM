@@ -248,7 +248,8 @@ G2_RES = L.G2_DIR / "results"
 # GEO2b (PG-1 .. PG-4; read only here): $GEO2B scratch and analysis/geo2/results of the geo rung, the GEO1b D0 tables
 GEO2 = Path(os.environ.get("GEO2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo2b"))   # = analysis/geo2/g3c.G3
 GEO2_RES = L.REPO / "analysis" / "geo2" / "results"
-GEO1B_D0 = Path("/gpfs/tmp_cpu2/yeseo1ee/geo1b/d0")                            # d0_labels.py / d0_pairs.py outputs
+GEO1B_D0 = Path(os.environ.get("GEO_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/geo1b")) / "d0"   # d0_labels / d0_pairs outputs
+#                                                  ($GEO_SCRATCH = geo2_common.GEO1 / d0d1.GEO1B; GEO2b 연결 S-5)
 Q_KEYS_D0 = GEO1B_D0 / "Q_keys_d0.parquet"
 
 RUNGS = {

@@ -14,11 +14,13 @@ sbatch --time=48:00:00 -p cpu1,cpu2 -J geo2b_selftest_a --cpus-per-task=1 --mem=
   --export=ALL,M3ENV=d1fu2 jobs/m3_cpu.slurm ../geo2/lad_selftest.py atoms
 ```
 - `splits`: d0d1 build in `$GEO2B/tests_lad/splits_prelim` (preliminary allowed), idempotent bytes, reader check, 9
-  negative cases caught, production refusal of a preliminary build.
+  negative cases caught, production refusal of a preliminary build (preliminary GEO1b report = NotReady, the production
+  build exits 2 and writes nothing: 연결 S-4).
 - `lists`: `train_atoms.py list --stage 1|2` / `train_xgb.py list --stage 1|2` = the LADDER unit names of
   `L_report.json` / `L_xgb_report.json` (regression 1), `--stage 3` = 30 / 10 geo units.
 - `xgb` / `atoms`: L-11′ load of the test label file, `load_folds('T1D0')`, rung g2 forced to split T1D0 on the test labels
-  = the LADDER T1 lists fold by fold (D0 pairs have no g2 token), stage-3 gates refuse now, LADDER-write guard,
+  = the LADDER T1 lists fold by fold (D0 pairs have no g2 token), `gate_p_geo_rules` (synthetic P reports: fresh 0,
+  stale 2, running 2, stop 3; 연결 S-3), stage-3 gates refuse now, LADDER-write guard,
   (xgb) synthetic T1D0 rung through the production XData.split + run_unit (zero model), (atoms) the GPU-projection rule.
 - Results: `$GEO2B/tests_lad/selftest_<part>.json` (`all_pass`).
 
