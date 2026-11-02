@@ -1,0 +1,1344 @@
+{
+ "spec": "docs/specs/GEO2.md 6 (STOP: 6-2 per dataset), 7; D0D1 design steps 6-8",
+ "written": "2026-11-02 21:55:33",
+ "git_head": "a1dfd5c6",
+ "decisions": {
+  "GEO-1 base": "\uae30\uc900 \uc9d1\ud569 = \uacb0\ud569 \ub77c\ubca8($GEO2B/comb/labels_d0d1.json: D1 9,266 + D0 5,255) \uc911 $GEO2B/geo_final/<rxn_id>/.done\uc778 \ubc18\uc751 \uc804\ubd80(job_id \uc21c\uc11c). \uc804\uc81c: results/Z_report.json stop false\u00b7complete true(\uc5c6\uc74c\u00b7running\u00b7complete \uc544\ub2d8 = exit 2, stop = exit 3)\uc774\uace0 Z_status.csv ok/kept \ud589 = Z_report n_folders(\uc815\uc218 \ub610\ub294 dataset\ubcc4 \uc815\uc218\uc758 \ud569) = .done \ud45c\uc9c0. \ub300\uccb4(fallback) \ud3f4\ub354\ub3c4 .done\uc774\ubbc0\ub85c \ub4e4\uc5b4\uac04\ub2e4(\uba85\ub839\uc11c 0-2). D1 rxn_id >= 1,000,001, D0 0..5973(5,255\ud589)\uc774\ub77c rxn_id \ubc94\uc704\ub85c dataset\uc744 \uc815\ud55c\ub2e4.",
+  "GEO-2 G slices": "G = 'g <i|A> <n>'(LADDER g0f0 g0 \ubc29\uc2dd): \uae30\uc900 \ubc18\uc751(job_id \uc21c\uc11c)\uc758 i::n \uc870\uac01\uc5d0 feat.py\uc758 g_one / run_pool / order_g\ub97c \uc4f4\ub2e4(\uc870\uac01\ub9c8\ub2e4 canary\u00b7abort\u00b7\ubc14\uc774\ud2b8 \uc608\uc0b0 2 GB). \uc870\uac01\uc740 stale\ub9cc STOP, \ub0a8\uc740 \ubc18\uc751\uc774 \uc788\uc73c\uba74 exit 2. \uba85\ub839\uc11c 6-2 G \ube44\uc728\uc740 g_report\uac00 dataset\ub9c8\ub2e4 \uc804\uccb4 \uae30\uc900 \uc9d1\ud569\uc5d0\uc11c \uacc4\uc0b0\ud558\uace0 f_* / p / report\uac00 \ub2e4\uc2dc \ud655\uc778\ud55c\ub2e4. 'retry'\ub294 \uadf8 \uc870\uac01\uc758 .fail_freq_* / .fail_error_* / stale \ud3f4\ub354\ub9cc \uc62e\uae34\ub2e4(\uba85\uc2dc\uc801\uc77c \ub54c\ub9cc).",
+  "F-1 feature root": "feature \ub8e8\ud2b8 = $GEO2B/geo_feat/<rxn_id>(G1 \ud3f4\ub354 \ud615\uc2dd): geo_final\uc758 ts.xyz\u00b7rel1.xyz\u00b7rel2.xyz \ubc14\uc774\ud2b8 \ubcf5\uc0ac + result.json\u00b7work/ts.hess(XTB2 ALPB(water) Freq). geo_final\uc740 Z\uac00 \ub9cc\ub4e0 \uadf8\ub300\ub85c \ub450\uace0 \uc0ac\ubcf8\uc5d0 \uc4f4\ub2e4(D1-G3 F-1). \uc0ac\ubcf8\uc758 sources sha256\uc774 \uc9c0\uae08 geo_final \ud30c\uc77c\uacfc \ub2e4\ub974\uba74 stale = STOP. D1-HF\ub294 geo_final\uc744 \uc77d\ub294\ub2e4(D1HF_G2_ROOT).",
+  "F-2 G step": "work/ts.hess = g0f0 G0 \uacbd\ub85c(FREQ_HEADER nprocs 1, %maxcore = config_g2 maxcore_mb; orca_direct; g0f0.hess_atoms; run_ts.forming_share(\ub77c\ubca8 \ud615\uc131 \uacb0\ud569); TOL_HESS_GEOM_A 1e-4; canary\u00b7abort\u00b7\ubc14\uc774\ud2b8 \uc608\uc0b0). \uc804\ud558 = \ub77c\ubca8 charge1 + charge2(D0\uc758 \uc804\ud558 \ubc18\uc751 260\uac1c \ud3ec\ud568), mult 1. \uc6d0\uc790 \uc21c\uc11c gate\uc758 \uae30\uc900 \ud30c\uc77c = $GEO2B/comb/jobs/<job_id>/{ts, ref_dipole, ref_dipolarophile}.xyz(D1 = d1_jobs, D0 = d0_g2 labjobs = Coley \ud30c\uc77c\uc758 \ubc14\uc774\ud2b8 \uc0ac\ubcf8, Phase X X-2\uac00 \ud655\uc778). \uc5ed\ud560 dipole/dipolarophile\uc740 \ub450 dataset \ubaa8\ub450, rel \ud30c\uc77c \uc774\ub984(ref_dipole / ref_dipolarophile.xyz) \uac80\uc0ac\ub294 D1\ub9cc(D0 \ub77c\ubca8\uc758 rel \ud30c\uc77c \uc774\ub984\uc740 Coley \uc774\ub984). n_imag 0 / >= 2\ub294 .done(G0-4, \uba85\ub839\uc11c 6-2).",
+  "F-4 gate": "\uba85\ub839\uc11c 6-2 STOP \uae30\uc900\uc744 dataset(D1, D0)\ub9c8\ub2e4 \ub530\ub85c \uc801\uc6a9\ud55c\ub2e4(GEO-16). G(g_report): \uc6d0\uc790 \uc21c\uc11c(\uc21c\uc11c gate + ts_fragments) > \uae30\uc900 \ubc18\uc751\uc758 0.5 %, Freq / \uc624\ub958 > 1 %, B6 \uacc4\uc0b0 \ubd88\uac00 > .done\uc758 1 %, stale. F(G .done \uc218 \uae30\uc900): F-1(\uc720\ud55c\ud55c 182\uc5f4 \ud589 \uc5c6\uc74c, B6\ub9cc \uc2e4\ud328 \ud3ec\ud568 = g0f0 f0_report) > 1 %, B6 > 1 %, Q-a > 1 %, T-a > 1 %, FU2 gate \uc790\uccb4\uc758 STOP, mergeroot stop, \uac1c\uc218 \ubd88\uc77c\uce58, \ud1a0\ud070 \ubc30\uce58 != D1PAIR g1, G\uc758 B6 \uc608\uce21 != F status_B6. H: \uc2e4\ud589 \uc2e4\ud328 / \ub05d\ub09c \ubc18\uc751 > 1 %(GEO-6), \uc785\ub825 \uac80\uc0ac \uc2e4\ud328 > 1 %, rel \uc5d0\ub108\uc9c0 gate(GEO-5) > 0.5 %. n_imag 0 / >= 2\ub294 \uc2e4\ud328\uac00 \uc544\ub2c8\ub2e4.",
+  "F-5 F layout": "F = g0f0 F0 \uad6c\uc870: f_slice <i> <n> -> f_atoms <i> <n>(\uc120\ud0dd, \ubc30\uc5f4) -> f_rest(f_merge, f_atoms 0 1(\uce90\uc2dc), f_gate(err.json \uc7ac\uc2dc\ub3c4 1\ud68c + _qgate), f_tokens, f_report). \ubc84\uc804 fu2-atoms-3-geo / fu2-tokens-3-geo; D1G2_SCRATCH=$GEO2B\ub294 d1_features \uc790\uc2dd \ud658\uacbd\uc5d0\ub9cc(F0-2); \uc785\ub825 = \uacb0\ud569 \uc785\ub825(--labels/--meta/--prof = $GEO2B/comb, GEO-12). root_fp.json\u00b7ids_all.csv\ub294 f_slice\uac00 $GEO2B/locks/F_geo.lock \uc548\uc5d0\uc11c \uc4f4\ub2e4.",
+  "F-6 HF": "D1-HF runner\uc758 g2 \uc790\ub9ac\ub97c geo\ub85c: D1HF_SCRATCH=$GEO2B/hf_geo, D1HF_RES=results/hf_geo, D1HF_TEMPLATES=$GEO2B/comb/hf_templates(D1 -> d1_hf/inputs/<T>, D0 -> Phase X \ud15c\ud50c\ub9bf; \uc77d\uae30\ub9cc), D1HF_G2_ROOT=$GEO2B/geo_final. D1-G2 phase_fh H \uad6c\uc870: h_inputs <W>(_geominputs \ud55c \ubc88 -> \uc785\ub825 ok \ubc18\uc751\uc744 (n_atoms, job_id) round robin, nb = W x ceil(n / (1000 W)), worker k = j % W; pilot \ubaa9\ub85d) -> h_pilot -> h_batch <k> <W>(run.py run, \ud070 \ubc18\uc751 \uba3c\uc800, $SLURM_CPUS_PER_TASK\uac1c \uc9c1\ub82c ORCA; \ubc30\uce58\ub9c8\ub2e4 build.py check) -> h_build(_allgeom) -> h_report. SlowConv \uc7ac\uc2dc\ub3c4 1\ud68c\ub294 run.py \uadf8\ub300\ub85c.",
+  "GEO-4 pilot": "pilot = dataset\ub9c8\ub2e4 25\ubc18\uc751(D1 25 + D0 25 = 50): \uc785\ub825 ok \uae30\uc900 \ubc18\uc751\uc744 dataset\ub9c8\ub2e4 (n_atoms, job_id) \uc21c\uc73c\ub85c 4\ub4f1\ubd84(np.array_split)\ud558\uace0 \uc0ac\ubd84\uc704\ub9c8\ub2e4 6, 6, 6, 7\uac1c\ub97c default_rng(20261024)\ub85c \ubf51\ub294\ub2e4; D0 \uc0ac\ubd84\uc704\uc5d0 \uc804\ud558 \ubc18\uc751\uc774 \uc788\uc73c\uba74 \uadf8\uc911 1\uac1c\ub294 \uc804\ud558 \ubc18\uc751. \uc608\uc0c1 = \u03a3_(dataset, \uc0ac\ubd84\uc704) (pilot \ud3c9\uade0 \ubc18\uc751\ub2f9 \ucf54\uc5b4\uc2dc\uac04 x \uadf8 \uce78\uc758 \uc785\ub825 ok \ubc18\uc751 \uc218)(\uce35\ud654 \ucd94\uc815). \uc0c1\ud55c 4,000\ucf54\uc5b4\uc2dc\uac04(D0D1 \uacb0\uc815; \uba85\ub839\uc11c 6-1\uc758 2,500\uc740 D1\ub9cc\uc774\uc5c8\ub2e4). \ucd08\uacfc\u00b7\uc720\ud55c\ud558\uc9c0 \uc54a\uc74c = STOP. \ubc18\uc751\ub2f9 \ucf54\uc5b4\uc2dc\uac04 = timing.tsv wall_seconds \ud569(\uc9c1\ub82c ORCA). D1-G2 \ubcf4\uc815 \uc608\uc0c1\uc740 \uc815\ubcf4. rel gate\ub97c pilot\uc5d0\ub3c4 \uc801\uc6a9. h_batch\ub294 \uc9c0\uae08 plan\uc758 \ud1b5\uacfc\ud55c H_pilot.json\uc774 \uc788\uc5b4\uc57c \ub3c8\ub2e4.",
+  "GEO-5 rel gate": "\uba85\ub839\uc11c 6-1 HF \ucd94\uac00 gate\ub97c A-G2c\uc5d0 \ub9de\uac8c \uc881\ud78c\ub2e4: \ube44\uad50 \ub300\uc0c1 = D1 \ubc18\uc751 \uc911 G2c C_select.csv chosen == 'orig'(G2c \ud3f4\ub354 = \ub2e8\uc77c run D1-G2 \ud3f4\ub354\uc758 \uc0ac\ubcf8)\uc774\uace0 geo HF ok\uc774\uba70 analysis/d1_g2/results/labels_d1_hf_g2.parquet\uc5d0 ok \ud589\uc774 \uc788\ub294 \ubc18\uc751. geo_final rel1/rel2.xyz sha256\uc774 d1_g2/g2_final\uc758 \uac83\uacfc \ub2e4\ub974\uac70\ub098 e_frag{k}_rel_eh \ucc28\uc774 > 1e-6 Eh\uba74 \ubd88\uc77c\uce58. \ubd88\uc77c\uce58 / \ube44\uad50 \ubc18\uc751 > 0.5 % = STOP. r1/r2\uac00 \ubf51\ud78c D1\uacfc D0\uc5d0\ub294 \uae30\uc900\uc774 \uc5c6\ub2e4(\ubcf4\uace0\ub9cc). C_select.csv\uc5d0 G2c \uc120\ud0dd(orig/r1/r2)\uc774 \uc5c6\ub294 D1 geo \ubc18\uc751\uc774 \uc788\uc73c\uba74 STOP(\uac80\ud1a0 R-3: \ube44\uad50 \ub300\uc0c1\uc774 \ube44\uc5b4 gate\uac00 \uadf8\ub0e5 \ud1b5\uacfc\ud558\uc9c0 \uc54a\uac8c).",
+  "GEO-6 H run failure": "\uba85\ub839\uc11c 6-2 H '\uc2e4\ud589 \uc2e4\ud328 > 1 %' = (H_status fail + gate_fail + eda_table_unexplained + parse_fail) / \ub05d\ub09c \ubc18\uc751, dataset\ub9c8\ub2e4. h_batch\uc758 \ubc30\uce58 \ub204\uc801 \uac80\uc0ac(M_checks)\ub294 \ub450 dataset\uc744 \ud569\uce5c \ube44\uc728\ub85c \ubbf8\ub9ac \uba48\ucd98\ub2e4(\uac00\uc911 \ud3c9\uade0 > 1 %\uba74 \uc5b4\ub290 \ud55c dataset\uc774 > 1 %\uc774\ubbc0\ub85c \uc798\ubabb\ub41c STOP\uc774 \uc544\ub2c8\ub2e4).",
+  "GEO-7 accept": "F rate STOP(F-1, B6)\uc744 \uc0ac\uc6a9\uc790\uac00 \ubc1b\uc544\ub4e4\uc774\uba74 'p --accept=F-1[,B6]' / 'report --accept=...' / 'g_report --accept=B6'\uac00 \uadf8 rate \uaddc\uce59\ub9cc accepted_stops\ub85c \uc62e\uae34\ub2e4. \uae30\ubcf8\uac12\uc740 STOP, \ub2e4\ub978 STOP\uc740 \ubc1b\uc544\ub4e4\uc77c \uc218 \uc5c6\ub2e4.",
+  "F-7 P tables": "\uc785\ub825\ud45c = inputs.py \ud568\uc218 \uadf8\ub300\ub85c(inputs.RUNGS['geo'] \uace0\uc815\uac12 = rung_cfg('geo'), GEO-8): Phase Q \uc900\ube44(F-13) + D0 Q \uc900\ube44(Q_d0_report.json all_pass\u00b7stop false\u00b7Q_keys_d0 sha256), _read_h, refs_min(Q-2 \ud0a4 = D1 Q_keys.parquet + D0 Q_keys_d0.parquet \uc774\uc5b4 \ubd99\uc774\uae30; \ud0a4\ubcc4 \ucd5c\uc800 HF \uae30\uc900; P6b\ub294 \uac01 \ud589\uc758 \ud0a4 formula\u00b7WL hash), assemble_rung(P-a + \uc7ac\uc870\ub9bd), token_info(g1 \ubc30\uce58), make_table(\uacb0\ud569 \ub300\uc0c1 14,521\ud589), table_summary -> $GEO2B/inputs/geo.parquet, results/P_build_geo.json. \uc804\uc81c: G\u00b7G report\u00b7F\u00b7H gate\uac00 STOP \uc5c6\uc774 complete.",
+  "F-7b constrained keys": "\uc81c\uc57d \ud0a4(Q_keys constrained: D1 = '|fixed:' \ud68c\uc804 \ub9c9\ud78c dipole, D0 = alt \uae30\uc900 \uad6c\uc870 '|cfg:')\ub294 g2 rung\uc758 P20 (c)\uc640 \uac19\uc774 \uad50\uccb4\ud558\uc9c0 \uc54a\uace0 \uc790\uae30 \uae30\uc900\uc744 \uc4f4\ub2e4(DFT \uae30\uc900 \uad6c\uc870\uc5d0\uc11c \ub098\uc628 \uc0c1\ud0dc\uac00 geo H \uac12\uc5d0 \ub4e4\uc5b4\uac00\uc9c0 \uc54a\uac8c). refs_min \uacb0\uacfc\uc5d0\uc11c constrained \ud589\uc758 'min' \uad50\uccb4\ub97c \ub418\ub3cc\ub9b0\ub2e4(references_g3_cons_own).",
+  "GEO-8 P registration": "inputs.py RUNGS['geo']\ub294 \uba85\ub839\uc11c 8-1\ub300\ub85c \uace0\uc815\uc774\uace0, cmd_p\ub294 rung_cfg('geo')\uc640 \ubb38\uc790\uc5f4 \uac12\uc73c\ub85c \uac19\uc740\uc9c0 \ud655\uc778\ud55c\ub2e4(\ub2e4\ub974\uba74 STOP). \ud0a4 targets(\uacb0\ud569 \ub77c\ubca8)\u00b7keys(D1 + D0 Q \ud0a4 \ud30c\uc77c)\ub294 geo\uc5d0\ub9cc \uc788\ub2e4.",
+  "GEO-9 pair sets": "\uba85\ub839\uc11c 7(D1): \uc9dd universe = D1PAIR S_folds.csv, P_<rung> = a\u00b7b \ubaa8\ub450 usable. P_dft\u00b7P_g2\ub294 LADDER \ud45c\uc5d0\uc11c \ub2e4\uc2dc \uacc4\uc0b0\ud574 LADDER \uc9d1\ud569 \ud30c\uc77c\uacfc \uac19\uc544\uc57c \ud55c\ub2e4. P_23 = P_g2 \u2229 P_geo, P_023 = P_dft \u2229 P_g2 \u2229 P_geo. |P_23| < 0.98 |P_g2|(\uc804\uccb4 \ub610\ub294 P_main \uae30\uc900 \uc9dd)\uc774\uba74 STOP: D0D1 \uacb0\uc815\uc73c\ub85c geo-g2 \ud310\uc815\uc740 \uc5c6\uc9c0\ub9cc, geo\uac00 g2 \uc704\uc5d0 \ub9cc\ub4e0 \uac83\uc774\ub77c \ubc18\uc751\uc744 \uc783\uc9c0 \uc54a\uc558\ub294\uc9c0 \ubcf4\ub294 \ud30c\uc774\ud504\ub77c\uc778 \uac80\uc0ac\ub85c \ub0a8\uae34\ub2e4. D0: $GEO1B/d0/D0_pairs.csv (D0_pairs_report.json stop false, sha256, g2_source g2c; \uc608\ube44\ud310\uc774\uba74 exit 2), usable \uc9dd = \ub450 \ub05d usable + ok, fold(d0_folds.csv)\u00b7edge_kind\ubcc4 \uc218, \ub05d\uc774 usable\uc774 \uc544\ub2c8\ub77c \uc783\uc740 \uc9dd\uacfc \uc774\uc720. dataset\u00b7fold\ubcc4 usable \ubc18\uc751 \uc218.",
+  "F-8 T-2": "T-2 = 1000003, 1000019, 1000614: $LAD/dft_final \ubc14\uc774\ud2b8 \ubcf5\uc0ac -> G \ub2e8\uacc4 \ucf54\ub4dc -> runroot/mergeroot(\uacb0\ud569 \uc785\ub825) -> 182\uc5f4 vs X182_d1_dft(1e-8; D1-G2 T-1 \uc120\ub840 scan_curv_* <= 2.5e-7 = pass_f0_precedent) + \ud1a0\ud070 sha256 vs F0_tokens_manifest.csv(FU2_X182 = X182_d1_dft \uc138 \ud589 \uc0ac\ubcf8, \ubc84\uc804 -dft). \uacb0\ud569 \uc785\ub825\uc758 D1 \ud589\uc774 G2 \uc785\ub825\uacfc \uac19\uc740 \uacb0\uacfc\ub97c \ub0b4\ub294\uc9c0\ub3c4 \uc774\uac83\uc73c\ub85c \ud655\uc778\ud55c\ub2e4. \uc791\uc5c5 \ud3f4\ub354 $GEO2B/t2.",
+  "F-9 T-3": "T-3 = \uc774 \ud30c\uc77c\uc758 H \uacbd\ub85c(_geominputs -> run.py -> _allgeom -> parse_rxn), D1HF_G2_ROOT = $LAD/dft_final, D1HF_TEMPLATES = \uacb0\ud569 \ud15c\ud50c\ub9bf, T00003\u00b7T00019\u00b7T00614 vs labels_d1_hf.parquet geom=dft(<= 1e-6 kcal/mol) + labels_d1_hf_g2.json \ud589 \uc77c\uce58. \uc791\uc5c5 \ud3f4\ub354 $GEO2B/t3.",
+  "F-10 T currency": "g / g_report / f_* / h_* / p\ub294 T_2\u00b7T_3\u00b7T_d0f\u00b7T_d0h.json\uc774 \uc9c0\uae08 \ucf54\ub4dc(CODE_REL sha256 \ubb36\uc74c)\ub85c \ud1b5\uacfc\ud588\uc744 \ub54c\ub9cc \ub3c8\ub2e4(\uc5c6\uc74c\u00b7\uc2e4\ud589 \uc911\u00b7\ucf54\ub4dc \ubc14\ub01c = exit 2, \uc2e4\ud328 = exit 3).",
+  "F-11 decision log": "\ubaa8\ub4e0 \uba85\ub839\uc774 \uc2dc\uc791\ud560 \ub54c \uc774 \uacb0\uc815\uc744 results/DECISIONS_feat_runtime.md\uc5d0 'feat_geo/<\ud0a4>'\ub85c \uc801\ub294\ub2e4(fcntl \uc7a0\uae08 $GEO2B/locks/DECISIONS.lock). results/DECISIONS.md\ub294 \ub2e4\ub978 \uc5ed\ud560\ub3c4 \uc4f0\ubbc0\ub85c \uc774 \ud30c\uc77c\uc740 \uc4f0\uc9c0 \uc54a\ub294\ub2e4.",
+  "F-12 quota": "G \ud3f4\ub354\ub294 work/ts.inp, ts.out.gz, ts.hess\ub9cc \ub0a8\uae34\ub2e4; HF\ub294 run.py \uaddc\uce59(.inp, .out.gz, .err.gz).",
+  "F-13 Q readiness": "Phase Q \uc900\ube44 = inputs._q_ready \uaddc\uce59\uc744 repo \uc0c1\ub300 \uacbd\ub85c\ub85c \ube44\uad50(\uae30\ub85d \ud0a4\uac00 d1ladder \uc791\uc5c5 \ud2b8\ub9ac \uc808\ub300 \uacbd\ub85c).",
+  "F-15 feature root currency": "f_slice\uac00 feature \ub8e8\ud2b8(\uae30\uc900 \ubc18\uc751\ub9c8\ub2e4 G result.json sha256)\ub97c $GEO2B/F_geo/root_fp.json\uc5d0 \ub0a8\uae34\ub2e4. \ub2e4\ub974\uba74 F \ucd9c\ub825\uc744 .prev_<\uc2dc\uac01>\uc73c\ub85c \uce58\uc6b0\uace0 \ub2e4\uc2dc \uacc4\uc0b0\ud55c\ub2e4.",
+  "F-16 T currency of work folders": "T \uc791\uc5c5 \ud3f4\ub354($GEO2B/t2, t3, td0, td0h)\uc5d0\ub294 \ub9cc\ub4e0 \ucf54\ub4dc\uc758 sha256\uc744 \ub454\ub2e4. \ub2e4\ub974\uba74 \uce58\uc6b0\uace0 \uc0c8\ub85c \uacc4\uc0b0\ud558\uace0, t2_f / td0_f\ub294 t2_g / td0_g\uac00 \uc9c0\uae08 \ucf54\ub4dc\ub85c \ub9cc\ub4e0 \ud3f4\ub354\uc5d0\uc11c\ub9cc \ub3c8\ub2e4.",
+  "GEO-10 removed": "D1-G3\uc758 Part A\u00b7Phase O\u00b7U-1 \ub17c\ub9ac\uc640 \uacb0\uc815(F-3, F-14, U-2f-*)\uc740 \ud574\ub2f9\ud558\uc9c0 \uc54a\uc544 \uc9c0\uc6e0\ub2e4.",
+  "GEO-11 G report": "\uba85\ub839\uc11c 6-2 G 'B6 \uacc4\uc0b0 \ubd88\uac00 > 1 %'\ub97c G \ub2e8\uacc4\uc5d0\uc11c \ubcf8\ub2e4(LADDER g0_report \ubc29\uc2dd): g_report\uac00 \uc804\uccb4 \uae30\uc900 \uc9d1\ud569\uc744 g_scan\ud558\uace0 \uc790\uc2dd _gcheck(g0f0._g0c_init / _g0c_one \uadf8\ub300\ub85c, \uacb0\ud569 \uc785\ub825)\ub97c \ubaa8\ub4e0 .done \ud3f4\ub354\uc5d0 \ub3cc\ub824 results/G_report.json\uc744 \uc4f4\ub2e4. \ube44\uc728\uc740 dataset\ub9c8\ub2e4. f_* \ub294 \uc9c0\uae08 \uae30\uc900\u00b7G \ud3f4\ub354\uc5d0 \ub9de\ub294 \ud1b5\uacfc\ud55c G_report\uac00 \uc788\uc5b4\uc57c \ub3c8\ub2e4. F gate\ub294 G\uc758 B6 \uc608\uce21\uacfc F status_B6\uac00 \uac19\uc740\uc9c0 \ubcf8\ub2e4.",
+  "GEO-12 combined inputs": "\uc124\uacc4 F/H-1: \ubaa8\ub4e0 G\u00b7F\u00b7H\u00b7P\uc640 T\uac00 $GEO2B/comb(analysis/geo2/d0d1.py x)\ub97c \uc77d\ub294\ub2e4: labels_d0d1.json (--labels / ESPLEY_LABELS), input_meta_d0d1.csv(A_idx), prof/, jobs/(\uc6d0\uc790 \uc21c\uc11c \uae30\uc900), hf_templates/(D1HF_TEMPLATES), x_manifest_d0d1.csv(X ok \ubaa9\ub85d). g0f0.g2_inputs_check \ub300\uc2e0 inputs_check\uac00 results/X_d0d1_report.json(stop false, complete)\uc758 sha256\u00b7symlink \ubaa9\ub85d digest\ub97c \uc9c0\uae08 \ud30c\uc77c\uacfc \ube44\uad50\ud558\uace0, \uacb0\ud569 \ub77c\ubca8\uc758 D1 \ud589 (job_id, rxn_id) = lad_common.targets()\uc778\uc9c0 \ubcf8\ub2e4.",
+  "GEO-13 QA rate": "fu2_common.QA_MAX_FAIL = 42(8,337\uc758 0.5 %, \uc808\ub300 \uc218)\ub294 \uacb0\ud569 \ubc18\uc751 \uc218\uc5d0 \ub9de\uc9c0 \uc54a\ub294\ub2e4. f_gate\ub294 atoms.py root gate\ub97c \uc790\uc2dd _qgate\ub85c \ubd80\ub978\ub2e4: root_bind() \ub4a4 QA_MAX_FAIL = ceil(0.005 x n_target)\uc73c\ub85c \ubc14\uafb8\uace0 cmd_gate \uadf8\ub300\ub85c \uc2e4\ud589(Q_report qa_max_fail\uc5d0 \uadf8 \uac12\uc774 \ub0a8\uace0 f_summary\uac00 \uac19\uc740 \uc2dd\uc73c\ub85c \ud655\uc778). \ucf54\ub4dc \ud30c\uc77c\uc740 \ubc14\uafb8\uc9c0 \uc54a\ub294\ub2e4.",
+  "GEO-14 T-D0": "D0 smoke 20\ubc18\uc751: X ok D0\ub97c (n_atoms, rxn_id)\ub85c 4\ub4f1\ubd84\ud558\uace0 \uc0ac\ubd84\uc704\ub9c8\ub2e4 5\uac1c(default_rng(20261024)), \uc0ac\ubd84\uc704\uc5d0 \uc804\ud558 \ubc18\uc751\uc774 \uc788\uc73c\uba74 \uadf8\uc911 1\uac1c\ub294 \uc804\ud558 \ubc18\uc751. \uad6c\uc870 = Coley TS / \uae30\uc900(d0_g2 labjobs). td0_g = G(\uc6d0\uc790 \uc21c\uc11c\u00b7Freq), td0_f = F(features, Q, tokens; \ubc30\uce58 = g1), td0_h = H(_geominputs \uc785\ub825\uc774 Phase X \ud15c\ud50c\ub9bf\uacfc \uc88c\ud45c <= 1e-6 \u00c5, \uac19\uc740 header; HF 20\uac1c status ok). \ud310\uc815: \uacbd\ub85c \uc624\ub958(\uc6d0\uc790 \uc21c\uc11c, \uc785\ub825 \uac80\uc0ac, parse/table/setting, Q-a/Q-b, \ubc30\uce58) 0, \ud654\ud559\uc801 \uc2e4\ud328(Freq, B6, ext, SCF) 2\uac1c \uc774\ud558. D0 \uae30\uc900\uac12\uc774 \uc5c6\uc73c\ubbc0\ub85c(X182\ub294 G1 \uad6c\uc870, \uc0ad\uc81c) \uacbd\ub85c \uac80\uc0ac\ub2e4.",
+  "GEO-15 HF wrappers": "prep.py geominputs\ub294 X_manifest(D1\ub9cc)\uc640 d1_jobs/<T>/ts.xyz\uc5d0, build.py allgeom\uc740 hf_common.targets()(labels_d1.json)\uc5d0 \ubb36\uc5ec \uc788\uc5b4 D0 \ud589\uc774 not_x_ok / rxn_id None\uc774 \ub41c\ub2e4. \ud30c\uc77c\uc744 \uace0\uce58\uc9c0 \uc54a\uace0 \uc790\uc2dd _geominputs\uac00 prep.ok_manifest\ub97c \uacb0\ud569 X manifest(x_fail False)\ub85c, prep.DP.D1_JOBS\ub97c $GEO2B/comb/jobs\ub85c \ubc14\uafbc \ub4a4 prep.cmd_geominputs('g2', list)\ub97c \ubd80\ub974\uace0, \uc790\uc2dd _allgeom\uc774 hf_common.targets\ub97c \uacb0\ud569 \ubaa9\ub85d\uc73c\ub85c \ubc14\uafbc \ub4a4 build.cmd_all(list, ('g2',))\ub97c \ubd80\ub978\ub2e4. D1 \ud589\uc740 \uac19\uc740 \uac12(\uac19\uc740 \ub9c1\ud06c \ub300\uc0c1)\uc774\uba70 T-3\uc774 \uc774 \uacbd\ub85c\ub97c \uac80\uc0ac\ud55c\ub2e4.",
+  "GEO-16 dataset gates": "\uc2e4\ud328 \ube44\uc728 gate\ub294 dataset(D1, D0)\ub9c8\ub2e4 \uacc4\uc0b0\ud55c\ub2e4(D0D1: D1\uacfc D0\uc744 \ub530\ub85c \ubcf4\uace0). \ud569\uce5c \ube44\uc728\uc740 \uc815\ubcf4.",
+  "GEO-17 S-1 gate": "D0 HF \ud15c\ud50c\ub9bf\uc758 \uadfc\uac70\uc778 \uc6d0\ub798 B3LYP \uc785\ub825\uc774 \ub77c\ubca8\uc744 \uc7ac\ud604\ud558\ub294\uc9c0(D0 S-1, d0d1.py s1, results/X_S1.json)\ub97c H \ucf54\uc5b4\uc2dc\uac04 \uc804\uc5d0 \ud655\uc778\ud55c\ub2e4: h_inputs / h_pilot / h_batch\ub294 X_S1.json pass\uc77c \ub54c\ub9cc \ub3c8\ub2e4(\uc5c6\uc74c\u00b7\ubbf8\uc644 = exit 2, \uc2e4\ud328 = exit 3). T \uac80\uc0ac\uc640 G / F\ub294 S-1\uc744 \uae30\ub2e4\ub9ac\uc9c0 \uc54a\ub294\ub2e4."
+ },
+ "thresholds": {
+  "G_order": 0.005,
+  "G_freq": 0.01,
+  "F_rate": 0.01,
+  "B6": 0.01,
+  "H_run": 0.01,
+  "H_input": 0.01,
+  "H_rel": 0.005,
+  "H_rel_tol_eh": 1e-06,
+  "H_core_h_cap": 4000.0,
+  "QA_rate": 0.005,
+  "P_ratio": 0.98
+ },
+ "accept": [
+  "F-1"
+ ],
+ "T": {
+  "2": {
+   "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/T_2.json",
+   "present": true,
+   "verdict": "pass",
+   "passed": true,
+   "stale": false,
+   "finished": "2026-11-01 08:51:08",
+   "summary": {
+    "verdict": "pass",
+    "x182": "pass",
+    "max_abs_diff_182": 1.0381882020737976e-09,
+    "tokens_equal": "3/3",
+    "deviation": false,
+    "inputs": "combined (GEO-12)"
+   }
+  },
+  "3": {
+   "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/T_3.json",
+   "present": true,
+   "verdict": "pass",
+   "passed": true,
+   "stale": false,
+   "finished": "2026-11-01 08:52:56",
+   "summary": {
+    "verdict": "pass",
+    "max_abs_diff_kcal": 0.0,
+    "path": "_geominputs / run.py / _allgeom (GEO-15)",
+    "inputs_identical": {
+     "T00003": true,
+     "T00019": true,
+     "T00614": true
+    },
+    "status": {
+     "T00003": [
+      "ok",
+      "ok"
+     ],
+     "T00019": [
+      "ok",
+      "ok"
+     ],
+     "T00614": [
+      "ok",
+      "ok"
+     ]
+    }
+   }
+  },
+  "D0F": {
+   "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/T_d0f.json",
+   "present": true,
+   "verdict": "pass",
+   "passed": true,
+   "stale": false,
+   "finished": "2026-11-01 08:51:47",
+   "summary": {
+    "verdict": "pass",
+    "n_path_errors": 0,
+    "n_chemistry_failures": 0,
+    "n_x182": 20,
+    "n_imag": {
+     "0": 0,
+     "1": 20,
+     "2": 0,
+     ">=3": 0
+    }
+   }
+  },
+  "D0H": {
+   "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/T_d0h.json",
+   "present": true,
+   "verdict": "pass",
+   "passed": true,
+   "stale": false,
+   "finished": "2026-11-01 11:13:19",
+   "summary": {
+    "verdict": "pass",
+    "n_path_errors": 0,
+    "n_chemistry_failures": 0,
+    "core_h": 18.300124444444446
+   }
+  }
+ },
+ "comb_inputs": {
+  "report": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/X_d0d1_report.json",
+  "report_sha256": "5b9ea04be2533b07d0afc00bb153885d763615e86a73154a54d7886ef877fa0b",
+  "outputs": {
+   "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/labels_d0d1.json": "36f5964db6a640104b28930614150db3e4219767a5c2251819038c213620a2e2",
+   "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/input_meta_d0d1.csv": "8ce13d14c66a673ecfd7e93f29092167a76e795cc1996df9581c18dd22fa7f52",
+   "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/x_manifest_d0d1.csv": "7b679aaaa5f954154c39d1e2ad90f4debc26288c8ac96ce6ff4f5d28c6446d0d"
+  },
+  "link_digests": {
+   "prof": {
+    "digest": "f005bc045663bd9fabceb892e63e0ea704e5f665e9f5d4be6a8e404a626b7247",
+    "n": 14521,
+    "n_expected": 14521
+   },
+   "jobs": {
+    "digest": "7b2ee8934b3549716285b2571635b08b8ac70e273279cbc4dc2eaf74136464a5",
+    "n": 14521,
+    "n_expected": 14521
+   },
+   "hf_templates": {
+    "digest": "0b7baa8d976cc2abbe5a42ada2f2db798b19ff838230645a85121a6d7b718a24",
+    "n": 14521,
+    "n_expected": 14521
+   }
+  },
+  "problems": [],
+  "n_d1": 9266,
+  "n_d0": 5255,
+  "d1_rows_eq_targets": true
+ },
+ "Z": {
+  "z_report": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/Z_report.json",
+  "present": true,
+  "sha256": "67d466ddd2375e6a045ec105f8c8995da43024a5163c51c016a55e3aad51c4d4",
+  "stop": false,
+  "stop_reasons": [],
+  "running": false,
+  "complete": true,
+  "n_folders": 13696,
+  "n_fallback": 70,
+  "by_status": {
+   "ok": 13696,
+   "no_g2": 825
+  },
+  "by_source": {
+   "f4": 3128,
+   "f1": 2791,
+   "f0": 2757,
+   "f2": 2437,
+   "f3": 2343,
+   "fm1": 240
+  },
+  "fallback_reasons": {
+   "close_contact": 62,
+   "bond_graph_changed": 8
+  },
+  "e_rxn_check": {
+   "D1": {
+    "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo1b/results/E_rxn.csv",
+    "n": 8419,
+    "max_abs_dev_A": 8.881784197001252e-16,
+    "tol": 1e-06,
+    "scope": "coord_rule mean3 rows (the file = the 3-seed mean)",
+    "n_in_file_not_mean3": 220,
+    "n_built_not_in_file": 240,
+    "n_file": 8639,
+    "n_built_f04_not_in_file": 0,
+    "n_file_not_built_f04": 0
+   },
+   "D0": {
+    "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo1b/results/E_rxn_d0.csv",
+    "n": 4789,
+    "max_abs_dev_A": 8.881784197001252e-16,
+    "tol": 1e-06,
+    "scope": "coord_rule mean3 rows (the file = the 3-seed mean)",
+    "n_in_file_not_mean3": 28,
+    "n_built_not_in_file": 0,
+    "n_file": 4817,
+    "n_built_f04_not_in_file": 0,
+    "n_file_not_built_f04": 0
+   }
+  },
+  "z_status_sha256": "182195e781f3df3c1fd73d118d2d4d9c083fcebd4818ab29cba9cf858b45d124",
+  "root": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/geo_final",
+  "n_targets": 14521,
+  "n_base": 13696,
+  "base_sha256": "8be07d594039bf9d00a3f8cf39a46ce6d74de7e3f6f72f28a8d6c7a4a5ae52ee",
+  "n_base_by_dataset": {
+   "D1": 8879,
+   "D0": 4817
+  }
+ },
+ "n_base": 13696,
+ "methods": {
+  "geo": {
+   "G": {
+    "root": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/geo_feat",
+    "n_base": 13696,
+    "n_done": 13696,
+    "n_open": 0,
+    "n_fail": 0,
+    "n_order_fail": 0,
+    "n_freq_fail": 0,
+    "n_stale": 0,
+    "stale": [],
+    "by_category": {
+     "ok": 13696
+    },
+    "by_dataset": {
+     "D1": {
+      "ok": 8879
+     },
+     "D0": {
+      "ok": 4817
+     }
+    },
+    "fail_reasons": {},
+    "rates": {
+     "order": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.005
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.005
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     },
+     "freq": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     }
+    },
+    "thresholds": {
+     "order": 0.005,
+     "freq": 0.01
+    },
+    "stop": false,
+    "stop_reasons": [],
+    "complete": true,
+    "n_imag": {
+     "0": 1,
+     "1": 3551,
+     "2": 2154,
+     ">=3": 7990
+    },
+    "n_imag_note": "n_imag 0 / >= 2 is recorded, not a failure (spec 6-2); B6 needs an imaginary mode: gated by g_report (block_b6 on the folders, B6 > 1 % per dataset; GEO-11) and again at F",
+    "imag1_cm": {
+     "n": 13695,
+     "min": -5874.848171612523,
+     "p05": -1255.158101637065,
+     "median": -387.22973439608865,
+     "p95": -189.35698349263689,
+     "max": -28.847282687757357
+    },
+    "forming_share": {
+     "n": 13695,
+     "min": 0.0015848051624628616,
+     "p05": 0.15117729289932677,
+     "median": 0.8952963014689342,
+     "p95": 1.0,
+     "max": 1.0
+    },
+    "n_share_below_0p5": 1879,
+    "core_h": {
+     "sum": 26.483728784322686,
+     "per_rxn": {
+      "n": 13696,
+      "min": 7.849388652377658e-05,
+      "p05": 0.0003786160714096493,
+      "median": 0.0014928726686371696,
+      "p95": 0.005000179658333461,
+      "max": 0.02156033370229933
+     },
+     "by_dataset": {
+      "D1": 12.220176994204515,
+      "D0": 14.263551790118223
+     }
+    }
+   },
+   "G_fail_rxn": {},
+   "G_report": {
+    "present": true,
+    "current": true,
+    "complete": true,
+    "stop": false,
+    "stop_reasons": [],
+    "accepted_stops": [],
+    "counts": {
+     "base": 13696,
+     "done": 13696,
+     "order_gate_fail": 0,
+     "ts_fragments_fail": 0,
+     "order_fail": 0,
+     "freq_error_fail": 0,
+     "b6_not_computable": 1,
+     "by_dataset": {
+      "D1": {
+       "base": 8879,
+       "done": 8879,
+       "order_fail": 0,
+       "freq_error_fail": 0,
+       "b6_not_computable": 1
+      },
+      "D0": {
+       "base": 4817,
+       "done": 4817,
+       "order_fail": 0,
+       "freq_error_fail": 0,
+       "b6_not_computable": 0
+      }
+     }
+    },
+    "rates": {
+     "order": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.005
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.005
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     },
+     "freq": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     },
+     "b6": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 1,
+       "rate": 0.00011262529564140106,
+       "threshold": 0.01
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 1,
+       "rate": 7.301401869158878e-05
+      }
+     }
+    },
+    "written": "2026-11-02 13:51:00",
+    "missing": null
+   },
+   "F": {
+    "n_base": 13696,
+    "n_g_done": 13696,
+    "n_g_done_by_dataset": {
+     "D1": 8879,
+     "D0": 4817
+    },
+    "root": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/geo_feat",
+    "versions": {
+     "FU2_ATOM_VERSION": "fu2-atoms-3-geo",
+     "FU2_TOKEN_VERSION": "fu2-tokens-3-geo"
+    },
+    "G_report": {
+     "present": true,
+     "current": true,
+     "complete": true,
+     "stop": false,
+     "stop_reasons": [],
+     "accepted_stops": [],
+     "counts": {
+      "base": 13696,
+      "done": 13696,
+      "order_gate_fail": 0,
+      "ts_fragments_fail": 0,
+      "order_fail": 0,
+      "freq_error_fail": 0,
+      "b6_not_computable": 1,
+      "by_dataset": {
+       "D1": {
+        "base": 8879,
+        "done": 8879,
+        "order_fail": 0,
+        "freq_error_fail": 0,
+        "b6_not_computable": 1
+       },
+       "D0": {
+        "base": 4817,
+        "done": 4817,
+        "order_fail": 0,
+        "freq_error_fail": 0,
+        "b6_not_computable": 0
+       }
+      }
+     },
+     "rates": {
+      "order": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.005
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.005
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 0,
+        "rate": 0.0
+       }
+      },
+      "freq": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 0,
+        "rate": 0.0
+       }
+      },
+      "b6": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 1,
+        "rate": 0.00011262529564140106,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 1,
+        "rate": 7.301401869158878e-05
+       }
+      }
+     },
+     "written": "2026-11-02 13:51:00",
+     "missing": null
+    },
+    "features": {
+     "mergeroot_report": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/F_geo/mergeroot_report.json",
+     "x182": {
+      "path": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/X182_d1_geo.parquet",
+      "sha256": "c54b95d611817715b1f65d332bb96d7c3f0140bfe7729c809089319464b434fc",
+      "n": 13576
+     },
+     "n_requested": 13696,
+     "n_done": 13696,
+     "n_feat": 13576,
+     "F1_all_finite": true,
+     "columns_equal_X182_d1": true,
+     "n_feature_fail": 120,
+     "n_F1": 120,
+     "n_B6_only": 1,
+     "n_F1_without_B6_only": 119,
+     "F1_rule": "every G .done reaction without a finite 182-feature row (mergeroot not-ok), B6-only rows included (= g0f0 f0_report); n_F1_without_B6_only = information only (GEO-7)",
+     "feature_fail_classes": {
+      "ext:B1:engine_gate1": 91,
+      "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1....": 15,
+      "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)": 10,
+      "ext:B1:parse:fA:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e...": 2,
+      "ext:B6:no_imaginary_frequency": 1,
+      "ext:B1:parse:fA:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.3e...": 1
+     },
+     "feature_fail_rxn": {
+      "3099": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "4349": "ext:B1:engine_gate1:1.1e-06",
+      "4924": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "5513": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "5521": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "5547": "ext:B1:parse:fA:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "5925": "ext:B1:engine_gate1:1.0e-06",
+      "1002194": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1002394": "ext:B6:no_imaginary_frequency",
+      "1003254": "ext:B1:engine_gate1:1.2e-06",
+      "1003338": "ext:B1:engine_gate1:2.3e-06",
+      "1003352": "ext:B1:engine_gate1:1.8e-06",
+      "1003355": "ext:B1:engine_gate1:2.6e-06",
+      "1003393": "ext:B1:engine_gate1:1.0e-06",
+      "1003399": "ext:B1:engine_gate1:3.8e-06",
+      "1003400": "ext:B1:engine_gate1:1.8e-06",
+      "1003410": "ext:B1:engine_gate1:1.0e-06",
+      "1003427": "ext:B1:engine_gate1:3.8e-06",
+      "1003428": "ext:B1:engine_gate1:3.5e-06",
+      "1003433": "ext:B1:engine_gate1:5.8e-06",
+      "1003619": "ext:B1:engine_gate1:1.1e-06",
+      "1003653": "ext:B1:engine_gate1:1.0e-06",
+      "1003654": "ext:B1:engine_gate1:1.4e-06",
+      "1003739": "ext:B1:engine_gate1:1.0e-06",
+      "1003767": "ext:B1:engine_gate1:1.3e-06",
+      "1003774": "ext:B1:engine_gate1:1.8e-06",
+      "1003852": "ext:B1:engine_gate1:1.1e-06",
+      "1003858": "ext:B1:engine_gate1:3.7e-06",
+      "1003863": "ext:B1:engine_gate1:1.4e-06",
+      "1003872": "ext:B1:engine_gate1:4.3e-06",
+      "1003874": "ext:B1:engine_gate1:1.8e-06",
+      "1003875": "ext:B1:engine_gate1:1.8e-06",
+      "1003913": "ext:B1:engine_gate1:1.4e-06",
+      "1003917": "ext:B1:engine_gate1:1.1e-06",
+      "1003919": "ext:B1:engine_gate1:3.9e-06",
+      "1003920": "ext:B1:engine_gate1:4.6e-06",
+      "1003929": "ext:B1:engine_gate1:2.5e-06",
+      "1003930": "ext:B1:engine_gate1:2.0e-06",
+      "1003939": "ext:B1:engine_gate1:1.5e-06",
+      "1003947": "ext:B1:engine_gate1:8.8e-06",
+      "1003948": "ext:B1:engine_gate1:7.8e-06",
+      "1003949": "ext:B1:engine_gate1:1.6e-06",
+      "1003951": "ext:B1:engine_gate1:4.4e-06",
+      "1003952": "ext:B1:engine_gate1:2.0e-06",
+      "1003953": "ext:B1:engine_gate1:2.2e-06",
+      "1003954": "ext:B1:engine_gate1:3.1e-06",
+      "1003955": "ext:B1:engine_gate1:1.7e-06",
+      "1004074": "ext:B1:engine_gate1:1.1e-06",
+      "1004154": "ext:B1:engine_gate1:1.4e-06",
+      "1004230": "ext:B1:engine_gate1:1.5e-06",
+      "1004232": "ext:B1:engine_gate1:3.9e-06",
+      "1004350": "ext:B1:engine_gate1:4.2e-06",
+      "1004351": "ext:B1:engine_gate1:3.3e-06",
+      "1004352": "ext:B1:engine_gate1:3.0e-06",
+      "1004435": "ext:B1:engine_gate1:2.9e-06",
+      "1004459": "ext:B1:engine_gate1:5.2e-06",
+      "1004460": "ext:B1:engine_gate1:4.1e-06",
+      "1004461": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1004463": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1004487": "ext:B1:engine_gate1:2.3e-06",
+      "1004488": "ext:B1:engine_gate1:3.3e-06",
+      "1004493": "ext:B1:engine_gate1:5.7e-06",
+      "1004494": "ext:B1:engine_gate1:6.6e-06",
+      "1004830": "ext:B1:engine_gate1:2.2e-06",
+      "1004832": "ext:B1:engine_gate1:2.3e-06",
+      "1004989": "ext:B1:engine_gate1:3.4e-06",
+      "1004990": "ext:B1:engine_gate1:1.1e-06",
+      "1005173": "ext:B1:engine_gate1:1.2e-06",
+      "1005174": "ext:B1:engine_gate1:3.5e-06",
+      "1005334": "ext:B1:engine_gate1:1.5e-06",
+      "1005424": "ext:B1:engine_gate1:1.1e-06",
+      "1005489": "ext:B1:engine_gate1:2.4e-06",
+      "1005541": "ext:B1:engine_gate1:1.8e-06",
+      "1005609": "ext:B1:engine_gate1:2.7e-06",
+      "1005612": "ext:B1:engine_gate1:3.7e-06",
+      "1005753": "ext:B1:engine_gate1:3.8e-06",
+      "1005934": "ext:B1:engine_gate1:1.4e-06",
+      "1006218": "ext:B1:engine_gate1:2.9e-06",
+      "1006235": "ext:B1:engine_gate1:5.0e-06",
+      "1006279": "ext:B1:engine_gate1:1.1e-06",
+      "1006280": "ext:B1:engine_gate1:2.8e-06",
+      "1006313": "ext:B1:engine_gate1:7.4e-06",
+      "1006314": "ext:B1:engine_gate1:9.0e-06",
+      "1006495": "ext:B1:engine_gate1:1.5e-06",
+      "1006533": "ext:B1:engine_gate1:1.7e-06",
+      "1006612": "ext:B1:engine_gate1:1.5e-06",
+      "1006735": "ext:B1:engine_gate1:2.4e-06",
+      "1006738": "ext:B1:engine_gate1:3.1e-06",
+      "1006743": "ext:B1:engine_gate1:1.8e-06",
+      "1006755": "ext:B1:engine_gate1:7.0e-06",
+      "1006799": "ext:B1:engine_gate1:1.9e-06",
+      "1006800": "ext:B1:engine_gate1:4.5e-06",
+      "1006809": "ext:B1:engine_gate1:1.0e-06",
+      "1006889": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.2e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1006942": "ext:B1:parse:fA:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.3e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1006981": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.0e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1006982": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007021": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007022": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.2e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007085": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007086": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.2e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007087": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007088": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.0e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007206": "ext:B1:parse:fA:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007207": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007208": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007249": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.0e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007293": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1007309": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007361": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1007362": "ext:B1:parse:rel1:json: \u03a3 q r + \u03a3 \u03bc differs from 'dipole / a.u.' by 1.1e-03 a.u. (atomic dipole sign / frame / unit)",
+      "1008369": "ext:B1:engine_gate1:3.8e-06",
+      "1008422": "ext:B1:engine_gate1:2.2e-06",
+      "1009844": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1009881": "g1feat:spe_fail:RuntimeError:xtb parse fail (Wiberg table)",
+      "1010112": "ext:B1:engine_gate1:1.9e-06",
+      "1010195": "ext:B1:engine_gate1:2.0e-06",
+      "1010752": "ext:B1:engine_gate1:1.7e-06",
+      "1010894": "ext:B1:engine_gate1:1.6e-06",
+      "1010934": "ext:B1:engine_gate1:1.6e-06"
+     },
+     "n_B6_fail": 1,
+     "B6_reasons": {
+      "no_imaginary_frequency": 1
+     },
+     "n_B1_engine_gate": 91,
+     "B6_vs_G_report": {
+      "g_report": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/G_report.json",
+      "n_g_predicted": 1,
+      "n_f_ran": 13686,
+      "equal": true,
+      "only_G": [],
+      "only_F": []
+     }
+    },
+    "Q": {
+     "n_target": 13576,
+     "n_ok": 13576,
+     "n_compute_fail": 0,
+     "n_qa_not_reproduced": 0,
+     "n_qa_fail": 0,
+     "qa_max_fail": 68,
+     "n_qb_fail": 0,
+     "n_excluded_ext_fail": 8,
+     "ext_pass_rate": 0.9994107248084856,
+     "ext_used": true,
+     "n_use": 13568,
+     "fail_reasons": [],
+     "qa_maxdiff_max": 0.0,
+     "qb_maxdiff_max": 8.000000005503605e-08,
+     "atom_version": "fu2-atoms-3-geo",
+     "stop": false,
+     "stop_reason": [],
+     "manifest_sha256": "0131f7ed28b6855affa8a0826aa785d94d8f42f4e257438acd7dccdc9d6727be",
+     "n_excluded": 8,
+     "excluded": [
+      2372,
+      1004325,
+      1006909,
+      1007141,
+      1007289,
+      1007321,
+      1007847,
+      1007848
+     ],
+     "n_qa_fail_manifest": 0,
+     "overrides": {
+      "FU2_SCR": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/fu2_geo",
+      "FU2_RES": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/fu2_geo",
+      "FU2_X182": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/X182_d1_geo.parquet",
+      "FU2_ATOM_VERSION": "fu2-atoms-3-geo",
+      "FU2_TOKEN_VERSION": "fu2-tokens-3-geo",
+      "D1PAIR_PHASE": "FROOT",
+      "G1_ROOT": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/geo_feat",
+      "ESPLEY_LABELS": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/labels_d0d1.json",
+      "ESPLEY_META": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/input_meta_d0d1.csv",
+      "ESPLEY_PROF": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/comb/prof"
+     },
+     "qa_rule": {
+      "n_target": 13576,
+      "qa_max_fail": 68,
+      "want": 68,
+      "rate": 0.005,
+      "rule": "fu2_common.QA_MAX_FAIL = 42(8,337\uc758 0.5 %, \uc808\ub300 \uc218)\ub294 \uacb0\ud569 \ubc18\uc751 \uc218\uc5d0 \ub9de\uc9c0 \uc54a\ub294\ub2e4. f_gate\ub294 atoms.py root gate\ub97c \uc790\uc2dd _qgate\ub85c \ubd80\ub978\ub2e4: root_bind() \ub4a4 QA_MAX_FAIL = ceil(0.005 x n_target)\uc73c\ub85c \ubc14\uafb8\uace0 cmd_gate \uadf8\ub300\ub85c \uc2e4\ud589(Q_report qa_max_fail\uc5d0 \uadf8 \uac12\uc774 \ub0a8\uace0 f_summary\uac00 \uac19\uc740 \uc2dd\uc73c\ub85c \ud655\uc778). \ucf54\ub4dc \ud30c\uc77c\uc740 \ubc14\uafb8\uc9c0 \uc54a\ub294\ub2e4."
+     }
+    },
+    "T": {
+     "token_version": "fu2-tokens-3-geo",
+     "n_reactions": 13568,
+     "n_excluded_from_Q": 8,
+     "num_cols": [
+      "bond_dist",
+      "q_rel",
+      "q_frag",
+      "q_TS",
+      "dq_dist",
+      "dq_int",
+      "v_rel",
+      "v_frag",
+      "v_TS",
+      "dv_dist",
+      "dv_int",
+      "mu_abs",
+      "f_plus",
+      "f_minus"
+     ],
+     "ext_used": true,
+     "gate_Ta": {
+      "tokens_eq_atoms": true,
+      "all_finite": true,
+      "two_formed_edges": true,
+      "q_excluded_absent": true
+     },
+     "stop": false,
+     "manifest_sha256": "52722bf547cfc9777ce87d014cf6dda0a7bc622102a0eaf9561c527f4e4abf5b",
+     "q_report_sha256": "88fa104dbf47f0acffcb64b1f2090dc696faa7275106f5cd21030cd957d289b2",
+     "x182_sha256": "c54b95d611817715b1f65d332bb96d7c3f0140bfe7729c809089319464b434fc",
+     "n_bad": 0,
+     "bad": [],
+     "n_token_files_missing_or_changed": 0,
+     "layout_vs_d1pair_g1": {
+      "ref": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/d1_pair/results/fu2/T_report.json",
+      "differ": []
+     },
+     "elements": [
+      1,
+      6,
+      7,
+      8,
+      9,
+      14,
+      16,
+      17,
+      35
+     ],
+     "elements_g1": [
+      1,
+      6,
+      7,
+      8,
+      9,
+      14,
+      16,
+      17,
+      35
+     ],
+     "manifest": {
+      "path": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/fu2_geo/T_manifest.csv",
+      "sha256": "52722bf547cfc9777ce87d014cf6dda0a7bc622102a0eaf9561c527f4e4abf5b"
+     },
+     "tokens_dir": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/fu2_geo/tokens"
+    },
+    "n_tokens_ok": 13568,
+    "gate": {
+     "per_dataset": {
+      "F-1": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 113,
+        "rate": 0.01272665840747832,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 7,
+        "rate": 0.0014531866306829978,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 120,
+        "rate": 0.008761682242990653
+       }
+      },
+      "B6": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 1,
+        "rate": 0.00011262529564140106,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 1,
+        "rate": 7.301401869158878e-05
+       }
+      },
+      "Q-a": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 0,
+        "rate": 0.0
+       }
+      },
+      "T-a": {
+       "D1": {
+        "n": 8879,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "D0": {
+        "n": 4817,
+        "n_fail": 0,
+        "rate": 0.0,
+        "threshold": 0.01
+       },
+       "combined_info": {
+        "n": 13696,
+        "n_fail": 0,
+        "rate": 0.0
+       }
+      }
+     },
+     "threshold": 0.01,
+     "accept": [
+      "F-1"
+     ],
+     "F1_without_B6_only": {
+      "D1": 112,
+      "D0": 7
+     },
+     "combined_info": {
+      "n": 128,
+      "n_base": 13696,
+      "rate": 0.009345794392523364,
+      "components": {
+       "g_step": 0,
+       "features": 120,
+       "b6": 1,
+       "q_excluded": 8,
+       "q_a": 0,
+       "t_bad": 0
+      },
+      "rule": "base reactions without a token npz (D1-G3 combined rule; information only)"
+     },
+     "definition": "\uba85\ub839\uc11c 6-2 STOP \uae30\uc900\uc744 dataset(D1, D0)\ub9c8\ub2e4 \ub530\ub85c \uc801\uc6a9\ud55c\ub2e4(GEO-16). G(g_report): \uc6d0\uc790 \uc21c\uc11c(\uc21c\uc11c gate + ts_fragments) > \uae30\uc900 \ubc18\uc751\uc758 0.5 %, Freq / \uc624\ub958 > 1 %, B6 \uacc4\uc0b0 \ubd88\uac00 > .done\uc758 1 %, stale. F(G .done \uc218 \uae30\uc900): F-1(\uc720\ud55c\ud55c 182\uc5f4 \ud589 \uc5c6\uc74c, B6\ub9cc \uc2e4\ud328 \ud3ec\ud568 = g0f0 f0_report) > 1 %, B6 > 1 %, Q-a > 1 %, T-a > 1 %, FU2 gate \uc790\uccb4\uc758 STOP, mergeroot stop, \uac1c\uc218 \ubd88\uc77c\uce58, \ud1a0\ud070 \ubc30\uce58 != D1PAIR g1, G\uc758 B6 \uc608\uce21 != F status_B6. H: \uc2e4\ud589 \uc2e4\ud328 / \ub05d\ub09c \ubc18\uc751 > 1 %(GEO-6), \uc785\ub825 \uac80\uc0ac \uc2e4\ud328 > 1 %, rel \uc5d0\ub108\uc9c0 gate(GEO-5) > 0.5 %. n_imag 0 / >= 2\ub294 \uc2e4\ud328\uac00 \uc544\ub2c8\ub2e4."
+    },
+    "missing": [],
+    "complete": true,
+    "stop": false,
+    "stop_reasons": [],
+    "accepted_stops": [
+     "D1: F-1 failures 113/8879 G .done reactions = 0.0127 > 0.01 (spec 6-2; per dataset, GEO-16)"
+    ]
+   },
+   "H": {
+    "n_base": 13696,
+    "root": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/geo_final",
+    "runs": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/hf_geo/runs/g2",
+    "outputs": {
+     "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/hf_geo/g2_inputs.csv": "dda1030b9cf4c782bcfa4e8b70c45f6e38b71db8ba2ee32d5219d1f68943a9bd",
+     "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/hf_geo/H_status.csv": "18319d7b25615b4ef420b2e801df68fdd70e4ade229aad2386b6bb075581de41",
+     "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/hf_geo/labels_d1_hf_g2.parquet": "8ba276b30d624aed90dabebe300bf3294989559288773a5de6e825458b83cd1c",
+     "/gpfs/tmp_cpu2/yeseo1ee/geo2b/hf_geo/labels_d1_hf_g2.json": "78780ff7a577236c5f3a8d7b0a9b96177f1604cec5560cac1e97fa685735be52"
+    },
+    "by_status": {
+     "ok": 13696
+    },
+    "by_status_dataset": {
+     "D1": {
+      "ok": 8879
+     },
+     "D0": {
+      "ok": 4817
+     }
+    },
+    "n_inputs_ok": 13696,
+    "n_finished": 13696,
+    "n_ok": 13696,
+    "run_failure": {
+     "per_dataset": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     },
+     "definition": "\uba85\ub839\uc11c 6-2 H '\uc2e4\ud589 \uc2e4\ud328 > 1 %' = (H_status fail + gate_fail + eda_table_unexplained + parse_fail) / \ub05d\ub09c \ubc18\uc751, dataset\ub9c8\ub2e4. h_batch\uc758 \ubc30\uce58 \ub204\uc801 \uac80\uc0ac(M_checks)\ub294 \ub450 dataset\uc744 \ud569\uce5c \ube44\uc728\ub85c \ubbf8\ub9ac \uba48\ucd98\ub2e4(\uac00\uc911 \ud3c9\uade0 > 1 %\uba74 \uc5b4\ub290 \ud55c dataset\uc774 > 1 %\uc774\ubbc0\ub85c \uc798\ubabb\ub41c STOP\uc774 \uc544\ub2c8\ub2e4).",
+     "by_status": {},
+     "reasons": {},
+     "jobs": []
+    },
+    "gate_failure": {
+     "n": 0,
+     "by_status": {},
+     "note": "subset of run_failure (D1-G2 gate statuses)"
+    },
+    "input_fail": {
+     "per_dataset": {
+      "D1": {
+       "n": 8879,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "D0": {
+       "n": 4817,
+       "n_fail": 0,
+       "rate": 0.0,
+       "threshold": 0.01
+      },
+      "combined_info": {
+       "n": 13696,
+       "n_fail": 0,
+       "rate": 0.0
+      }
+     },
+     "jobs": {}
+    },
+    "rel_gate": {
+     "rule": "\uba85\ub839\uc11c 6-1 HF \ucd94\uac00 gate\ub97c A-G2c\uc5d0 \ub9de\uac8c \uc881\ud78c\ub2e4: \ube44\uad50 \ub300\uc0c1 = D1 \ubc18\uc751 \uc911 G2c C_select.csv chosen == 'orig'(G2c \ud3f4\ub354 = \ub2e8\uc77c run D1-G2 \ud3f4\ub354\uc758 \uc0ac\ubcf8)\uc774\uace0 geo HF ok\uc774\uba70 analysis/d1_g2/results/labels_d1_hf_g2.parquet\uc5d0 ok \ud589\uc774 \uc788\ub294 \ubc18\uc751. geo_final rel1/rel2.xyz sha256\uc774 d1_g2/g2_final\uc758 \uac83\uacfc \ub2e4\ub974\uac70\ub098 e_frag{k}_rel_eh \ucc28\uc774 > 1e-6 Eh\uba74 \ubd88\uc77c\uce58. \ubd88\uc77c\uce58 / \ube44\uad50 \ubc18\uc751 > 0.5 % = STOP. r1/r2\uac00 \ubf51\ud78c D1\uacfc D0\uc5d0\ub294 \uae30\uc900\uc774 \uc5c6\ub2e4(\ubcf4\uace0\ub9cc). C_select.csv\uc5d0 G2c \uc120\ud0dd(orig/r1/r2)\uc774 \uc5c6\ub294 D1 geo \ubc18\uc751\uc774 \uc788\uc73c\uba74 STOP(\uac80\ud1a0 R-3: \ube44\uad50 \ub300\uc0c1\uc774 \ube44\uc5b4 gate\uac00 \uadf8\ub0e5 \ud1b5\uacfc\ud558\uc9c0 \uc54a\uac8c).",
+     "reference": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/d1_g2/results/labels_d1_hf_g2.parquet",
+     "reference_sha256": "387ce1290465faaee470224dec5c785277fdd746c9fbbd278a8f45d251521f2d",
+     "c_select": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-g2c/analysis/g2c/results/C_select.csv",
+     "c_select_sha256": "51d8acfcb8ad07f89f254a1637720448750784e4b879427a7cc518ead7e87413",
+     "tol_eh": 1e-06,
+     "threshold": 0.005,
+     "n_jobs": 13696,
+     "n_d1": 8879,
+     "n_d1_orig": 2923,
+     "n_d1_not_orig": 5956,
+     "n_d1_no_g2c_choice": 0,
+     "d1_no_g2c_choice": [],
+     "n_d0_no_reference": 4817,
+     "n_geo": 2923,
+     "n_comparable": 2923,
+     "n_not_in_reference": 0,
+     "not_in_reference": [],
+     "n_rel_bytes_differ": 0,
+     "rel_bytes_differ": [],
+     "n_mismatch": 0,
+     "rate": 0.0,
+     "max_abs_diff_eh": 0.0,
+     "mismatch": {},
+     "stop": false,
+     "stop_reasons": []
+    },
+    "open": {
+     "n": 0,
+     "by_status": {},
+     "jobs": []
+    },
+    "absent": [],
+    "n_absent": 0,
+    "n_stale_runs": 0,
+    "stale_runs": [],
+    "core_h": {
+     "sum": 3908.6949286111103,
+     "n_run_folders": 13696,
+     "per_rxn": {
+      "n": 13696,
+      "min": 0.0038125,
+      "p05": 0.04403562500000001,
+      "median": 0.21625930555555556,
+      "p95": 0.7962829861111113,
+      "max": 3.4198344444444446
+     },
+     "by_dataset": {
+      "D1": {
+       "sum": 1650.7265616666662,
+       "per_rxn": {
+        "n": 8879,
+        "min": 0.0038125,
+        "p05": 0.030901861111111113,
+        "median": 0.1667863888888889,
+        "p95": 0.40337400000000007,
+        "max": 0.8856105555555556
+       }
+      },
+      "D0": {
+       "sum": 2257.9683669444407,
+       "per_rxn": {
+        "n": 4817,
+        "min": 0.010772499999999999,
+        "p05": 0.10702905555555557,
+        "median": 0.37192277777777777,
+        "p95": 1.197421,
+        "max": 3.4198344444444446
+       }
+      }
+     },
+     "ok_per_rxn": {
+      "n": 13696,
+      "min": 0.0038125,
+      "p05": 0.04403562500000001,
+      "median": 0.21625930555555556,
+      "p95": 0.7962829861111113,
+      "max": 3.4198344444444446
+     },
+     "reference": {
+      "n": 8616,
+      "core_h": 1611.0,
+      "per_rxn": 0.187,
+      "source": "spec 6-1 (D1-G2 Phase H)"
+     }
+    },
+    "missing": [],
+    "complete": true,
+    "stop": false,
+    "stop_reasons": []
+   },
+   "H_pilot": {
+    "present": true,
+    "file": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/H_pilot.json",
+    "current_plan": true,
+    "complete": true,
+    "passed": true,
+    "stop": false,
+    "stop_reasons": [],
+    "projection_core_h": 3569.9432242592593
+   },
+   "H_report": {
+    "present": true,
+    "complete": true,
+    "stop": false,
+    "stop_reasons": []
+   },
+   "P": {
+    "present": true,
+    "all_pass": true,
+    "stop": false,
+    "stop_reason": null,
+    "table": "/gpfs/tmp_cpu2/yeseo1ee/geo2b/inputs/geo.parquet",
+    "table_ok": true,
+    "stale": [],
+    "n_usable": 13568,
+    "table_summary": {
+     "n_targets": 14521,
+     "n_tok": 13568,
+     "n_x182": 13576,
+     "n_h": 13696,
+     "n_usable": 13568,
+     "n_tok_without_h": 0,
+     "n_tok_without_x182": 0,
+     "tok_without_x182": [],
+     "h_changed": {
+      "n_reactions": 13115,
+      "n_reactions_usable": 12987,
+      "by_value": {
+       "d1": {
+        "n_changed": 6163,
+        "n_gt_1e9": 6163,
+        "n_gt_0_05": 3249,
+        "n_changed_usable": 6076,
+        "abs_change": {
+         "n": 6163,
+         "p50": 0.05496102471726516,
+         "p90": 0.35406105072011373,
+         "p99": 3.3056098599547497,
+         "max": 15.134734426849256,
+         "mean": 0.21776297536963665
+        }
+       },
+       "d2": {
+        "n_changed": 12538,
+        "n_gt_1e9": 12538,
+        "n_gt_0_05": 3847,
+        "n_changed_usable": 12411,
+        "abs_change": {
+         "n": 12538,
+         "p50": 0.01994359207371721,
+         "p90": 1.0236474785101288,
+         "p99": 7.93145039569984,
+         "max": 78.41590962794113,
+         "mean": 0.6850926286317817
+        }
+       },
+       "barrier": {
+        "n_changed": 13115,
+        "n_gt_1e9": 13115,
+        "n_gt_0_05": 6740,
+        "n_changed_usable": 12987,
+        "abs_change": {
+         "n": 13115,
+         "p50": 0.05304256637622018,
+         "p90": 1.1606593261749047,
+         "p99": 7.9625468581305725,
+         "max": 78.43535051465742,
+         "mean": 0.7572828513142609
+        }
+       }
+      },
+      "n_fragments_changed_by_kind": {
+       "dipole": 6163,
+       "dipolarophile": 12538
+      }
+     },
+     "channels_unchanged": {
+      "elst": true,
+      "pauli": true,
+      "oi": true,
+      "disp": true,
+      "cpcm": true,
+      "cds": true
+     }
+    },
+    "references": {
+     "n_fragments_replaced": 23105,
+     "n_jobs_replaced": 13268,
+     "n_keys": 4125,
+     "n_fragments_dev_gt_0_05": 10553
+    },
+    "cons_own": {
+     "rule": "\uc81c\uc57d \ud0a4(Q_keys constrained: D1 = '|fixed:' \ud68c\uc804 \ub9c9\ud78c dipole, D0 = alt \uae30\uc900 \uad6c\uc870 '|cfg:')\ub294 g2 rung\uc758 P20 (c)\uc640 \uac19\uc774 \uad50\uccb4\ud558\uc9c0 \uc54a\uace0 \uc790\uae30 \uae30\uc900\uc744 \uc4f4\ub2e4(DFT \uae30\uc900 \uad6c\uc870\uc5d0\uc11c \ub098\uc628 \uc0c1\ud0dc\uac00 geo H \uac12\uc5d0 \ub4e4\uc5b4\uac00\uc9c0 \uc54a\uac8c). refs_min \uacb0\uacfc\uc5d0\uc11c constrained \ud589\uc758 'min' \uad50\uccb4\ub97c \ub418\ub3cc\ub9b0\ub2e4(references_g3_cons_own).",
+     "n_rows_constrained": 6574,
+     "n_rows_constrained_by_dataset": {
+      "D0": 2831,
+      "D1": 3743
+     },
+     "n_constrained_kept_own": 4404,
+     "dev_kcal_kept_own": {
+      "n": 4404,
+      "min": 4.330317112685489e-05,
+      "p05": 0.011490891009124326,
+      "median": 1.25464576760736,
+      "p95": 5.988357023642434,
+      "max": 25.45067854673564
+     },
+     "n_jobs_replaced": 13115,
+     "n_fragments_replaced": 18701
+    },
+    "P_a_ok": true,
+    "reassembly_ok": true,
+    "accepted_stops": [
+     "D1: F-1 failures 113/8879 G .done reactions = 0.0127 > 0.01 (spec 6-2; per dataset, GEO-16)"
+    ]
+   },
+   "n_usable": 13568,
+   "n_usable_by_dataset": {
+    "D1": 8759,
+    "D0": 4809
+   },
+   "pairs": {
+    "present": true,
+    "stop": false,
+    "stop_reasons": [],
+    "n": {
+     "P_geo": 7787,
+     "P_23": 7385,
+     "P_023": 7369,
+     "P_g2": 7458,
+     "P_dft": 8325
+    },
+    "n_P_main_reference": {
+     "P_geo": 6628,
+     "P_23": 6336,
+     "P_023": 6332,
+     "P_g2": 6401,
+     "P_dft": 6874
+    },
+    "sha256": {
+     "P_geo": "61e251dbcf6ddf7cde5a490fd138e2e8a34484af7e9cfbd03f11f6b2bfae1c83",
+     "P_23": "21230a14376d26ffc8b75e85b1f3316300e066d997602a2f23c43cb523cc7c9f",
+     "P_023": "957cbedf1a472b17e9649cf2c835d55c93ec752fe35fa86d98180e46b1ea641c",
+     "P_g2": "6967eebcc2b8b2487c58ffcc04c0a287f0b0eda085c5ec1ed70dcbea96395ac8",
+     "P_dft": "fb431c0424bb0ea6acdbe6bf87a4459cf05d3e53361001bb1c22dd81c49685d8"
+    },
+    "check": {
+     "rule": "D1 |P_23| >= 0.98 |P_g2| (all pairs and P_main reference pairs)",
+     "ratio": 0.9902118530437114,
+     "ratio_P_main_reference": 0.9898453366661459
+    },
+    "d0_usable": 3219
+   },
+   "core_h": {
+    "g_step": {
+     "sum": 26.483728784322686,
+     "per_rxn": {
+      "n": 13696,
+      "min": 7.849388652377658e-05,
+      "p05": 0.0003786160714096493,
+      "median": 0.0014928726686371696,
+      "p95": 0.005000179658333461,
+      "max": 0.02156033370229933
+     },
+     "by_dataset": {
+      "D1": 12.220176994204515,
+      "D0": 14.263551790118223
+     }
+    },
+    "hf": {
+     "sum": 3908.6949286111103,
+     "n_run_folders": 13696,
+     "per_rxn": {
+      "n": 13696,
+      "min": 0.0038125,
+      "p05": 0.04403562500000001,
+      "median": 0.21625930555555556,
+      "p95": 0.7962829861111113,
+      "max": 3.4198344444444446
+     },
+     "by_dataset": {
+      "D1": {
+       "sum": 1650.7265616666662,
+       "per_rxn": {
+        "n": 8879,
+        "min": 0.0038125,
+        "p05": 0.030901861111111113,
+        "median": 0.1667863888888889,
+        "p95": 0.40337400000000007,
+        "max": 0.8856105555555556
+       }
+      },
+      "D0": {
+       "sum": 2257.9683669444407,
+       "per_rxn": {
+        "n": 4817,
+        "min": 0.010772499999999999,
+        "p05": 0.10702905555555557,
+        "median": 0.37192277777777777,
+        "p95": 1.197421,
+        "max": 3.4198344444444446
+       }
+      }
+     },
+     "ok_per_rxn": {
+      "n": 13696,
+      "min": 0.0038125,
+      "p05": 0.04403562500000001,
+      "median": 0.21625930555555556,
+      "p95": 0.7962829861111113,
+      "max": 3.4198344444444446
+     },
+     "reference": {
+      "n": 8616,
+      "core_h": 1611.0,
+      "per_rxn": 0.187,
+      "source": "spec 6-1 (D1-G2 Phase H)"
+     }
+    },
+    "g_alloc": 27.41866666666667,
+    "f_alloc": 21.098666666666666,
+    "h_alloc": 4009.0107777777785,
+    "p_alloc": 0.8765555555555556,
+    "t_alloc": 0.22822222222222222
+   }
+  }
+ },
+ "g_status_csv": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-geo2b/analysis/geo2/results/F_G_status.csv",
+ "g_status_sha256": "1be6c2c83af41c69094c1d0bb0641c0b3c2500d70a3e762c9a182d0bb084252e",
+ "stop": false,
+ "stop_reasons": [],
+ "complete": true,
+ "incomplete": []
+}

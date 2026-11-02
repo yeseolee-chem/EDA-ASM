@@ -31,3 +31,14 @@
 - **feat_geo/GEO-15 HF wrappers**: prep.py geominputs는 X_manifest(D1만)와 d1_jobs/<T>/ts.xyz에, build.py allgeom은 hf_common.targets()(labels_d1.json)에 묶여 있어 D0 행이 not_x_ok / rxn_id None이 된다. 파일을 고치지 않고 자식 _geominputs가 prep.ok_manifest를 결합 X manifest(x_fail False)로, prep.DP.D1_JOBS를 $GEO2B/comb/jobs로 바꾼 뒤 prep.cmd_geominputs('g2', list)를 부르고, 자식 _allgeom이 hf_common.targets를 결합 목록으로 바꾼 뒤 build.cmd_all(list, ('g2',))를 부른다. D1 행은 같은 값(같은 링크 대상)이며 T-3이 이 경로를 검사한다.
 - **feat_geo/GEO-16 dataset gates**: 실패 비율 gate는 dataset(D1, D0)마다 계산한다(D0D1: D1과 D0을 따로 보고). 합친 비율은 정보.
 - **feat_geo/GEO-17 S-1 gate**: D0 HF 템플릿의 근거인 원래 B3LYP 입력이 라벨을 재현하는지(D0 S-1, d0d1.py s1, results/X_S1.json)를 H 코어시간 전에 확인한다: h_inputs / h_pilot / h_batch는 X_S1.json pass일 때만 돈다(없음·미완 = exit 2, 실패 = exit 3). T 검사와 G / F는 S-1을 기다리지 않는다.
+- **11-02 13:4x M1 + 제출**: geo1b acd18b6b(GEO1b 완료, Y 포함)를 geo2b에 merge(a1dfd5c6). 할당량 170/300 GB(여유 130 GB ≥ 40). Z 1058128 → afterok G 배열 1058129(0–5) → afterany g_report 1058130 → afterok f_slice 1058132 → f_merge 1058133 → f_atoms 1058134 → afterany f_rest 1058135; H pilot 1058131(afterok Z, X_S1 pass). 대기열 19/20. split은 M0 때 같은 D0 입력으로 이미 만들었다(S_splits_d0d1.json preliminary false).
+- **F-1 accept (11-02 14:1x, f_rest 1058135 f_report exit 3)**: STOP 이유 "D1: F-1 failures 113/8879 = 0.0127 > 0.01". D0는 7 / 4,817 = 0.15 %로 통과.
+  - 실패 종류: D1 ext:B1:engine_gate1 89, ext:B1:parse(dipole 합 불일치) 17, g1feat:spe_fail(xtb Wiberg parse) 6, ext:B6:no_imaginary_frequency 1; D0 engine_gate1 2, parse 1, spe_fail 4. 모두 선례 종류다.
+  - 선례: 같은 feature 코드에서 D1PAIR G1 1.14 %, LADDER F0 1.42 %, D1-G2 1.36 %(사용자 승인, analysis/d1_g2/results/F_DECISION.md). D1 1.27 %는 그 범위 안이다.
+  - 사용자 정책(spec STOP에서 추천안)에 따라 받아들인다. wave D를 `p --accept=F-1`, `report --accept=F-1`로 낸다. 실패한 반응(D1 113, D0 7)은 rung geo에 feature가 없어 그 짝이 빠진다(편차로 기록).
+  - G: 13,696 모두 .done, order/Freq 실패 0, B6 계산 불가 1(D1). Z: 폴더 13,696, coord_rule mean3 13,448 / mean_pass 24 / seed0 7 / seed1 18 / seed2 129 / g2c_fallback 70, stop false.
+- **11-02 14:2x 제출**: H pilot 1058131(44/50 진행 중) → afterok H batch 배열 1058188(0–9, 64코어) → afterany h_build+h_report 1058189 → afterok wave D(p --accept=F-1, p_report, report --accept=F-1) 1058190. pilot이 gate에서 멈추면 afterok로 뒤가 취소된다.
+- **H·P 통과 (11-02 21:3x–21:56)**: H batch 10개 모두 exit 0. h_build·h_report 통과(stop false). HF 실측 3,909 core-h(D1 1,651, D0 2,258; 반응 중앙값 0.22 core-h). 할당 기준 4,009 core-h로 pilot 예측 3,570보다 약 10 % 많다. 상한 4,000 core-h는 pilot 예측에 거는 gate라서 실측이 9 core-h 넘은 것은 기록만 한다.
+  - P(p --accept=F-1, p_report, report --accept=F-1) 모두 exit 0, P_geo_report stop false. rung geo로 쓸 수 있는 반응 13,568(참고: g2 8,499, dft 9,130 D1).
+  - D0 짝: 전체 3,804 → 라벨 ok 3,565 → geo로 쓸 수 있는 짝 3,219(fold별 653/655/642/628/641; sibling 2,146, dipole 688, leaf 385). 한쪽 끝에 G2c TS가 없어서 잃은 짝 335, feature가 없어서 잃은 짝 11.
+  - 학습 전 검사 ctests 제출: GPU 1058844, CPU 1058845, merge 1058846.
