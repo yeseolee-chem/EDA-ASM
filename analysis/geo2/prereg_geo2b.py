@@ -16,7 +16,7 @@ CLI (exit 0 = done, 2 = not ready (an input missing; nothing written), 3 = STOP 
         != P_build_geo outputs, the D0D1 index not final / not current (d0d1_splits.load_s_splits), Z_report.json
         inputs.d0_folds_sha256 != d0_folds.csv now / the index record (review R-1), F_pairs_cr2.csv !=
         V_report outputs, C_tests_geo.json not all_pass or not run on the code / geo table / labels now, a stage-3 smoke
-        not passed, the GPU projection not computed or > 160 GPU-h, a stage-3 unit / prediction / evaluation file
+        not passed, the GPU projection not computed or > 200 GPU-h, a stage-3 unit / prediction / evaluation file
         already exists, a tracked analysis/d1_ladder/results file differs from git HEAD, a spec heading missing.
   python prereg_geo2b.py check   the stage-3 gate (train_atoms / train_xgb gate_prereg_geo2) without training: both files
         tracked and unchanged since HEAD, sha256(md) = md_sha256, rungs = ["geo"], split = "T1D0", need ⊆ inputs_sha256,
@@ -74,7 +74,7 @@ C_TESTS = RES / "C_tests_geo.json"
 S_FOLDS = P_DIR / "results" / "S_folds.csv"
 ARMS, MODELS4, NF = ("S", "SH"), ("AW", "GNN", "TF", "XGB"), 5
 TARGETS = ["d1", "d2", "elst", "pauli", "oi", "disp", "cpcm", "cds", "c_ghost", "barrier"]
-GEO_LIMIT_GPU_H = 160.0                             # GEO1b DECISIONS D0D1 '상한 조정' (GEO2.md 8-4 had 80)
+GEO_LIMIT_GPU_H = 200.0                             # DECISIONS_lad 'M3-cap' 11-02 (D0D1 160 -> 200; GEO2.md 8-4 had 80)
 FU2_DIR = P_DIR / "fu2"
 ESP_DIR = REPO / "analysis" / "espley_xtb_repro"
 CODE = [LAD_DIR / "train_atoms.py", LAD_DIR / "train_xgb.py", LAD_DIR / "lad_common.py", LAD_DIR / "inputs.py",
@@ -379,8 +379,8 @@ def c_tests():
 
 
 def smoke_estimates():
-    """LP-4 (GEO2.md 8-4 / 14 with the 160 GPU-h cap): both stage-3 smoke reports exist (exit 2), stage 3, ok; the atom
-    projection computed and <= 160 GPU-h; STOP otherwise."""
+    """LP-4 (GEO2.md 8-4 / 14 with the 200 GPU-h cap): both stage-3 smoke reports exist (exit 2), stage 3, ok; the atom
+    projection computed and <= 200 GPU-h; STOP otherwise."""
     a, x = LAD_RES / "C_smoke_atoms_geo.json", LAD_RES / "C_smoke_xgb_geo.json"
     for p in (a, x):
         if not p.is_file():
@@ -400,7 +400,7 @@ def smoke_estimates():
             bad.append(f"{name} smoke ok {s.get('ok')} (gate M-1' failed)")
     h = float("nan")
     if e.get("ok") is not True:
-        bad.append(f"estimate_geo not computed ({e.get('why')}): the 160 GPU-h rule cannot be checked")
+        bad.append(f"estimate_geo not computed ({e.get('why')}): the 200 GPU-h rule cannot be checked")
     else:
         try:
             h = float(e.get("geo_gpu_hours"))
@@ -682,7 +682,7 @@ def md_text(D):
     A("- 모델 구조·grid·손실·β 규칙·seed·epoch·patience는 LADDER와 같다(D0 가중치 없음). gate M-1′는 모든 학습에서 시험 짝 "
       "200개와 D0 학습 짝 200개 모두에 대해 확인한다(GB-5 / XG-B4).")
     A("")
-    A("### 3-4. 학습 단위와 실행 (GEO2.md 8-1·8-4절 그대로; 상한은 D0D1 결정으로 160 GPU시간)")
+    A("### 3-4. 학습 단위와 실행 (GEO2.md 8-1·8-4절 그대로; 상한은 D0D1 결정으로 200 GPU시간(11-02 M3-cap))")
     a += quote(sec("### 8-1."))
     A(">")
     a += quote(sec("### 8-4."))
@@ -738,6 +738,11 @@ def md_text(D):
       "진단은 설명용이며 학습 규칙을 바꾸지 않는다.")
     A("- 비교 모델이 없어 D0가 D1 정확도를 돕는지 해치는지는 잴 수 없다. 기존 LADDER g2/dft 수치는 다른 구조에서 나온 것이라 "
       "통제된 비교가 아니다.")
+    A("- F-1 승인(11-02, `results/DECISIONS_feat_runtime.md` 'F-1 accept'): rung geo feature 실패 D1 113 / 8,879 = 1.27 % "
+      "(> 1 %, 선례 1.14–1.42 % 안; engine_gate1·parse·spe_fail), D0 7 / 4,817. 사용자 정책(spec STOP에서 추천안)으로 "
+      "`p --accept=F-1`을 썼고, 이 120반응은 feature가 없어 그 짝이 rung geo에서 빠진다(편차).")
+    A("- M3 GPU 상한(11-02, `results/DECISIONS_lad.md` 'M3-cap'): smoke 예상 162.2 GPU-h가 설계 상한 160을 넘어 200으로 "
+      "올렸다. 모델·grid·epoch·seed·짝은 그대로다.")
     A("")
     A("### 6-1. 설계가 받아들인 위험 (그대로)")
     a += quote(D["design"]["risks_accepted"])
@@ -805,7 +810,7 @@ def md_text(D):
     A("### 8-2. GEO2.md 13절 (HPC 규칙, 그대로)")
     a += quote(sec("## 13."))
     A("")
-    A("### 8-3. GEO2.md 14절 (결정 기록과 STOP, 그대로; M3 상한은 D0D1로 160 GPU시간)")
+    A("### 8-3. GEO2.md 14절 (결정 기록과 STOP, 그대로; M3 상한은 D0D1로 200 GPU시간(11-02 M3-cap))")
     a += quote(sec("## 14."))
     A("")
     A("- **원칙:** 결과를 본 뒤 선택 규칙·짝 집합·분할을 바꾸지 않는다. 바꾸면 이탈로 기록한다(GEO2.md 13절).")

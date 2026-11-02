@@ -82,3 +82,9 @@ RUNBOOK_lad.md, RUNBOOK_tests.md}`, 이 파일. 출발점은 브랜치 geo2(0a91
 - **연결 S-8** (m-7, `prereg_geo2b.py` md 6절): D0 키의 `|s3d:` 한계(Coley 라벨 기준 구조에서 나온 입체로 D0 G2c 기준을 묶음; 21,092조각 formula·WL 불일치 0)와 P_geo_report `d0_reference_s3d` 개수를 알려진 한계 목록에 넣었다(DECISIONS_feat 연결 S-8).
 - **연결 S-9** (m-8, `prereg_geo2b.py` `bullet`·`section`): geo1b 병합 뒤 같은 머리의 bullet이나 제목이 둘 이상일 수 있으므로 첫 번째 것을 쓰고, 없을 때만 STOP.
 - 연결 뒤 검사: `lad_selftest.py splits`(reactot) all_pass true(production_refuses_preliminary: build exit 2), `lists`(reactot) all_pass true, `xgb`(env_espley) 7/7 PASS(gate_p_geo_rules 포함), `atoms`(env_d1fu2) all_pass true(gate_p_geo_rules 포함); 고친 파일 py_compile 통과(reactot, env_d1fu2, D1 run env py 3.9); `bash -n m3_launch.sh` 통과(m3_launch.sh는 고치지 않음). 시험 폴더 `$GEO2B/tests_lad/gate_p_*`는 시험이 지운다.
+
+## M3-cap (11-02 23:1x, prereg STOP → 추천안)
+- `prereg_geo2b.py write`(job 1058903)가 STOP했다: "smoke projection 162.2 GPU-h > 160.0". C tests(1058844–46)는 모두 통과했고, GPU 예상은 LADDER 기준 rung 두 개로 환산한 값 중 큰 쪽이다(g1 기준 110.7, dft 기준 162.2 GPU-h; 9 worker에서 가장 바쁜 조각 기준).
+- 160 GPU-h는 사용자가 정한 값이 아니라 D0D1 설계 때 내가 정한 상한이다(GEO2.md 8-4의 80을 D0 추가에 맞춰 올린 값). 예상치가 1.4 % 넘었을 뿐이고, 계정 GPU 한도(12)와 일정에 문제가 없다.
+- 추천안: 상한을 200 GPU-h로 올리고 나머지(모델, grid, epoch, seed, 짝)는 그대로 둔다. prereg_geo2b.py의 GEO_LIMIT_GPU_H만 바꿨다. 이 파일은 C tests의 코드 sha 대상(C_CODE_REQ)이 아니어서 C tests를 다시 돌릴 필요가 없다.
+- train_atoms.py의 GEO_LIMIT_GPU_H(160, smoke 보고의 over_limit 표시용)는 바꾸지 않았다. 바꾸면 C tests 코드 sha가 달라져 다시 돌려야 하기 때문이다. 그래서 C_smoke_atoms_geo.json / C_tests_geo.json에는 over_limit true(160 기준)가 기록돼 있고, 판정은 prereg가 200 기준으로 한다.
