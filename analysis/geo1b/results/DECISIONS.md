@@ -68,3 +68,23 @@ GEO1의 R-user·R-once·R-select·R-lpt·U-0·D-1·I-1 결정을 그대로 이�
   - tests.py synth: U-1..U-7s 모두 PASS(1055983, U-7s L1 0.0378 → 0.0067).
   - 예비 d0_pairs.py build 통과(1055984): g2_source d0_g2_orig, status ok_preliminary, stop false.
   - fold는 G2와 무관해 그대로 둔다(동결). pair는 select_g2c.py build 뒤 d0_pairs.py를 다시 돌려 만든다. GEO1b data.py는 예비 출력을 거부한다.
+- **0-disk-2 (11-01 10:1x, design step 0)**: 계산 노드에서는 mmlsquota가 돌지 않는다(job 1056679: "GPFS is down on this node"; 그래서 검사가 통과로 지나갔다). login에서 읽기만 하는 조회로 다시 보았다: 266 / 300 GB(hard limit 310), 여유 34 GB로 design 기준 40 GB보다 적다.
+  - GEO1b D·U·R은 그대로 진행한다. GEO1 scratch 전체가 750 MB였으므로 GEO1b가 쓰는 양은 1 GB 안팎이다.
+  - GEO2b의 G·F·H(예상 20–30 GB)는 공간을 정리한 뒤 낸다. 지울 대상은 사용자에게 묻는다(삭제는 먼저 묻기). 크기 측정 job 1056689.
+- **D·U·R 시작 (11-01 10:07–10:17)**: d0_pairs.py 최종 build 통과(g2_source g2c, preliminary false, folds_rewritten false; 짝 3,804, ok 3,565). data.py 음성 시험은 기대대로 exit 3('no valid g2c.json', 'C_select chosen ... .done = False').
+  - D 통과: n 14,526, g1_used false, d0_overlap 5, G2 D1 8,879 / D0 4,822(G2c 수), 원자 순서 불일치 0, D1 n_nan 225 / 8,879 = 0.025(≤ 0.05).
+  - baseline(G2c 그대로): 모든 para 짝 1,733, 시험 반응 8,639, 비율 0.1471, 중앙값 0.0218 Å. 단일 run 참고값(1,667, 0.1338, 0.0218)과 같은 수준.
+  - U: synth U-1..U-7s PASS, data U-0, U-8b(단일 run 회귀 포함), U-9b(D0 예측 4,817 = G2c가 있는 비겹침 D0), U-10(0.975) PASS. U-7은 보고만(0.915).
+  - R: r_launch(GEO_R_MAX_EP=300, PATIENCE=100000, ONCE=1)가 10:17부터 tune을 내고 있다.
+- **0-disk-2 사용자 답 (11-01 11:1x)**: 측정 결과 큰 항목은 G2c 58 GB(선택 사본 d1 10 + d0 8.8 GB, r1·r2 root 39 GB), D1_build/nurion tar 97 GB(D1 build 원본), conda 22 GB, ORCA 17 GB다. 사용자 선택은 "지금은 정리 안 함"이다. GEO2b H 직전에 다시 묻는다.
+- **0-disk-2 해결 (11-01 14:3x)**: 사용자가 D1_build/nurion 압축본 31개(103.5 GB)를 로컬(C:\Users\Public.DESKTOP-9VRNG1A\Desktop\ysl\nurion)로 내려받았다. sha256 31/31 OK를 확인한 뒤, 사용자가 클러스터 쪽 압축본을 직접 지웠다(자동 권한 검사가 내 삭제를 막았다). 목록 ~/cleanup_20261101_nurion.txt. manifest·filelist·sha256·index·.unpack은 남겼다.
+  - 할당량 170 / 300 GB, 여유 130 GB. GEO2b G·F·H(20–30 GB)를 막는 조건이 풀렸다.
+  - 이 압축본을 읽던 예전 단계(d1_extract_jobs.py, d1_hf prep.py run, LADDER refs_v 입력)는 다시 돌릴 수 없다. GEO1b·GEO2b는 이를 읽지 않는다.
+- **R 끝 (11-02 09:15)**: tune 20, select 5, final 15(final 하나 1.8–5.3시간), gb_eval(E1) 모두 exit 0. E1: 모델 0.239 대 G2c 그대로 0.147(모든 para 짝 1,733), 차이 CI [+0.053, +0.134]. D0 4,817반응을 E_rxn_d0.csv에 썼다.
+  - Y는 select 5개가 끝난 뒤 바로 냈어야 했다. 04:09–09:16 사이 매시 점검이 돌지 않아(세션이 쉬는 중) 09:16에 냈다(gb_y_plan 1057783 → gb_y_s0..2 1057784–86). E2 gb_rmsd 1057787도 같이 냈다.
+- **E2 STOP → 추천안 (11-02 09:3x, GEO1B.md 3-4 "sanity_fail_share > 0.02이면 STOP")**: E2(job 1057787) sanity_fail_share = 0.0255(D1 시험 220 / 8,639; close_contact 198, bond_graph_changed 21, forming_distance_range 1). GEO2b build_geo의 D1 대체 상한 2 %를 넘는다.
+  - 원인 진단(results/E2_sanity_diag.json, 읽기만): close contact 198 중 194가 N–N(0.63–0.91 Å)이다. dipole별 실패율은 azide 195 / 1,860(10.5 %), azomethine ylide 21 / 1,494, nitrile oxide 3, nitrone 1, carbonyl ylide 0이다. 모델이 azide 말단 N–N을 지나치게 짧게 만든다.
+  - seed별 실패율은 2.8 % / 4.7 % / 1.2 %로 seed마다 다르다. 실패한 220개 중 165개는 sanity를 통과하는 seed가 하나 이상 있다. 통과하는 seed가 하나도 없는 반응은 55개(0.64 %)다. D0 실패율은 0.58 %(28 / 4,817)로 상한 안이다. G2c 자체가 sanity에서 걸리는 경우는 D1 3, D0 2다.
+  - 추천안(사용자 지시: 분기마다 추천안): GEO2b geo rung의 좌표 규칙을 "3 seed 평균"에서 "sanity 순서 규칙"으로 바꾼다. (1) 3 seed 평균이 통과하면 그것을 쓴다. (2) 통과 못 하면 sanity를 통과한 seed들의 평균을 쓴다(2개 이상일 때, 평균이 다시 통과해야 함). (3) 그것도 안 되면 통과한 seed 중 번호가 가장 낮은 하나를 쓴다. (4) 하나도 없으면 G2c TS로 대체한다(지금 규칙).
+  - 이유: 라벨을 쓰지 않는 규칙(모델 출력과 G2c만 봄)이라 배포 때도 쓸 수 있다. D1 대체는 2.55 %에서 약 0.6 %로 줄어 2 % 상한을 바꾸지 않아도 된다. azide 가족 안에서 보정 구조와 G2c 구조가 섞이는 것(10.5 %)도 줄어든다. 에너지 결과를 보기 전에 정한다.
+  - GEO1b E1·E2 숫자는 3 seed 평균 그대로 보고한다(설명용). 이 규칙은 GEO2b build_geo(Z)에서만 쓰고, 각 반응이 어떤 후보를 썼는지 Z_status에 기록한다.
