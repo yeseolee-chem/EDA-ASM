@@ -12,17 +12,23 @@ Targets: D1 = the 9,266 rows of labels_d1_g2.json (uid D1_<rid>, rid >= 1000001,
 D0 = the status-ok rows of labels_all.json without the 5 D-1 overlaps of d0_folds.csv (uid D0_<rid>, rid 0-5973,
 job_id D0G2_<rid:04d>, label TS = the Coley profile TS full_dataset_profiles/<rid>/<ts_file>, as GEO1b data.py).
 D1 and D0 rxn ids are disjoint, so both datasets share $GEO2/geo_final/<rxn_id>/.
-Each reaction gets exactly one TS: the 3-seed mean of the GEO1b 'final' model of the fold whose test set holds it
+Each reaction gets exactly one TS from the 3 seeds of the GEO1b 'final' model of the fold whose test set holds it
 (folds 0-4: final_f<k>_s<seed>.pkl = D1 T1 fold k + D0 fold k; D1 T1 fold -1: final_fm1_s<seed>.pkl of train_m1.py;
-D0 has no fold -1). rel1 / rel2 = byte copies of the G2c folder whose TS was the GEO1b input (decision A-G2c). A
-structure that fails the sanity rules (4-2) is replaced by that G2c TS (deployable fallback, flagged).
-Gates (STOP), D1 and D0 checked separately: forming-distance errors of the mean coordinates = GEO1b E_rxn.csv (D1) /
-E_rxn_d0.csv (D0) to 1e-6 A, and the file rows = exactly the reactions built from folds 0-4 (D1 fold -1 = fm1 is in no
-file); fallback share <= 2 %. Also STOP: a reaction predicted by two folds, a D0 prediction in another fold than
+D0 has no fold -1). rel1 / rel2 = byte copies of the G2c folder whose TS was the GEO1b input (decision A-G2c).
+Coordinate rule (DECISIONS_ZE E2-rule; label free, deterministic): the first candidate that passes the sanity rules
+(4-2) is used: 1 mean3 = the 3-seed mean; 2 mean_pass = the mean of the seeds that pass on their own (>= 2 of them);
+3 seed<k> = the passing seed of lowest index; 4 g2c_fallback = that G2c TS (deployable fallback, flagged). result.json
+and Z_status.csv record coord_rule and the seeds used; Z_report.json counts them per dataset.
+Gates (STOP), D1 and D0 checked separately: forming-distance errors of the mean3 coordinates = GEO1b E_rxn.csv (D1) /
+E_rxn_d0.csv (D0) to 1e-6 A (rows of rule mean3 only: the files hold the 3-seed mean), every written ts.xyz = the
+coordinates of its coord_rule rebuilt from the seeds (or the G2c TS) to 1e-9 A, and the file rows = exactly the
+reactions built from folds 0-4 whatever their rule (D1 fold -1 = fm1 is in no file); fallback (rule 4) share <= 2 %.
+Also STOP: a reaction predicted by two folds, a D0 prediction in another fold than
 d0_folds.csv (checked before any write), a prediction that is no target, G2c folders that disagree with C_select.csv /
 g2c.json, a C_select.csv other than the one GEO1b trained on (D_dataset_report.json g2_input.c_select_sha256), a .done
 geo_final folder of a target that is not built now (stale).
-Idempotent: an existing .done folder whose sources are unchanged is kept. results/Z_report.json is first rewritten with
+Idempotent: an existing .done folder whose sources (incl. coord_rule and its seeds) are unchanged is kept; other
+sources = STOP. results/Z_report.json is first rewritten with
 stop true + running true and gets its final content (running false, complete true) last; a STOP inside the run rewrites
 it with stop true, running false and the reason. A killed run leaves running true (readers: exit 2, resubmit Z), so a
 killed or stopped run never leaves a passing report.
@@ -49,9 +55,11 @@ BOND_IN, BOND_OUT = 1.10, 1.40   # G2 bond (d < 1.10 sum r) must stay < 1.40 sum
 FORM_RANGE = (1.4, 4.5)     # forming distances (A); 4.5 = GEO1 decision I-1 (11 asynchronous label TSs 4.02-4.36 A)
 FALLBACK_MAX = 0.02         # spec 4-3, per dataset (design step 5)
 E_RXN_TOL = 1e-6            # A, forming-distance errors vs GEO1b E_rxn.csv / E_rxn_d0.csv
+WRITTEN_TOL = 1e-9          # A, written ts.xyz vs the coordinates of its coord_rule (xyz_text writes 10 decimals)
+COORD_RULES = ("mean3", "mean_pass") + tuple(f"seed{s}" for s in C.SEEDS) + ("g2c_fallback",)   # E2-rule order
 SRCS = ("D1", "D0")
 E_RXN_FILE = {"D1": "E_rxn.csv", "D0": "E_rxn_d0.csv"}      # GEO1b evaluate.py (D0: GB-eval-d0, same columns)
-Z_FIELDS = ["rxn_id", "job_id", "src", "status", "source", "fallback", "reason", "g2c"]
+Z_FIELDS = ["rxn_id", "job_id", "src", "status", "source", "fallback", "reason", "g2c", "coord_rule", "coord_seeds"]
 D_REPORT = C.GEO1_RES / "D_dataset_report.json"            # GEO1b data.py: g2_input.c_select_sha256 (the G2c it read)
 Z_REPORT = C.RES / "Z_report.json"
 
@@ -76,7 +84,8 @@ def c_select_vs_geo1b():
 
 
 def load_preds():
-    """uid -> (mean xyz, source tag, pkl sha256 list). Folds 0-4 and fold -1; seed sets must agree."""
+    """uid -> (seed xyz stack [seed (C.SEEDS order), atom, 3], source tag, pkl sha256 list). Folds 0-4 and fold -1; seed
+    sets must agree."""
     out = {}
     files = {f"f{k}": [C.GEO1 / "preds" / f"final_f{k}_s{s}.pkl" for s in C.SEEDS] for k in FOLDS}
     files["fm1"] = [C.GEO1 / "preds" / f"final_fm1_s{s}.pkl" for s in C.SEEDS]
@@ -94,7 +103,7 @@ def load_preds():
         for u in parts[0]:
             if u in out:
                 C.stop(f"{u} predicted by two folds ({out[u][1]} and {tag})")
-            out[u] = (np.mean([np.asarray(p[u], float) for p in parts], axis=0), tag, shas)
+            out[u] = (np.array([np.asarray(p[u], float) for p in parts]), tag, shas)
     return out
 
 
@@ -123,6 +132,54 @@ def sanity(syms, X, Xg2, pairs):
     if d.min() < FORM_RANGE[0] or d.max() > FORM_RANGE[1]:
         return False, "forming_distance_range", info
     return True, "", info
+
+
+def choose_coords(syms, S3, Xg2, pairs):
+    """E2-rule (DECISIONS_ZE; GEO1b DECISIONS 'E2 STOP -> 추천안'; label free, deterministic): the first candidate that
+    passes sanity() is used: 1 mean3 = the 3-seed mean; 2 mean_pass = the mean of the seeds that pass on their own, if
+    >= 2 do (the mean must pass again); 3 seed<k> = the passing seed of lowest index; 4 g2c_fallback = the G2c TS.
+    S3 = seed stack (C.SEEDS order). -> dict(X used, rule, seeds used, mean3 = sanity() of the 3-seed mean, tried model
+    candidates [dict(rule, seeds, ok, reason)], seed_reasons (per seed, '' = pass; None if mean3 passes), info_used)."""
+    m3 = S3.mean(axis=0)
+    s3 = sanity(syms, m3, Xg2, pairs)
+    tried = [dict(rule="mean3", seeds=list(C.SEEDS), ok=s3[0], reason=s3[1])]
+    if s3[0]:
+        return dict(X=m3, rule="mean3", seeds=list(C.SEEDS), mean3=s3, tried=tried, seed_reasons=None, info_used=s3[2])
+    ps = [sanity(syms, S3[i], Xg2, pairs) for i in range(len(C.SEEDS))]
+    why = [v[1] for v in ps]
+    ok_i = [i for i, v in enumerate(ps) if v[0]]
+    if len(ok_i) >= 2:
+        mp = S3[ok_i].mean(axis=0)
+        sp = sanity(syms, mp, Xg2, pairs)
+        used = [C.SEEDS[i] for i in ok_i]
+        tried.append(dict(rule="mean_pass", seeds=used, ok=sp[0], reason=sp[1]))
+        if sp[0]:
+            return dict(X=mp, rule="mean_pass", seeds=used, mean3=s3, tried=tried, seed_reasons=why, info_used=sp[2])
+    if ok_i:
+        i = ok_i[0]
+        tried.append(dict(rule=f"seed{C.SEEDS[i]}", seeds=[C.SEEDS[i]], ok=True, reason=""))
+        return dict(X=S3[i], rule=f"seed{C.SEEDS[i]}", seeds=[C.SEEDS[i]], mean3=s3, tried=tried, seed_reasons=why,
+                    info_used=ps[i][2])
+    return dict(X=Xg2, rule="g2c_fallback", seeds=[], mean3=s3, tried=tried, seed_reasons=why, info_used={})
+
+
+def rule_coords(S3, seeds, Xg2):
+    """the coordinates a coord_rule names, rebuilt from the raw seed stack: the mean of the seeds used (one seed = that
+    seed), or the G2c TS when no seed is used (g2c_fallback)."""
+    return S3[[C.SEEDS.index(s) for s in seeds]].mean(axis=0) if seeds else Xg2
+
+
+def rule_counts(rows):
+    c = Counter(r["coord_rule"] for r in rows)
+    return {k: c[k] for k in COORD_RULES if c[k]}
+
+
+def written_dev(path, syms, X):
+    """max |coordinate difference| (A) of the ts.xyz at path vs X (inf if it is missing or the elements differ)."""
+    if not path.is_file():
+        return float("inf")
+    sw, W = C.read_xyz(path)
+    return float(np.abs(W - X).max()) if list(sw) == list(syms) and W.shape == X.shape else float("inf")
 
 
 def e_sorted(X, lab, pairs):
@@ -242,12 +299,14 @@ def build():
             C.stop(f"{t['uid']}: predicted by {P[t['uid']][1]} but its d0_folds.csv fold is {t['fold']}")
     erxn = {s: read_erxn(s) for s in SRCS}
     rows = []
-    acc = {s: dict(n_fb=0, e_dev=0.0, n_e=0, n_built_not_in_e=0, ids_f04=set()) for s in SRCS}
+    acc = {s: dict(n_fb=0, e_dev=0.0, n_e=0, n_e_not_mean3=0, n_built_not_in_e=0, ids_f04=set(), w_dev=0.0,
+                   n_w=Counter()) for s in SRCS}
     for t in T:
         src, rid, T_, uid = t["src"], t["rid"], t["job"], t["uid"]
         g2 = t["g2"]
         mk, ch = prov[uid]
-        row = dict(rxn_id=rid, job_id=T_, src=src, status="", source="", fallback=False, reason="", g2c=ch)
+        row = dict(rxn_id=rid, job_id=T_, src=src, status="", source="", fallback=False, reason="", g2c=ch,
+                   coord_rule="", coord_seeds="")
         if mk != ".done":
             row.update(status="no_g2")
             rows.append(row)
@@ -256,30 +315,40 @@ def build():
             row.update(status="no_geo1_prediction")
             rows.append(row)
             continue
-        X, tag, shas = P[uid]
+        S3, tag, shas = P[uid]
+        X = S3.mean(axis=0)                                              # the 3-seed mean (= GEO1b E1 / E2 'model')
         syms_l, lab = C.read_xyz(t["lab"])
         syms_g, Xg2 = C.read_xyz(g2 / "ts.xyz")
         if list(syms_g) != list(syms_l):
             C.stop(f"{src} {rid}: G2c ts.xyz element order != label")
         pairs = C.parse_pairs(t["pairs"])
+        cr = choose_coords(syms_l, S3, Xg2, pairs)                       # E2-rule
+        rule, used, Xuse = cr["rule"], cr["seeds"], cr["X"]
+        reason, info = cr["mean3"][1:]                                   # sanity of the 3-seed mean
+        fb = rule == "g2c_fallback"
         a = acc[src]
         if tag != "fm1":                                                 # folds 0-4: must be a row of the E_rxn file
             a["ids_f04"].add(rid)
-        if rid in erxn[src][1]:                                          # consistency with the GEO1b evaluation
+        if rid not in erxn[src][1]:
+            a["n_built_not_in_e"] += 1                                   # D1 fold -1 (no GEO1b test fold): expected
+        elif rule == "mean3":                                            # consistency with the GEO1b evaluation (mean3)
             dev = float(np.abs(e_sorted(X, lab, pairs) - np.array(erxn[src][1][rid])).max())
             a["e_dev"], a["n_e"] = max(a["e_dev"], dev), a["n_e"] + 1
         else:
-            a["n_built_not_in_e"] += 1                                   # D1 fold -1 (no GEO1b test fold): expected
-        ok, reason, info = sanity(syms_l, X, Xg2, pairs)
-        Xuse = X if ok else Xg2
-        a["n_fb"] += 0 if ok else 1
+            a["n_e_not_mean3"] += 1                                      # rules 2-4: the written-coordinate check
+        a["n_fb"] += 1 if fb else 0
+        Xref = rule_coords(S3, used, Xg2)                                # rebuilt from the seeds for the written check
+        row.update(coord_rule=rule, coord_seeds=" ".join(str(s) for s in used))
         out = C.GEO_FINAL / str(rid)
         src_sha = {"g2_ts": C.sha256(g2 / "ts.xyz"), "g2_rel1": C.sha256(g2 / "rel1.xyz"),
-                   "g2_rel2": C.sha256(g2 / "rel2.xyz"), "g2c_chosen": ch, "pkl": shas}
+                   "g2_rel2": C.sha256(g2 / "rel2.xyz"), "g2c_chosen": ch, "pkl": shas, "coord_rule": rule,
+                   "coord_seeds": used}
         if C.marker(out) == ".done":
             old = json.loads((out / "result.json").read_text())
-            if old.get("sources") == src_sha and old.get("fallback") == (not ok):
-                row.update(status="kept", source=tag, fallback=not ok, reason=reason)
+            if old.get("sources") == src_sha and old.get("fallback") == fb:
+                a["w_dev"] = max(a["w_dev"], written_dev(out / "ts.xyz", syms_l, Xref))
+                a["n_w"][rule] += 1
+                row.update(status="kept", source=tag, fallback=fb, reason=reason)
                 rows.append(row)
                 continue
             C.stop(f"{out} exists with other sources: move it aside explicitly (never automatic)")
@@ -288,18 +357,23 @@ def build():
         if tmp.exists():
             shutil.rmtree(tmp)
         tmp.mkdir(parents=True)
-        (tmp / "ts.xyz").write_text(C.xyz_text(syms_l, Xuse, f"geo TS {src} rxn {rid} "
-                                               f"({'G2c fallback: ' + reason if not ok else 'GEO1b ' + tag + ' 3-seed mean'})"))
+        note = ("G2c fallback: " + reason if fb else f"GEO1b {tag} 3-seed mean" if rule == "mean3" else
+                f"GEO1b {tag} {rule} seeds {row['coord_seeds']} (E2-rule; 3-seed mean: {reason})")
+        (tmp / "ts.xyz").write_text(C.xyz_text(syms_l, Xuse, f"geo TS {src} rxn {rid} ({note})"))
         for k in (1, 2):
             shutil.copyfile(g2 / f"rel{k}.xyz", tmp / f"rel{k}.xyz")
         heavy = [i for i, s in enumerate(syms_l) if s != "H"]
-        res = dict(rxn_id=rid, job_id=T_, src=src, uid=uid, geom="geo", source=f"GEO1b {tag} seeds {list(C.SEEDS)} mean",
+        res = dict(rxn_id=rid, job_id=T_, src=src, uid=uid, geom="geo",
+                   source=f"G2c TS ({ch}; E2-rule g2c_fallback)" if fb else f"GEO1b {tag} seeds {used} mean",
                    fold_tag=tag, d0_fold=t["fold"], g2c_chosen=ch, g2_folder=str(g2), label_ts=str(t["lab"]),
-                   fallback=not ok, fallback_reason=reason, sanity=info, sources=src_sha,
+                   coord_rule=rule, coord_seeds=used, coord_tried=cr["tried"], seed_sanity_reasons=cr["seed_reasons"],
+                   fallback=fb, fallback_reason=reason if fb else "", mean3_sanity_reason=reason, sanity=info,
+                   sanity_used=cr["info_used"], sources=src_sha,
                    formed_pairs_label=[list(p) for p in pairs], d_form_geo=C.form_d(X, pairs).tolist(),
                    d_form_used=C.form_d(Xuse, pairs).tolist(), d_form_g2=C.form_d(Xg2, pairs).tolist(),
                    d_form_label=C.form_d(lab, pairs).tolist(),
                    rmsd_heavy_label_geo=C.kabsch_rmsd(X[heavy], lab[heavy]),
+                   rmsd_heavy_label_used=C.kabsch_rmsd(Xuse[heavy], lab[heavy]),
                    rmsd_heavy_label_g2=C.kabsch_rmsd(Xg2[heavy], lab[heavy]),
                    status="ok", written=time.strftime("%Y-%m-%dT%H:%M:%S"))
         (tmp / "result.json").write_text(json.dumps(res, indent=1, default=C._jsonable))
@@ -307,10 +381,13 @@ def build():
         if out.exists():
             shutil.rmtree(C.assert_path(out))
         tmp.replace(out)
-        row.update(status="ok", source=tag, fallback=not ok, reason=reason)
+        a["w_dev"] = max(a["w_dev"], written_dev(out / "ts.xyz", syms_l, Xref))
+        a["n_w"][rule] += 1
+        row.update(status="ok", source=tag, fallback=fb, reason=reason)
         rows.append(row)
     rows += [dict(rxn_id=rid, job_id=C.d0_job_id(rid), src="D0", status="d0_overlap_excluded", source="", fallback=False,
-                  reason="GEO1 rule D-1 (fold -9, in no set)", g2c="") for rid, f in sorted(d0f.items()) if f["overlap"]]
+                  reason="GEO1 rule D-1 (fold -9, in no set)", g2c="", coord_rule="", coord_seeds="")
+             for rid, f in sorted(d0f.items()) if f["overlap"]]
     stops, by_src = [], {}
     stale = sorted(r["rxn_id"] for r in rows if r["status"] not in ("ok", "kept")
                    and C.marker(C.GEO_FINAL / str(r["rxn_id"])) == ".done")
@@ -333,13 +410,24 @@ def build():
                          f"{extra[:5]}): stale GEO1b evaluation, pickles or G2c root")
         if n_ok and share > FALLBACK_MAX:
             stops.append(f"{s}: fallback rate {share:.3f} > {FALLBACK_MAX}")
+        if a["w_dev"] > WRITTEN_TOL:
+            stops.append(f"{s}: a written ts.xyz differs from the coordinates of its coord_rule (max "
+                         f"{a['w_dev']:.2e} A over {sum(a['n_w'].values())} folders; tol {WRITTEN_TOL}): a folder "
+                         f"changed after it was written")
+        built = [r for r in rs if r["status"] in ("ok", "kept")]
         by_src[s] = dict(n_targets=len(rs), n_folders=n_ok, by_status=dict(Counter(r["status"] for r in rs)),
                          by_source=dict(Counter(r["source"] for r in rs if r["source"])), n_fallback=a["n_fb"],
                          fallback_share=share, fallback_max=FALLBACK_MAX,
                          fallback_reasons=dict(Counter(r["reason"] for r in rs if r["fallback"])),
-                         g2c_chosen=dict(Counter(r["g2c"] for r in rs if r["status"] in ("ok", "kept"))),
+                         by_coord_rule=rule_counts(built),
+                         n_rescued=sum(r["coord_rule"] not in ("mean3", "g2c_fallback") for r in built),
+                         mean3_fail_reasons=dict(Counter(r["reason"] for r in built if r["coord_rule"] != "mean3")),
+                         written_check=dict(n_by_rule=dict(a["n_w"]), max_abs_dev_A=a["w_dev"], tol=WRITTEN_TOL),
+                         g2c_chosen=dict(Counter(r["g2c"] for r in built)),
                          e_rxn_check=dict(file=str(C.GEO1_RES / E_RXN_FILE[s]), n=a["n_e"], max_abs_dev_A=a["e_dev"],
-                                          tol=E_RXN_TOL, n_built_not_in_file=a["n_built_not_in_e"],
+                                          tol=E_RXN_TOL, scope="coord_rule mean3 rows (the file = the 3-seed mean)",
+                                          n_in_file_not_mean3=a["n_e_not_mean3"],
+                                          n_built_not_in_file=a["n_built_not_in_e"],
                                           n_file=len(f_ids), n_built_f04_not_in_file=len(miss),
                                           n_file_not_built_f04=len(extra)))
     C.write_atomic(C.RES / "Z_status.csv", C.csv_text(rows, Z_FIELDS))
@@ -348,6 +436,10 @@ def build():
                by_status=dict(Counter(r["status"] for r in rr)), by_source=dict(Counter(r["source"] for r in rr if r["source"])),
                n_fallback=sum(v["n_fallback"] for v in by_src.values()),
                fallback_reasons=dict(Counter(r["reason"] for r in rr if r["fallback"])),
+               by_coord_rule=rule_counts([r for r in rr if r["status"] in ("ok", "kept")]),
+               coord_rule=dict(order=list(COORD_RULES), rule="E2-rule (DECISIONS_ZE): the first candidate that passes "
+                               "sanity: mean3, mean_pass (>= 2 passing seeds, mean passes), the lowest passing seed, "
+                               "g2c_fallback; fallback_share counts g2c_fallback only"),
                e_rxn_check={s: by_src[s]["e_rxn_check"] for s in SRCS}, by_src=by_src, n_d0_overlap_excluded=n_ov,
                n_stale_folders=len(stale),
                layout=dict(root=str(C.GEO_FINAL), folder="<rxn_id> (D1 >= 1000001, D0 0-5973)",

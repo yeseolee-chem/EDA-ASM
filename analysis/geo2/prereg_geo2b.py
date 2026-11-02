@@ -627,8 +627,16 @@ def md_text(D):
         a += json.dumps(compact(D["Y_plan"]), indent=1, ensure_ascii=False, default=str).split("\n")
         A("```")
     A("")
-    A("### 1-3. 상식 검사·대체 규칙·Z gate (GEO2.md 4절 그대로) 와 Z 결과 (`analysis/geo2/results/Z_report.json`)")
+    A("### 1-3. 상식 검사·대체 규칙·Z gate (GEO2.md 4절; 4-1의 좌표 규칙만 아래 E2-rule로 바뀜) 와 Z 결과 "
+      "(`analysis/geo2/results/Z_report.json`)")
     a += quote(sec("## 4."))
+    A("")
+    A("- 좌표 규칙 E2-rule (GEO1b `results/DECISIONS.md` 'E2 STOP → 추천안', `results/DECISIONS_ZE.md` E2-rule; 라벨을 "
+      "쓰지 않음, 에너지 결과를 보기 전에 정함): 반응마다 4-2 상식 검사를 통과하는 첫 후보를 쓴다. (1) 3 seed 평균(mean3), "
+      "(2) 혼자 통과하는 seed가 2개 이상이면 그 평균(mean_pass, 평균도 통과해야 함), (3) 통과하는 seed 중 번호가 가장 낮은 "
+      "하나(seed<k>), (4) G2c TS(g2c_fallback, `fallback: true`). 대체 비율 ≤ 2 %는 (4)만 센다. E_rxn 대조(1e-6 Å)는 "
+      "mean3 반응에만 하고, 쓴 ts.xyz = 그 규칙의 좌표(1e-9 Å)는 모든 반응에서 본다. 반응별 규칙은 Z_status.csv "
+      "`coord_rule`·`coord_seeds`, 개수는 아래 Z_report `by_coord_rule`.")
     A("")
     A("```json")
     a += json.dumps(D["Z_report"], indent=1, ensure_ascii=False, default=str).split("\n")

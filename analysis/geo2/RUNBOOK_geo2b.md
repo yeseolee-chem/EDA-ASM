@@ -98,7 +98,9 @@ cd $REPO && bash analysis/geo2/m3_launch.sh splits
   `results/Z_report.json` stop false, running false, complete true; `results/Z_status.csv`; `$GEO2B/geo_final/<rxn_id>/`.
   Exit 2 = an upstream file missing (nothing written: M1 / GEO1b not finished). While it runs (or if it was killed)
   Z_report says running true: every reader waits (exit 2). STOP (exit 3, Z_report stop true, running false, reason):
-  E_rxn reproduction, fallback > 2 % per dataset, C_select.csv != the one GEO1b read (연결 S-6), etc.
+  E_rxn reproduction (mean3 rows), a written ts.xyz != its coord_rule coordinates, fallback (g2c_fallback only) > 2 %
+  per dataset, C_select.csv != the one GEO1b read (연결 S-6), etc. Coordinates follow the E2-rule (DECISIONS_ZE:
+  mean3, else mean_pass, else the lowest passing seed, else G2c); Z_status.csv `coord_rule` / `coord_seeds` per reaction.
 - splits: `results/S_splits_d0d1.json` all_pass, preliminary false; exit 2 while the GEO1b report is preliminary (연결 S-4).
 
 ## 4. Inputs after Z and T (RUNBOOK_feat 3-5)

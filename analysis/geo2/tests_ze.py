@@ -3,8 +3,10 @@
 
   python tests_ze.py z   build_geo.py on a synthetic D1 + D0 fixture (60 + 62 reactions) in a throwaway directory,
                          run as a subprocess with the test-only root overrides of geo2_common: layout, idempotent rerun,
-                         every STOP path (stopped report: running false), upstream files missing (exit 2, nothing
-                         written), a crash inside the run -> results/Z_tests_synth.json   (GPU env or D1 run env: numpy only)
+                         the E2-rule coordinate candidates (mean3 / mean_pass / seed<k> / g2c_fallback, the E_rxn scope,
+                         the written-coordinate check, a rule change on rerun), every STOP path (stopped report: running
+                         false), upstream files missing (exit 2, nothing written), a crash inside the run
+                         -> results/Z_tests_synth.json   (GPU env or D1 run env: numpy only)
   python tests_ze.py e   the D0 part of eval_d0d1.py (unit records, prediction checks, D0 frames / metrics / bootstrap,
                          load_d0 final rules E-9) on synthetic frames -> results/E_tests_synth.json   (any pandas env)
 Exit 0 = every check passed, 3 = a check failed. The throwaway directory (tempfile) is removed at the end.
@@ -79,15 +81,31 @@ def fixture(root, mods=()):
     sel, lab1, lab0, d0rows, erxn, erxn0 = [], [], [], [], [], []
     exp = dict(D1={}, D0={})
 
-    def reaction(src, rid, tag, g2c, fallback=False, predict=True):
+    def reaction(src, rid, tag, g2c, fallback=False, predict=True, rescue=None):
         G2 = BASE @ rot(rng).T + rng.normal(0, 3, 3) + rng.normal(0, 0.02, BASE.shape)
         lab = (G2 + rng.normal(0, 0.03, BASE.shape)) @ rot(rng).T + rng.normal(0, 3, 3)       # other frame
         Rl = np.linalg.lstsq(np.c_[lab, np.ones(6)], np.c_[G2, np.ones(6)], rcond=None)[0]   # map label -> G2 frame
         lab_g2 = np.c_[lab, np.ones(6)] @ Rl
         seeds = [lab_g2[:, :3] + rng.normal(0, 0.01, BASE.shape) for _ in range(3)]
-        if fallback:
+        rule, used = ("g2c_fallback", []) if fallback else ("mean3", [0, 1, 2])            # E2-rule expected
+        if fallback:                                              # rule 4: no seed passes
             for s in seeds:
                 s[1] = s[0] + np.array([0.3, 0.0, 0.0])                                      # close contact
+        if rescue == "mean_pass":                                 # rule 2: seed 0 breaks C0-N1 so far that the 3-seed
+            nb = (seeds[1][1] + seeds[2][1]) / 2                  # mean puts N1 on C0; seeds 1, 2 and their mean pass
+            seeds[0][1] = seeds[0][0] - 2 * (nb - seeds[0][0])
+            rule, used = "mean_pass", [1, 2]
+        elif rescue == "one_pass":                                # rule 3: only seed 1 passes (0, 2 close contacts)
+            for k in (0, 2):
+                seeds[k][1] = seeds[k][0] + np.array([0.3, 0.0, 0.0])
+            rule, used = "seed1", [1]
+        elif rescue == "pass_mean_fails":                         # rule 3 after rule 2 fails: seeds 0, 2 pass with H5
+            for k, sg in ((0, 1.0), (2, -1.0)):                   # on opposite sides of C4 (their mean puts H5 on C4),
+                s = seeds[k]                                      # seed 1 close contact
+                ay = s[1] - (s[0] + s[2]) / 2
+                s[5] = s[4] + sg * 1.13 * ay / np.linalg.norm(ay)
+            seeds[1][1] = seeds[1][0] + np.array([0.3, 0.0, 0.0])
+            rule, used = "seed0", [0]
         folder = root / "g2c" / src.lower() / "g2_final" / str(rid)
         folder.mkdir(parents=True)
         sel.append(dict(src=src.lower(), rxn_id=rid, chosen=g2c, n_done=1 if g2c else 0))
@@ -109,14 +127,17 @@ def fixture(root, mods=()):
             if tag != "fm1":
                 (erxn if src == "D1" else erxn0).append(dict(rxn_id=rid, core="x", e_short_model=repr(float(e[0])),
                                                              e_long_model=repr(float(e[1])), abs_max=0, bin="low"))
-            exp[src][rid] = dict(mean=mean, g2=G2, fallback=fallback, tag=tag, g2c=g2c)
+            want = G2 if fallback else np.mean([seeds[k] for k in used], axis=0)
+            exp[src][rid] = dict(mean=mean, g2=G2, fallback=fallback, tag=tag, g2c=g2c, rule=rule, used=used, want=want)
         return lab
 
+    resc1 = {13: "mean_pass", 24: "mean_pass", 20: "one_pass", 27: "pass_mean_fails"}   # D1 i (24 = fold -1)
     for i in range(60):                                           # D1: T1 folds -1..4, 2 without G2c, 1 unpredicted
         rid, job = 1000001 + i, f"T{i + 1:05d}"
         fold = i % 6 - 1
         g2c = "" if i in (58, 59) else ("orig", "r1", "r2")[i % 3]
-        lab = reaction("D1", rid, "fm1" if fold < 0 else f"f{fold}", g2c, fallback=i == 7, predict=i != 57)
+        lab = reaction("D1", rid, "fm1" if fold < 0 else f"f{fold}", g2c, fallback=i == 7, predict=i != 57,
+                       rescue=resc1.get(i))
         (root / "d1_jobs" / job).mkdir()
         (root / "d1_jobs" / job / "ts.xyz").write_text(xyz(SYMS, lab))
         lab1.append(dict(job_id=job, rxn_id=rid, formed_pairs_ts=PAIRS))
@@ -125,7 +146,8 @@ def fixture(root, mods=()):
         ov = rid >= 60
         fold = -9 if ov else rid % 5
         g2c = "" if rid == 59 else ("orig", "r2")[rid % 2]
-        lab = reaction("D0", rid, f"f{fold}", g2c, fallback=rid in (5, 6)[:n_fb0], predict=not ov)
+        lab = reaction("D0", rid, f"f{fold}", g2c, fallback=rid in (5, 6)[:n_fb0], predict=not ov,
+                       rescue="mean_pass" if rid == 8 else None)
         ts = f"TS_{rid}_x.xyz"
         (root / "prof" / str(rid)).mkdir()
         (root / "prof" / str(rid) / ts).write_text(xyz(SYMS, lab))
@@ -150,6 +172,11 @@ def fixture(root, mods=()):
         erxn.pop(0)
     if "e_rxn_extra" in mods:                                     # D0 59 (no G2c, not built) listed in E_rxn_d0.csv
         erxn0.append(dict(erxn0[0], rxn_id=59))
+    if "e_rxn_rescued" in mods:                                   # E2-rule scope: the row of the mean_pass reaction
+        r = next(r for r in erxn if r["rxn_id"] == 1000014)       # 1000014 is not compared (no STOP)
+        r["e_short_model"] = repr(float(r["e_short_model"]) + 1e-4)
+    if "e_rxn_missing_rescued" in mods:                           # ... but stays in the row-set check (seed1 1000021)
+        erxn[:] = [r for r in erxn if r["rxn_id"] != 1000021]
     if "stale_folder" in mods:                                    # an old .done folder of the no-G2c target 1000059
         (root / "geo2" / "geo_final" / "1000059").mkdir(parents=True)
         (root / "geo2" / "geo_final" / "1000059" / ".done").write_text("old\n")
@@ -221,7 +248,12 @@ def cmd_z():
                              and bs["D0"]["by_status"] == {"ok": 59, "no_g2": 1} and rep["n_d0_overlap_excluded"] == 2
                              and rep["n_targets"] == 120 and bs["D1"]["n_fallback"] == 1 and bs["D0"]["n_fallback"] == 1)
         n_f04 = sum(1 for v in exp["D1"].values() if v["tag"] != "fm1")
-        ck["base_e_rxn_check"] = (bs["D1"]["e_rxn_check"]["n"] == n_f04 and bs["D0"]["e_rxn_check"]["n"] == 59
+        n_f04_m3 = sum(1 for v in exp["D1"].values() if v["tag"] != "fm1" and v["rule"] == "mean3")   # E2-rule scope
+        n_d0_m3 = sum(1 for v in exp["D0"].values() if v["rule"] == "mean3")
+        ck["base_e_rxn_check"] = (bs["D1"]["e_rxn_check"]["n"] == n_f04_m3 and bs["D0"]["e_rxn_check"]["n"] == n_d0_m3
+                                  and (n_f04 - n_f04_m3, 59 - n_d0_m3) == (4, 2)
+                                  and bs["D1"]["e_rxn_check"]["n_in_file_not_mean3"] == n_f04 - n_f04_m3
+                                  and bs["D0"]["e_rxn_check"]["n_in_file_not_mean3"] == 59 - n_d0_m3
                                   and bs["D1"]["e_rxn_check"]["max_abs_dev_A"] <= 1e-9
                                   and bs["D0"]["e_rxn_check"]["max_abs_dev_A"] <= 1e-9
                                   and bs["D1"]["e_rxn_check"]["n_built_not_in_file"] == len(exp["D1"]) - n_f04
@@ -229,6 +261,21 @@ def cmd_z():
                                   and all(bs[s]["e_rxn_check"][k] == 0 for s in ("D1", "D0")
                                           for k in ("n_built_f04_not_in_file", "n_file_not_built_f04"))
                                   and rep.get("n_stale_folders") == 0)
+        want_rules = {s: {k: sum(v["rule"] == k for v in exp[s].values()) for k in
+                          ("mean3", "mean_pass", "seed0", "seed1", "seed2", "g2c_fallback")} for s in ("D1", "D0")}
+        want_rules = {s: {k: n for k, n in w.items() if n} for s, w in want_rules.items()}
+        ck["base_coord_rules"] = (want_rules == {"D1": {"mean3": 52, "mean_pass": 2, "seed0": 1, "seed1": 1,
+                                                        "g2c_fallback": 1},
+                                                 "D0": {"mean3": 57, "mean_pass": 1, "g2c_fallback": 1}}
+                                  and all(bs[s]["by_coord_rule"] == want_rules[s] for s in ("D1", "D0"))
+                                  and (bs["D1"]["n_rescued"], bs["D0"]["n_rescued"]) == (4, 1)
+                                  and (bs["D1"]["n_fallback"], bs["D0"]["n_fallback"]) == (1, 1)  # rules 2-3: no fallback
+                                  and abs(bs["D1"]["fallback_share"] - 1 / 57) < 1e-12
+                                  and bs["D1"]["mean3_fail_reasons"] == {"close_contact": 5}
+                                  and rep["by_coord_rule"] == {k: want_rules["D1"].get(k, 0) + want_rules["D0"].get(k, 0)
+                                                               for k in rep["by_coord_rule"]}
+                                  and all(bs[s]["written_check"]["n_by_rule"] == want_rules[s]
+                                          and bs[s]["written_check"]["max_abs_dev_A"] <= 1e-9 for s in ("D1", "D0")))
         bad = []
         for s in ("D1", "D0"):
             for rid, v in exp[s].items():
@@ -240,29 +287,40 @@ def cmd_z():
                 if any((d / f).read_bytes() != (g2 / f).read_bytes() for f in ("rel1.xyz", "rel2.xyz")):
                     bad.append(f"{s} {rid}: rel not a byte copy")
                 _, X = C.read_xyz(d / "ts.xyz")
-                want = v["g2"] if v["fallback"] else v["mean"]
-                if np.abs(X - want).max() > 1e-9:
-                    bad.append(f"{s} {rid}: ts.xyz != {'G2c TS' if v['fallback'] else '3-seed mean'}")
+                if np.abs(X - v["want"]).max() > 1e-9:                   # E2-rule: mean3 / seed-subset mean / seed / G2c
+                    bad.append(f"{s} {rid}: ts.xyz != the {v['rule']} coordinates of seeds {v['used']}")
                 r = json.loads((d / "result.json").read_text())
                 if (r["src"], r["uid"], r["fallback"], r["fold_tag"], r["g2c_chosen"]) != \
                         (s, f"{s}_{rid}", v["fallback"], v["tag"], v["g2c"]) or \
                         (v["fallback"] and r["fallback_reason"] != "close_contact"):
                     bad.append(f"{s} {rid}: result.json {r['src'], r['uid'], r['fallback'], r['fold_tag']}")
+                if (r["coord_rule"], r["coord_seeds"], r["sources"]["coord_rule"], r["sources"]["coord_seeds"]) != \
+                        (v["rule"], v["used"], v["rule"], v["used"]) or \
+                        (v["rule"] != "mean3" and (r["mean3_sanity_reason"] != "close_contact"
+                                                   or r["fallback_reason"] != ("close_contact" if v["fallback"] else "")
+                                                   or len(r["seed_sanity_reasons"]) != 3)):
+                    bad.append(f"{s} {rid}: result.json coord_rule {r['coord_rule']} {r['coord_seeds']} != {v['rule']}")
                 if s == "D0" and r["job_id"] != f"D0G2_{rid:04d}":
                     bad.append(f"{s} {rid}: job_id {r['job_id']}")
         ck["base_folders"], det["base_folder_problems"] = not bad, bad[:10]
         with open(root / "res" / "Z_status.csv", newline="") as f:
             zs = list(csv.DictReader(f))
+        zr = {(r["src"], int(r["rxn_id"])): (r["coord_rule"], r["coord_seeds"]) for r in zs}
         ck["base_z_status"] = (len(zs) == 122 and sum(r["status"] == "d0_overlap_excluded" for r in zs) == 2
                                and set(zs[0]) == {"rxn_id", "job_id", "src", "status", "source", "fallback", "reason",
-                                                  "g2c"}
+                                                  "g2c", "coord_rule", "coord_seeds"}
+                               and all(zr[(s, rid)] == (v["rule"], " ".join(map(str, v["used"])))
+                                       for s in ("D1", "D0") for rid, v in exp[s].items())
+                               and all(r["coord_rule"] == "" for r in zs if r["status"] not in ("ok", "kept"))
                                and not (root / "geo2" / "geo_final" / "60").exists())
         stamp = json.loads((root / "geo2" / "geo_final" / "1000002" / "result.json").read_text())["written"]
         rc2, _, err2 = build(env)
         rep2 = report(root)
         ck["rerun_all_kept"] = (rc2 == 0 and rep2["by_status"].get("kept") == 116 and "ok" not in rep2["by_status"]
                                 and json.loads((root / "geo2" / "geo_final" / "1000002" / "result.json").read_text())
-                                ["written"] == stamp)
+                                ["written"] == stamp
+                                and all(rep2["by_src"][s]["written_check"]["n_by_rule"] == want_rules[s]
+                                        for s in ("D1", "D0")))                  # kept folders: written check too
         r1 = root / "g2c" / "d0" / "g2_final" / "3" / "rel1.xyz"
         keep = r1.read_bytes()
         r1.write_bytes(keep + b"\n")
@@ -272,6 +330,30 @@ def cmd_z():
         ck["changed_source_stops"] = (rc3 == 3 and "exists with other sources" in err3 and r3.get("stop") is True
                                       and r3.get("running") is False and "exists with other sources"
                                       in json.dumps(r3.get("stop_reasons")))      # S-2: a stopped report, not 'running'
+        ts = root / "geo2" / "geo_final" / "1000014" / "ts.xyz"                   # E2-rule: a kept mean_pass folder
+        keep = ts.read_bytes()                                                   # whose ts.xyz changed afterwards
+        syms_w, Xw = C.read_xyz(ts)
+        ts.write_text(C.xyz_text(syms_w, Xw + np.array([1e-6, 0.0, 0.0]), "tampered"))
+        rc4, _, err4 = build(env)
+        ts.write_bytes(keep)
+        r4 = report(root)
+        ck["stop_written_coords"] = (rc4 == 3 and r4.get("stop") is True and r4.get("running") is False
+                                     and "D1: a written ts.xyz differs from the coordinates of its coord_rule"
+                                     in json.dumps(r4.get("stop_reasons")) and "D0: a written" not in
+                                     json.dumps(r4.get("stop_reasons")))
+        rj = root / "geo2" / "geo_final" / "1000002" / "result.json"            # a folder of the pre-E2-rule code
+        keep = rj.read_bytes()                                                   # (sources without coord_rule)
+        old = json.loads(keep)
+        for k in ("coord_rule", "coord_seeds"):
+            old["sources"].pop(k)
+        rj.write_text(json.dumps(old, indent=1))
+        rc5, _, err5 = build(env)
+        rj.write_bytes(keep)
+        r5 = report(root)
+        ck["stop_rule_change"] = (rc5 == 3 and "1000002 exists with other sources" in err5 and r5.get("stop") is True
+                                  and r5.get("running") is False)
+        rc6, _, _ = build(env)                                                   # restored: passes again
+        ck["restored_rerun_kept"] = rc6 == 0 and report(root)["by_status"].get("kept") == 116
         cases = {"d_report_c_select": ("g2_input.c_select_sha256", None),        # S-6
                  "e_rxn_d0": ("D0: forming-distance errors", "D1: forming"),
                  "d0_fallback_excess": ("D0: fallback rate", "D1: fallback"),
@@ -282,6 +364,7 @@ def cmd_z():
                  "d0_folds_sha": ("sha256 differs", None),
                  "e_rxn_missing": ("D1: E_rxn.csv rows != the reactions built", "D0: E_rxn_d0.csv rows"),
                  "e_rxn_extra": ("D0: E_rxn_d0.csv rows != the reactions built", "D1: E_rxn.csv rows"),
+                 "e_rxn_missing_rescued": ("D1: E_rxn.csv rows != the reactions built", "D0: E_rxn_d0.csv rows"),
                  "stale_folder": ("geo_final folders with .done for targets that are not built now", "rows !=")}
         for name, (want, notwant) in cases.items():
             rootc = tmp / name
@@ -311,6 +394,38 @@ def cmd_z():
                                       and repc.get("complete") is False and "Unpickling" in json.dumps(repc)
                                       and not (rootc / "geo2" / "geo_final").exists())
         det["crash_stopped_report"] = dict(rc=rcc, report=repc, tail=errc[-400:])
+        rootc = tmp / "e_rxn_rescued"                                            # E2-rule: E_rxn compares mean3 rows
+        envc, _ = fixture(rootc, mods=("e_rxn_rescued",))                        # only (a wrong mean_pass row passes)
+        rcc, _, errc = build(envc)
+        ec = report(rootc).get("by_src", {}).get("D1", {}).get("e_rxn_check", {})
+        ck["e_rxn_scope_rescued_not_compared"] = (rcc == 0 and report(rootc).get("stop") is False
+                                                  and ec.get("n") == n_f04_m3 and ec.get("max_abs_dev_A", 1) <= 1e-9
+                                                  and ec.get("n_in_file_not_mean3") == 4)
+        det["e_rxn_scope_rescued_not_compared"] = dict(rc=rcc, tail=errc[-400:])
+        import build_geo as B                                                    # E2-rule units on BASE (G2 = BASE)
+        pp = C.parse_pairs(PAIRS)
+        ey, ez = np.array([0.0, 1.0, 0.0]), np.array([0.0, 0.0, 1.0])
+        S3 = np.array([BASE.copy() for _ in range(3)])                           # all 3 seeds pass, H5 on 3 sides of
+        for k, u in enumerate((ey, -ey / 2 + np.sqrt(3) / 2 * ez, -ey / 2 - np.sqrt(3) / 2 * ez)):   # C4: their mean
+            S3[k][5] = BASE[4] + 1.133 * u                                       # (= mean3 = mean_pass) puts H5 on C4
+        cr = B.choose_coords(SYMS, S3, BASE, pp)
+        ck["unit_all_pass_mean_fails_seed0"] = (
+            cr["rule"] == "seed0" and cr["seeds"] == [0] and cr["seed_reasons"] == ["", "", ""]
+            and [(t["rule"], t["ok"], t["seeds"]) for t in cr["tried"]] == [("mean3", False, [0, 1, 2]),
+                                                                           ("mean_pass", False, [0, 1, 2]),
+                                                                           ("seed0", True, [0])]
+            and np.array_equal(cr["X"], S3[0]) and cr["mean3"][1] == "close_contact")
+        cr1 = B.choose_coords(SYMS, np.array([BASE.copy() for _ in range(3)]), BASE, pp)
+        S0 = np.array([BASE.copy() for _ in range(3)])
+        S0[:, 1] = BASE[0] + np.array([0.3, 0.0, 0.0])
+        cr4 = B.choose_coords(SYMS, S0, BASE, pp)
+        ck["unit_mean3_and_fallback"] = (cr1["rule"] == "mean3" and cr1["seed_reasons"] is None
+                                         and len(cr1["tried"]) == 1 and np.allclose(cr1["X"], BASE, rtol=0, atol=1e-12)
+                                         and cr4["rule"] == "g2c_fallback" and cr4["seeds"] == [] and cr4["X"] is BASE
+                                         and cr4["seed_reasons"] == ["close_contact"] * 3
+                                         and np.allclose(B.rule_coords(S3, [0, 2], BASE), (S3[0] + S3[2]) / 2, rtol=0,
+                                                         atol=1e-12)
+                                         and B.rule_coords(S3, [], BASE) is BASE)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     ok = all(ck.values())
