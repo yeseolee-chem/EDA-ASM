@@ -88,3 +88,11 @@ RUNBOOK_lad.md, RUNBOOK_tests.md}`, 이 파일. 출발점은 브랜치 geo2(0a91
 - 160 GPU-h는 사용자가 정한 값이 아니라 D0D1 설계 때 내가 정한 상한이다(GEO2.md 8-4의 80을 D0 추가에 맞춰 올린 값). 예상치가 1.4 % 넘었을 뿐이고, 계정 GPU 한도(12)와 일정에 문제가 없다.
 - 추천안: 상한을 200 GPU-h로 올리고 나머지(모델, grid, epoch, seed, 짝)는 그대로 둔다. prereg_geo2b.py의 GEO_LIMIT_GPU_H만 바꿨다. 이 파일은 C tests의 코드 sha 대상(C_CODE_REQ)이 아니어서 C tests를 다시 돌릴 필요가 없다.
 - train_atoms.py의 GEO_LIMIT_GPU_H(160, smoke 보고의 over_limit 표시용)는 바꾸지 않았다. 바꾸면 C tests 코드 sha가 달라져 다시 돌려야 하기 때문이다. 그래서 C_smoke_atoms_geo.json / C_tests_geo.json에는 over_limit true(160 기준)가 기록돼 있고, 판정은 prereg가 200 기준으로 한다.
+
+## M3 꼬리 병렬화 (11-03 07:0x, 사용자 "왜 병렬로 안하나?")
+- M3 배열은 단위를 `unit_list(3)[i::9]`로 고정 배정한다. 9개 중 7개가 끝났고, 남은 6단위 중 4개가 task 0(S-GNN f0 → SH-GNN f4 → SH-AW f3 → SH-TF f2), 2개가 task 1(SH-AW f4 → SH-TF f3)에 있다.
+- SH-GNN f4(약 5.75시간)는 task 0이 곧 시작하므로 옮겨도 이득이 없다. task 0 뒤쪽의 짧은 두 단위(18 SH-AW f3, 27 SH-TF f2)를 `train_atoms.py run <k> 30 --stage 3`(한 단위짜리 slice)로 GPU job 2개(1059162, 1059163)에 따로 냈다. 끝난 단위는 task 0이 지문 비교 뒤 건너뛴다. 이 job들이 task 0이 그 단위에 닿기(약 6시간 뒤) 전에 시작하지 못하면 같은 단위를 두 번 학습하게 되므로 그때 다시 본다.
+- collect(1058923)는 배열 1058922에만 afterok로 걸려 있다. 새 job 2개가 배열보다 늦게 끝나는 경우는 없다고 본다(짧은 단위). 그래도 collect 전에 둘이 끝났는지 확인한다.
+- **꼬리 병렬화의 부작용 (11-03 11:07)**: 따로 낸 단위 18·27은 RTX 3090에서 돌았다. task 0(A10)이 SH-GNN f4를 끝낸 뒤 단위 18의 기존 결과를 확인했는데, run의 캐시 확인은 지문의 gpu까지 비교해서 "different fingerprint: keys ['gpu']"로 STOP(exit 3)했다. 배열이 exit 3이 되어 collect·Rc2·E(afterok)가 취소됐다.
+  - 학습 30단위는 모두 끝났다. collect는 gpu를 뺀 지문을 비교한다(train_atoms.py 1595 _no_gpu). 배열 안에서도 원래 A10 5개와 RTX 3090 4개가 섞여 있었다. 그래서 다시 학습하지 않고 collect 1059373 → Rc2 1059374 → E 1059375를 다시 냈다.
+  - 교훈: 이어받기용 job은 원래 task와 같은 GPU 종류로 내야 한다(m3_launch.sh의 안내대로).
