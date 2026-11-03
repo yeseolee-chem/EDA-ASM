@@ -20,3 +20,8 @@
   - 판단: (1) 계열 안 짝 추출 = 확률 min(1, c·w)의 체계 추출(numpy 가중 비복원 추출은 비례가 19–25 % 어긋남). (2) C-W3은 FT.fit이 float32로 고정이라 float64 대신 float32·1 thread로 비트 비교(통과). (3) A-1 실패면 R ≤ 0.70이어도 "개선 없음". (4) graph 읽기 판정은 채택 모델에만. (5) K의 C-W8 = 시험 짝 200 + 계열 안 짝 200. (6) lfV와 lfW가 같은 설정이면 lfV .pt는 lfW의 hard link. (7) E는 P의 (a, ref) 예측이 K와 1e-3 넘게 다르면 STOP.
   - 미결: I2-1 명령에 `--rung lfW`가 필요(명령서 줄에는 없음); I2-4는 DEPLOY I-3 출력이 있어야 함.
   - 규칙 위반 기록: W agent가 login에서 `python3 -c`로 출력 자르기 1회, 자기 파일 sed -i 1회.
+- **K 체인 제출 (11-03 16:4x)**: PREREG_DEPLOY commit·push(d1e71442) 뒤 K 배열 1060078(RTX 3090 gpu1, 0-4) → collect 1060079 → E 1060080 → W final 1060081(G-C 실패면 STOP) → I-1·I-2 1060082. Q: equal 8,492 + perm_symmetric_map 7, unexplained 0, G-A 0 %. C-3: LADDER L__g2__S__TF__f0와 튜닝 검증값까지 같음(같은 칸 3×128, epoch 70).
+- **W 앞 단계 제출**: B 1060083 → C cpu(+C-W4, afterok B·DEPLOY collect) 1060084, C gpu(C-W8·C-W9) 1060085 → merge 1060086 → PREREG_W start+write 1060087(afterok merge·DEPLOY E). 디스크 여유 117 GB(login mmlsquota)를 DEPW_FREE_GB로 넘김.
+- **E: G-C 실패 → STOP (11-03 17:30, 명령서 16절 E)**: K(1060078, 5 fold 모두 exit 0), collect, E 끝. G-C(공통 para P_main 1,658짝, 9 타깃마다 (MAE_lf − MAE_g2)/MAE_g2 의 95 % 상한 ≤ +5 %)를 d1만 통과하고 8개가 넘었다. 점추정 상대 차: d1 −0.8 %, d2 +1.3, elst +1.2, pauli +0.3, oi +0.6, disp +2.0, cpcm +5.3, cds +4.9, barrier +1.1 %. 95 % 상한: d1 3.5, d2 7.3, elst 7.3, pauli 6.9, oi 6.8, disp 7.5, cpcm 8.8, cds 10.6, barrier 5.2 %.
+  - W final(1060081)은 명령서대로 STOP(exit 3), I-1·I-2(1060082)는 취소됨. W 명령서의 PREREG_W(1060087)도 시작 조건 0-1(G-C 통과)에서 STOP.
+  - 명령서 16절은 이 단계에서 "멈추고 묻는다". 사전 등록된 관문이라 결과를 본 뒤 내가 기준을 바꾸지 않고 사용자에게 묻는다.
