@@ -25,3 +25,13 @@
 - **E: G-C 실패 → STOP (11-03 17:30, 명령서 16절 E)**: K(1060078, 5 fold 모두 exit 0), collect, E 끝. G-C(공통 para P_main 1,658짝, 9 타깃마다 (MAE_lf − MAE_g2)/MAE_g2 의 95 % 상한 ≤ +5 %)를 d1만 통과하고 8개가 넘었다. 점추정 상대 차: d1 −0.8 %, d2 +1.3, elst +1.2, pauli +0.3, oi +0.6, disp +2.0, cpcm +5.3, cds +4.9, barrier +1.1 %. 95 % 상한: d1 3.5, d2 7.3, elst 7.3, pauli 6.9, oi 6.8, disp 7.5, cpcm 8.8, cds 10.6, barrier 5.2 %.
   - W final(1060081)은 명령서대로 STOP(exit 3), I-1·I-2(1060082)는 취소됨. W 명령서의 PREREG_W(1060087)도 시작 조건 0-1(G-C 통과)에서 STOP.
   - 명령서 16절은 이 단계에서 "멈추고 묻는다". 사전 등록된 관문이라 결과를 본 뒤 내가 기준을 바꾸지 않고 사용자에게 묻는다.
+- **G-C 영가설 검사 설계 (사용자 11-04 "영가설 검사 후 결정" → "진행", null 결과를 보기 전에 기록)**:
+  - 모델: LADDER g2 입력과 LADDER 사용 가능 규칙(C-2·C-3 자료, `DL.get_data("g2")`)으로, lf K와 같은 학습 코드(`train_tf.run_unit`, 4칸 튜닝 + seed 5개)를 5 fold 모두 돌린다. 바꾸는 것은 seed뿐이다: 튜닝 seed 20261019 → 20262019(+1000), 최종 seed 20262019 + 0..4. GPU = RTX 3090(gpu1, LADDER와 같은 종류). 새 파일 `null_gc.py`만 쓰고 train_tf · data_lf · dep_common · eval_tf는 고치지 않는다. 산출 `$DEP/null/units/D__g2__S__TF__f{k}`.
+  - 판정: 이 null 예측을 lf 자리에 넣어 `eval_tf.evaluate`로 LADDER g2 · S · TF와 같은 G-C(공통 para P_main, 9 타깃, 95 % 상한 ≤ +5 %)를 계산한다(`results/NULL_gc.json`).
+    - null이 G-C를 **통과하지 못하면**(타깃 하나라도): 같은 입력·같은 코드의 모델도 넘지 못하는 관문이므로 검정력 부족으로 본다. lf의 G-C 실패를 편차로 기록하고 W(최종 모델) · I → DEPLOY_MODEL_W로 진행한다.
+    - null이 **통과하면**: lf가 실제로 나쁜 것이므로 멈추고 보고한다.
+- **null GPU 편차 (11-04 07:5x)**: RTX 3090(gpu1) 대기 20개로 시작 예상이 15:50이었다. 대기 중이던 1061163·1061164를 취소하고 GPU 종류 제한 없이(gpu4, gpu2, gpu6, gpu3, gpu5, gpu1) 다시 냈다(1061187 → gc 1061188). 사전 설계의 'GPU = RTX 3090'에서 벗어난다. 영가설 검사는 "seed만 다른 같은 모델이 관문을 넘는가"를 보므로, GPU 종류 차이(부동소수점 비결정성)는 seed 차이보다 훨씬 작아 결론에 영향이 없다고 본다. 각 unit의 GPU 이름은 NULL_gc.json에 기록한다.
+- **G-C 영가설 결과 (11-04 08:05, NULL_gc.json)**: seed만 바꾼 LADDER g2 재학습(5 fold, A10)이 G-C를 통과하지 못했다(실패 4/9: disp, cpcm, cds, barrier; 95 % 상한 9.0, 5.3, 10.3, 9.0 %). 사전 규칙대로 관문의 검정력 부족으로 보고 lf G-C 실패(8/9)를 편차로 기록한 뒤 진행한다.
+  - 그대로 적어 둘 점: null은 d2 · elst · pauli · oi에서 통과했고(점추정 −4 ~ 0 %), lf는 같은 타깃에서 +0.3 ~ +1.3 %였다. lf가 LADDER g2보다 1–4 %p 나쁠 수 있다는 신호는 남아 있다(판정 아님).
+- **G-C 편차 구현**: 기존 파일을 고치지 않고 `gc_deviation.py`(증거 확인), `final_dev.py`(train_tf.gate_e_report만 이 프로세스 안에서 바꿔 W final 실행, results/W_deviation.json), `w/prereg_w_dev.py`(W 시작 조건 0-1의 G-C 항목만 같은 증거로 대체)를 썼다. 증거: E_report가 지금 K_predictions로 계산됐고 NULL_gc null_pass false · proceed true일 때만 허용.
+- **W · I GPU (편차)**: gpu1(RTX 3090) 대기가 길어 W final과 I-1·I-2를 둘 다 A10(gpu2, gpu6)에서 돌린다. I-2는 같은 GPU 종류를 요구하므로 두 job을 같은 종류로 묶었다. K unit은 RTX 3090에서 학습됐고 I-1(≤ 1e-4)은 GPU 종류에 영향받지 않는 크기다.
