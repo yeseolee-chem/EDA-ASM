@@ -35,3 +35,5 @@
   - 그대로 적어 둘 점: null은 d2 · elst · pauli · oi에서 통과했고(점추정 −4 ~ 0 %), lf는 같은 타깃에서 +0.3 ~ +1.3 %였다. lf가 LADDER g2보다 1–4 %p 나쁠 수 있다는 신호는 남아 있다(판정 아님).
 - **G-C 편차 구현**: 기존 파일을 고치지 않고 `gc_deviation.py`(증거 확인), `final_dev.py`(train_tf.gate_e_report만 이 프로세스 안에서 바꿔 W final 실행, results/W_deviation.json), `w/prereg_w_dev.py`(W 시작 조건 0-1의 G-C 항목만 같은 증거로 대체)를 썼다. 증거: E_report가 지금 K_predictions로 계산됐고 NULL_gc null_pass false · proceed true일 때만 허용.
 - **W · I GPU (편차)**: gpu1(RTX 3090) 대기가 길어 W final과 I-1·I-2를 둘 다 A10(gpu2, gpu6)에서 돌린다. I-2는 같은 GPU 종류를 요구하므로 두 job을 같은 종류로 묶었다. K unit은 RTX 3090에서 학습됐고 I-1(≤ 1e-4)은 GPU 종류에 영향받지 않는 크기다.
+- **DEPLOY W · I-1 · I-2 통과 (11-04 08:26–08:27, A10)**: 최종 모델 칸 3×64(5 fold 중 3), epoch 46(중앙값), 학습 짝 7,334, seed 5개; W_deviation.json에 G-C 편차 근거 기록. I-1(cv 25개로 K 시험 짝 재예측) 최대 |Δ| 2.9e-6 ≤ 1e-4, I-2(final로 학습 짝 1,000 재예측) 0.0 ≤ 1e-6.
+- **W 명령서 시작 · 사전 등록 (1061217)**: prereg_w_dev.py start → 0-1..0-5 모두 통과(0-1은 G-C 편차 근거로; S0_start_w.json에 G_C_deviation 기록), write → PREREG_W.md + prereg_w.json. 0-5의 여유 디스크는 DEPW_FREE_GB=117로 넘겼고 제출 시 login mmlsquota는 190/300(여유 110 GB)이었다(둘 다 기준 20 GB 이상).
