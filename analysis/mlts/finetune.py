@@ -13,10 +13,21 @@ Candidates: MACE-OMOL-0 (default; mace-torch 0.3.16 ships only the extra-large 1
   MACE-MH-1-omol (smaller multi-head MACE, omol head; optional size alternative), AIMNet2 (aimnet2_wb97m_d3_0),
   MACE-OFF23-medium / MACE-OFF24-medium (no Si: refused, see CAND_NOTES).
 
+Data (decision FT-d0, user decision 'D0' 2026-11-04): I = $MLT/dft/existing.extxyz, G1/G2/G3 = gen_G{1,2,3}.extxyz
+(D1), D0G1/D0G2/D0G3 = gen_D0G{1,2,3}.extxyz (D0, read whenever present), G4 = gen_G4.extxyz (--with-al). Inputs are
+complete when I + G1-3 exist and results/G_report.json is complete, and — once $MLT/dft/plan/plan_d0.parquet exists —
+results/G_report_d0.json is complete for that plan (train refuses incomplete splits unless --allow-partial). D0 rows have
+no rxn_ids (every FT_k keeps them; train only) except the TS fragments of D1-shared molecules (D1 union tags, D1 rules)
+and dipoles = their D0 class (FT_LODO_d drops class d); Phase I D0 rows get their class from d0_class.csv; Phase I rows
+of the 15 D1-design d1_validation groups (D1-NNNN-rK, no D1 target) are tagged with every T1 fold and every D1 dipole
+(FT_all only; DECISIONS FT-d1val). The C-2 check also asserts d0_class within dipoles (STOP otherwise). TS-near (FT-1)
+includes the D0 kinds (DECISIONS FT-ts-near). Evaluation stays on the D1 T1 folds.
+
 CLI (submit from analysis/mlts; exit 0 = done / up to date, 2 = not ready / incomplete (resubmit), 3 = STOP)
-  data <run ...> | --all  [--with-al] [--fmax-cap 10] [--valid-frac 0.10] [--force]
+  data <run ...> | --all  [--with-al] [--fmax-cap 10] [--valid-frac 0.10] [--force] [--dry]
         MLTENV=mlts or reactot, CPU: $MLT/ft/data/<split>/{train,valid[,test]}.xyz + meta.json,
-        results/ft/<run>_data.json (counts by kind / source, C-2 leakage check, input sha256)
+        results/ft/<run>_data.json (counts by kind / source, C-2 leakage check, input sha256);
+        --dry: read + split + C-2 check only, counts printed, nothing written
   fetch <cand>                     download the foundation into $MLT/cache (reuses ~/.cache/mace read-only)
   train <run> <cand> [--with-al] [--epochs 200] [--budget-h 12] [--stop-h 24] [--batch-size B] [--lr X]
         [--ew X] [--fw X] [--patience 6] [--subset N] [--allow-partial] [--force]
@@ -70,7 +81,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 
-CODE_VERSION = "mlts-ft-1"
+CODE_VERSION = "mlts-ft-2"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
 T_START = time.time()
 
 # ---------------------------------------------------------------- paths
@@ -82,8 +93,12 @@ CACHE = M.MLT / "cache"
 RES_FT = M.RES / "ft"
 INPUTS = (("I", DFT / "existing.extxyz"), ("G1", DFT / "gen_G1.extxyz"), ("G2", DFT / "gen_G2.extxyz"),
           ("G3", DFT / "gen_G3.extxyz"))
+D0_INPUTS = (("D0G1", DFT / "gen_D0G1.extxyz"), ("D0G2", DFT / "gen_D0G2.extxyz"), ("D0G3", DFT / "gen_D0G3.extxyz"))
 AL_INPUT = ("G4", DFT / "gen_G4.extxyz")
 G_REPORT = M.RES / "G_report.json"
+G_REPORT_D0 = M.RES / "G_report_d0.json"
+PLAN_D0 = DFT / "plan" / "plan_d0.parquet"           # exists = the D0 data are required (user decision 'D0')
+D0_CLASS = DFT / "plan" / "d0_class.csv"            # gen_dft plan_d0: D0 rxn_id -> dipole class (Phase I D0 overlay)
 SITE = Path(M.CONDA) / "envs" / "mlts" / "lib" / "python3.10" / "site-packages"
 HOME_MACE_CACHE = Path.home() / ".cache" / "mace"
 
@@ -93,9 +108,11 @@ ATOM_REF_EH = {1: -0.5, 6: -37.8, 7: -54.5, 8: -75.0, 9: -99.7, 14: -289.3, 16: 
 DEDUPE_DEC = 5                                     # positions rounded to 1e-5 A for the exact-duplicate key
 FMAX_CAP = 10.0                                    # eV/A, per-structure max atomic |F| (decision FT-fcap)
 VALID_FRAC = 0.10
-TS_NEAR_ALWAYS = ("ts_near", "ts_imag", "ts_label")
-TS_NEAR_IF_CLOSE = ("ts_path", "ts_final", "g2_path", "ts_final_g2", "al_ts")
+TS_NEAR_ALWAYS = ("ts_near", "ts_imag", "ts_label", "d0_ts_near", "d0_ts_imag", "d0_ts_label", "d0_ts_grad")
+TS_NEAR_IF_CLOSE = ("ts_path", "ts_final", "g2_path", "ts_final_g2", "al_ts", "d0_g2_path", "d0_ts_final_g2")
 TS_NEAR_DFORM_A = 0.3
+D1DESIGN_GROUP = re.compile(r"D1-\d+-r\d+")          # Phase I d1_validation D1-design groups (DECISIONS FT-d1val)
+ALL_T1_FOLDS = ("0", "1", "2", "3", "4")
 FT1_TARGET = dict(force_mae_kcal_A=0.6, rel_e_mae_kcal=0.3)
 BUDGET_H, STOP_H = 12.0, 24.0
 ALL_RUNS = [f"FT_{k}" for k in range(5)] + [f"FT_all_s{i}" for i in range(3)] + [f"FT_LODO_{d}" for d in range(5)]
@@ -164,15 +181,35 @@ DECISIONS = {
                  "aimnet2_wb97m_d3_0.jpt, SizeGroupedDataset / Sampler, MTLoss energy_loss_fn + peratom_loss_fn, "
                  "Forces, pt2jpt export helpers) and a loop here (aimnet train needs wandb for metrics and has no time "
                  "budget). D3 head switched to B3LYP-D3(BJ) (s8 1.9889, a1 0.3981, a2 4.4211) = the label "
-                 "dispersion, so the network only learns the electronic difference. Loss weights energy 1 : forces "
-                 "0.2 (aimnet default_train.yaml, charges term dropped: no label charges), RAdam lr 1e-4 (default 4e-4 "
-                 "is from scratch), grad clip 0.4, ReduceLROnPlateau 0.75 / 3.",
+                 "dispersion, so the network only learns the electronic difference. Molecular charge input = the "
+                 "structure's total_charge (D1 all 0; D0 has total -2 / +1 reactions) in training, E0 fit, export "
+                 "check and FT-1. Loss weights energy 1 : forces 0.2 (aimnet default_train.yaml, partial-charges term "
+                 "dropped: no label partial charges), RAdam lr 1e-4 (default 4e-4 is from scratch), grad clip 0.4, "
+                 "ReduceLROnPlateau 0.75 / 3.",
     "FT-budget": "GPU-h = wall-h of the train command (1 GPU), summed over attempts (budget.json, updated each "
                  "minute). An epoch is not started when it would end past 12 h (target, spec 0-5); > 24 h = STOP "
                  "(exit 3).",
-    "FT-ts-near": "TS-near (FT-1) = kind ts_near / ts_imag / ts_label, or kind ts_path / ts_final / g2_path / "
-                  "ts_final_g2 / al_ts with dform_label_A <= 0.3 A (max over the two forming bonds of |d - d_label|, "
-                  "label TS + formed_pairs_ts; computed here when the record has none).",
+    "FT-ts-near": "TS-near (FT-1) = kind ts_near / ts_imag / ts_label / d0_ts_near / d0_ts_imag / d0_ts_label / "
+                  "d0_ts_grad, or kind ts_path / ts_final / g2_path / ts_final_g2 / al_ts / d0_g2_path / d0_ts_final_g2 "
+                  "with dform_label_A <= 0.3 A (max over the two forming bonds of |d - d_label|, label TS + "
+                  "formed_pairs_ts; computed here for single-D1-reaction records without one; D0 records carry it from "
+                  "gen_dft collect --d0, against the D0 label TS). D0 rows without D1 rxn_ids are train-only, so the "
+                  "D0 kinds change only the train n_ts_near count, never an FT-1 metric (Phase I d0_ts_path / "
+                  "d0_ts_final are therefore not added).",
+    "FT-d0": "D0 (user decision 'D0', gen_d0.DECISIONS_D0): gen_D0G{1,2,3}.extxyz are read after G3 (before G4) whenever "
+             "present; once $MLT/dft/plan/plan_d0.parquet exists the inputs are complete only if results/"
+             "G_report_d0.json is complete for the current plan_d0 (plan_sha256) and every D0 group with ok structures "
+             "has its extxyz. D0 rows have no rxn_ids (FT_k keeps them; train only) except the TS fragments of "
+             "D1-shared molecules, which carry the D1 union tags and follow the D1 rules (validation / test possible); "
+             "dipoles = the D0 class (FT_LODO_d drops class d). Phase I D0 rows (kind d0_*, group 'D0-<rid>') get "
+             "their D0 class added to dipoles from d0_class.csv (conservative LODO; its sha256 enters the split "
+             "fingerprint). C-2 check: + every row's D0 class (info d0_class, or the overlay) must be within its "
+             "dipoles tag (STOP otherwise) and no kept FT_LODO_d row may carry D0 class d.",
+    "FT-d1val": "Phase I rows of the d1_validation D1-design groups (group D1-NNNN-rK, 15 groups / 14 reactions, kinds "
+                "d0_*; not D1 targets, but D1-dipole reactions and same-core siblings, e.g. D1-3740-r1 in core "
+                "nitrone/C, fold 2): no reliable core / fold assignment exists, so folds += 0..4 and dipoles += all 5 "
+                "D1 dipoles -> dropped from every FT_k and FT_LODO_d, kept in FT_all (train). Applied whether or not D0 "
+                "data exist (it fixes the D1-only splits too; CODE_VERSION mlts-ft-2 rebuilds them).",
     "FT-relE": "within-reaction relative energy: structures of one reaction (single rxn_id) and one composition, "
                "E - mean(E) of the group (groups of >= 2), MAE over structures; primary on TS-near structures, also "
                "on all single-reaction structures. MACE uses interaction_energy (no float32 E0 quantisation).",
@@ -310,7 +347,22 @@ def _guard_imports():
 
 # ================================================================ data
 def input_files(with_al):
-    return list(INPUTS) + ([AL_INPUT] if with_al else [])
+    """read order (= dedupe priority): I, G1, G2, G3, D0G1, D0G2, D0G3, then G4 (decision FT-d0)."""
+    return list(INPUTS) + list(D0_INPUTS) + ([AL_INPUT] if with_al else [])
+
+
+def d0_state(st):
+    """(required, complete, meta) of the D0 inputs (decision FT-d0)."""
+    if not PLAN_D0.is_file():
+        return False, True, dict(plan_d0=None)
+    g = _rj(G_REPORT_D0) or {}
+    psha = M.sha256(PLAN_D0)
+    grp = g.get("groups") or {}
+    need = [n for n, _ in D0_INPUTS if (grp.get(n) or {}).get("n_ok", (grp.get(n) or {}).get("n_structures", 0))]
+    ok = bool(g.get("complete")) and g.get("plan_sha256") == psha and all(st[n]["present"] for n in need)
+    return True, ok, dict(plan_d0=str(PLAN_D0), plan_d0_sha256=psha, G_report_d0=str(G_REPORT_D0),
+                          G_report_d0_complete=g.get("complete"), G_report_d0_plan_sha256=g.get("plan_sha256"),
+                          d0_groups_with_data=need)
 
 
 def inputs_state(with_al):
@@ -320,9 +372,14 @@ def inputs_state(with_al):
             st[name] = dict(path=str(p), present=True, sha256=M.sha256(p), bytes=p.stat().st_size)
         else:
             st[name] = dict(path=str(p), present=False)
+    if D0_CLASS.is_file():                               # Phase I D0 class overlay: part of the split fingerprint
+        st["D0class"] = dict(path=str(D0_CLASS), present=True, sha256=M.sha256(D0_CLASS), bytes=D0_CLASS.stat().st_size)
     g = _rj(G_REPORT) or {}
-    complete = all(st[n]["present"] for n, _ in input_files(with_al)) and bool(g.get("complete"))
-    return st, complete, dict(G_report=str(G_REPORT), G_report_complete=g.get("complete"))
+    base = [n for n, _ in INPUTS] + (["G4"] if with_al else [])
+    d0_req, d0_ok, d0_meta = d0_state(st)
+    complete = all(st[n]["present"] for n in base) and bool(g.get("complete")) and d0_ok
+    return st, complete, dict(G_report=str(G_REPORT), G_report_complete=g.get("complete"), d0_required=d0_req,
+                              d0_complete=d0_ok, **d0_meta)
 
 
 def split_fingerprint(split, st, params):
@@ -357,6 +414,8 @@ class Pool:
                 self.atoms.append(a)
         self.n_read = len(rows)
         self.stats = {}
+        self._d0_overlay(rows)
+        self._d1design_overlay(rows)
         self._fill_dform(rows)
         rows = self._dedupe(rows)
         P = pd.DataFrame(rows)
@@ -367,6 +426,15 @@ class Pool:
     @staticmethod
     def _tags(s):
         return [x for x in str(s or "").split(",") if x]
+
+    @staticmethod
+    def _cls(v):
+        """info d0_class -> class names (a comma-joined string, or a list if the extxyz reader split it)."""
+        if v is None:
+            return frozenset()
+        if isinstance(v, (list, tuple, np.ndarray)):
+            v = ",".join(str(x) for x in v)
+        return frozenset(x for x in str(v).split(",") if x)
 
     def _row(self, a, inp):
         f = np.asarray(a.arrays["REF_forces"], float)
@@ -379,11 +447,59 @@ class Pool:
                     formula=a.get_chemical_formula(mode="hill"), rxn=rx,
                     folds=frozenset(self._tags(a.info.get("folds"))),
                     dipoles=frozenset(self._tags(a.info.get("dipoles"))),
+                    d0cls=self._cls(a.info.get("d0_class")) if inp.startswith("D0") else frozenset(),
                     fmax=float(fn.max()) if len(fn) else 0.0, e_eh=e_eh,
                     e_ref_check=float(a.info["REF_energy"]) - e_eh * M.EH2EV,
                     charge=int(a.info.get("charge", 0) or 0), nelec=int(np.asarray(a.numbers).sum()),
                     dform=float(dform) if dform is not None else float("nan"),
                     finite=bool(np.isfinite(f).all() and np.isfinite(e_eh)))
+
+    def _d0_overlay(self, rows):
+        """decision FT-d0: Phase I D0 rows (input I, kind d0_*, group 'D0-<rid>') get their D0 dipole class added to the
+        dipoles tag (gen_dft plan_d0 d0_class.csv); nothing else changes."""
+        if not D0_CLASS.is_file():
+            self.stats["d0_class_overlay"] = dict(applied=False, reason=f"{D0_CLASS} missing")
+            return
+        import pandas as pd
+        C = pd.read_csv(D0_CLASS, usecols=["d0_id", "d0_class"])
+        cmap = dict(zip(C.d0_id.astype(int), C.d0_class.astype(str)))
+        n, miss, seen = Counter(), 0, 0
+        for r in rows:
+            if r["input"] != "I" or not r["kind"].startswith("d0_"):
+                continue
+            m = re.fullmatch(r"D0-(\d+)", str(self.atoms[r["i"]].info.get("group", "")))
+            if not m:
+                continue
+            seen += 1
+            c = cmap.get(int(m.group(1)))
+            if c is None:
+                miss += 1
+                continue
+            r["d0cls"] = r["d0cls"] | {c}
+            if c not in r["dipoles"]:
+                r["dipoles"] = r["dipoles"] | {c}
+                n[c] += 1
+        self.stats["d0_class_overlay"] = dict(applied=True, n_phase_i_d0_rows=seen, n_rows_changed=sum(n.values()),
+                                              by_class=dict(n), n_without_class=miss, source=str(D0_CLASS))
+
+    def _d1design_overlay(self, rows):
+        """decision FT-d1val: Phase I rows of the D1-design d1_validation groups -> every T1 fold + every D1 dipole."""
+        n, groups, tagged = 0, Counter(), 0
+        self.d1design_ids = set()
+        for r in rows:
+            if r["input"] != "I":
+                continue
+            g = str(self.atoms[r["i"]].info.get("group", ""))
+            if not D1DESIGN_GROUP.fullmatch(g):
+                continue
+            n += 1
+            groups[g] += 1
+            self.d1design_ids.add(r["struct_id"])
+            tagged += bool(r["rxn"])
+            r["folds"] = r["folds"] | frozenset(ALL_T1_FOLDS)
+            r["dipoles"] = r["dipoles"] | frozenset(M.DIPOLES)
+        self.stats["d1design_overlay"] = dict(rule=DECISIONS["FT-d1val"], n_rows=n, n_rows_with_rxn_ids=tagged,
+                                              n_groups=len(groups), by_group=dict(groups))
 
     def _fill_dform(self, rows):
         kinds = set(TS_NEAR_ALWAYS) | set(TS_NEAR_IF_CLOSE)
@@ -434,6 +550,7 @@ class Pool:
                 j["rxn"] = tuple(sorted(set(j["rxn"]) | set(r["rxn"])))
                 j["folds"] = j["folds"] | r["folds"]
                 j["dipoles"] = j["dipoles"] | r["dipoles"]
+                j["d0cls"] = j["d0cls"] | r["d0cls"]
         kept.sort(key=lambda r: r["i"])
         self.stats["dedupe"] = dict(method=DECISIONS["FT-dedupe"], n_read=len(rows), n_dropped=ndrop,
                                     pairs=dict(pairs), de_kcal=_q(de), dfmax_eV_A=_q(dfm))
@@ -473,24 +590,44 @@ class Pool:
         return P[~drop]
 
     def _tag_check(self, P):
-        nf, nd, unknown = 0, 0, 0
+        nf, nd, nx, unknown, d0_cls, d0_none = 0, 0, 0, 0, 0, 0
         for r in P.itertuples():
             if not r.rxn:
-                if r.folds or r.dipoles:
+                if r.folds:
                     nf += 1
+                elif r.dipoles and str(r.kind).startswith("d0_"):
+                    d0_cls += 1                                  # D0: class only (decision FT-d0), not a mismatch
+                elif r.dipoles:
+                    nf += 1
+                elif str(r.kind).startswith("d0_"):
+                    d0_none += 1
                 continue
             if any(x not in self.rfold for x in r.rxn):
                 unknown += 1
                 continue
             if {str(self.rfold[x]) for x in r.rxn} != set(r.folds):
                 nf += 1
-            if {self.rdip[x] for x in r.rxn} != set(r.dipoles):
+            want = {self.rdip[x] for x in r.rxn}
+            if not want <= set(r.dipoles):
                 nd += 1
-        self.stats["tag_check"] = dict(fold_tag_mismatch=nf, dipole_tag_mismatch=nd, unknown_rxn_ids=unknown,
-                                       note="drop rule = tag rule OR targets() rule, so a mismatch cannot leak")
+            elif want != set(r.dipoles):
+                nx += 1                                          # superset: + a D0 class (shared fragment, overlay)
+        bad_cls = [r.struct_id for r in P.itertuples() if not r.d0cls <= r.dipoles]
+        n_cls = int(sum(bool(x) for x in P.d0cls))
+        self.stats["tag_check"] = dict(fold_tag_mismatch=nf, dipole_tag_mismatch=nd, dipole_tag_superset=nx,
+                                       unknown_rxn_ids=unknown, d0_class_only=d0_cls, d0_untagged=d0_none,
+                                       n_rows_with_d0_class=n_cls, d0_class_not_in_dipoles=len(bad_cls),
+                                       note="drop rule = tag rule OR targets() rule, so a mismatch cannot leak; "
+                                            "dipole_tag_mismatch = a D1 dipole missing from the tag, superset = extra "
+                                            "(D0) classes; d0_class_only = D0 rows with only a dipole class; "
+                                            "d0_class_not_in_dipoles > 0 = STOP (FT-d0)")
+        if bad_cls:
+            M.stop(f"C-2: {len(bad_cls)} rows whose D0 class is not in their dipoles tag (FT_LODO leak); first "
+                   f"{bad_cls[:5]}")
 
 
-def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params):
+def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params, write=True):
+    """write False (data --dry): the same drop / validation / C-2 leakage logic, nothing written, empty sets reported."""
     P, T = pool.P, pool.T
     if not R["al"]:
         P = P[P.input != "G4"]
@@ -524,7 +661,7 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
     V = {x for x in Rr if pool.rcore[x] in chosen}
     is_val = keep.rxn.map(lambda r: len(r) > 0 and all(x in V for x in r)).astype(bool)
     train, valid = keep[~is_val], keep[is_val]
-    if not len(valid) or not len(train):
+    if write and (not len(valid) or not len(train)):
         M.not_ready(f"{split_name}: empty train ({len(train)}) or validation ({len(valid)}) set")
     # C-2 leakage check (independent of the drop code: targets() folds / dipoles of every used rxn_id)
     used = {x for r in keep.rxn for x in r}
@@ -536,12 +673,17 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
         bad_tag = int(keep.dipoles.map(lambda s: M.DIPOLES[val] in s).sum())
     else:
         bad_t, bad_tag = set(), 0
-    leak = dict(rule="FT_k: drop iff k in folds(tag); FT_LODO_d: drop iff d in dipoles(tag); OR targets() of rxn_ids",
+    bad_d0 = int(keep.d0cls.map(lambda s: M.DIPOLES[val] in s).sum()) if mode == "lodo" else 0
+    leak = dict(rule="FT_k: drop iff k in folds(tag); FT_LODO_d: drop iff d in dipoles(tag); OR targets() of rxn_ids; "
+                     "FT_LODO_d: no kept row of D0 class d (FT-d0)",
                 n_heldout_rxns=len(held), n_used_rxns=len(used), used_cap_heldout=len(used & held),
                 used_with_heldout_fold_or_dipole=len(bad_t), kept_with_heldout_tag=bad_tag,
+                kept_with_heldout_d0_class=bad_d0,
                 dropped_by_tag=int(tag_hit.sum()), dropped_by_targets=int(rx_hit.sum()),
-                tag_vs_targets_disagree=int((tag_hit != rx_hit).sum()))
-    leak["pass_"] = leak["used_cap_heldout"] == 0 and len(bad_t) == 0 and bad_tag == 0
+                tag_vs_targets_disagree=int((tag_hit != rx_hit).sum()),
+                n_kept_d1design=int(keep.struct_id.isin(pool.d1design_ids).sum()))
+    leak["pass_"] = leak["used_cap_heldout"] == 0 and len(bad_t) == 0 and bad_tag == 0 and bad_d0 == 0 and \
+        (mode == "all" or leak["n_kept_d1design"] == 0)
     if not leak["pass_"]:
         M.stop(f"C-2 leakage in split {split_name}: {leak}")
 
@@ -550,10 +692,10 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
                     by_input=dict(Counter(D.input)), n_rxns=len({x for r in D.rxn for x in r}),
                     n_atoms=_q(D.n_atoms, (0.0, 0.5, 1.0)), n_ts_near=int(ts_near_mask(D).sum()))
 
-    sd = _mkdir(FT_DATA / split_name)
+    sd = _mkdir(FT_DATA / split_name) if write else FT_DATA / split_name
     files = {}
     for nm, D in (("train", train), ("valid", valid), ("test", test)):
-        if nm == "test" and mode == "all":
+        if nm == "test" and mode == "all" or not write:
             continue
         t0 = time.time()
         M.write_extxyz(sd / f"{nm}.xyz", [export_atoms(pool.atoms[int(r.i)], r) for r in D.itertuples()])
@@ -567,11 +709,14 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
                 pool=dict(read=pool.read_info, n_read=pool.n_read, **pool.stats), atom_ref_eh=ATOM_REF_EH,
                 energy_keys=dict(REF_energy="eV absolute label level", E_fit="eV, REF_energy - sum ATOM_REF_EH x EH2EV "
                                  "(training key)", REF_forces="eV/A"),
-                decisions={k: DECISIONS[k] for k in ("FT-split", "FT-dedupe", "FT-fcap", "FT-frame", "FT-ts-near")},
+                decisions={k: DECISIONS[k] for k in ("FT-split", "FT-dedupe", "FT-fcap", "FT-frame", "FT-ts-near", "FT-d0",
+                                                     "FT-d1val")},
                 written=_now(), **_jobtag())
-    M.write_json(sd / "meta.json", meta)
-    print(f"[data] {split_name}: train {len(train)} valid {len(valid)} test {len(test)} | valid rxns {len(V)}/"
-          f"{len(Rr)} | leak pass {leak['pass_']}", flush=True)
+    if write:
+        M.write_json(sd / "meta.json", meta)
+    print(f"[data{'' if write else ' dry'}] {split_name}: train {len(train)} valid {len(valid)} test {len(test)} | "
+          f"valid rxns {len(V)}/{len(Rr)} | leak pass {leak['pass_']} | train by input {dict(Counter(train.input))}",
+          flush=True)
     return meta
 
 
@@ -594,7 +739,7 @@ def ts_near_mask(D):
     return kind.isin(TS_NEAR_ALWAYS) | (kind.isin(TS_NEAR_IF_CLOSE) & (dform <= TS_NEAR_DFORM_A))
 
 
-def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force):
+def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False):
     Rs = [parse_run(r, with_al) for r in runs] + ([parse_run(r, with_al) for r in ALL_RUNS] if all_ else [])
     if not Rs:
         raise SystemExit("data: give run names or --all")
@@ -607,6 +752,24 @@ def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force):
     splits = {}
     for R in Rs:
         splits.setdefault(R["split"], R)
+    if dry:                                            # --dry: pool + split logic + C-2 check, nothing written
+        pool = Pool(any_al, fmax_cap)
+        out = {}
+        for s, R in splits.items():
+            m = build_split(pool, s, R, valid_frac, split_fingerprint(s, st, params), st, complete, gmeta, params,
+                            write=False)
+            out[s] = dict(counts={k: dict(n=v["n"], by_input=v["by_input"], by_kind=v["by_kind"], n_ts_near=v["n_ts_near"])
+                                  for k, v in m["counts"].items()}, leakage_C2=m["leakage_C2"])
+        print(json.dumps(dict(dry=True, inputs_complete=complete, g_report=gmeta,
+                              inputs={k: dict(present=v["present"], bytes=v.get("bytes")) for k, v in st.items()},
+                              read=pool.read_info, tag_check=pool.stats.get("tag_check"),
+                              d0_class_overlay=pool.stats.get("d0_class_overlay"),
+                              d1design_overlay={k: v for k, v in (pool.stats.get("d1design_overlay") or {}).items()
+                                                if k != "rule"},
+                              filters={k: pool.stats["filters"].get(k) for k in ("kept", "odd_electron", "dropped_fmax_cap",
+                                                                                 "not_label_level")},
+                              dform_filled=pool.stats.get("dform_filled"), splits=out), indent=1, default=str), flush=True)
+        return 0
     todo = []
     for s, R in splits.items():
         fp = split_fingerprint(s, st, params)
@@ -1048,7 +1211,8 @@ def export_mace(src, dst, R, cand, meta, o):
     _wtorch(m, dst)
     card = dict(run=R["run"], cand=cand, kind="mace", file=str(dst), dtype="float64", heads=list(getattr(m, "heads", [])),
                 elements=zs, r_max=float(m.r_max), energy="eV, absolute label level (B3LYP-D3BJ/def2-SVP SMD water)",
-                forces="eV/A", charge_spin="total_charge 0, total_spin 1 (multiplicity) defaults",
+                forces="eV/A", charge_spin="atoms.info total_charge = molecular charge (training data: D1 0, D0 also "
+                                           "-2 / +1), total_spin 1 (multiplicity, closed shell)",
                 atom_ref_added_eh=ATOM_REF_EH, split=R["split"], data_fingerprint=meta["fingerprint"],
                 usage="mace.calculators.MACECalculator(model_paths=<file>, device='cuda', default_dtype='float64')",
                 written=_now())
@@ -1129,7 +1293,8 @@ def aim_predict(model, atoms_list, device, batch=64, forces=True, idx=None):
             jj = ii[s:s + batch]
             c = torch.tensor(np.stack([atoms_list[j].positions for j in jj]), dtype=torch.float32, device=device)
             z = torch.tensor(np.stack([atoms_list[j].numbers for j in jj]), dtype=torch.int64, device=device)
-            q = torch.zeros(len(jj), dtype=torch.float32, device=device)
+            q = torch.tensor([float(atoms_list[j].info.get("total_charge", 0) or 0) for j in jj], dtype=torch.float32,
+                             device=device)                      # molecular charge (FT-aimnet; D0 has -2 / +1)
             if forces:
                 c.requires_grad_(True)
                 out = model(dict(coord=c, numbers=z, charge=q))
@@ -1208,7 +1373,7 @@ def train_aimnet(R, cand, C, sd, meta, rd, o):
         for nat, ii in aim_groups(al).items():
             d[nat] = dict(coord=np.stack([al[i].positions for i in ii]).astype(np.float32),
                           numbers=np.stack([al[i].numbers for i in ii]).astype(np.int64),
-                          charge=np.zeros(len(ii), np.float32),
+                          charge=np.array([float(al[i].info.get("total_charge", 0) or 0) for i in ii], np.float32),
                           energy=np.array([al[i].info["E_fit"] - sum(sae[int(z)] for z in al[i].numbers) for i in ii],
                                           np.float64).astype(np.float32),
                           forces=np.stack([al[i].arrays["REF_forces"] for i in ii]).astype(np.float32))
@@ -1378,8 +1543,8 @@ def cmd_train(run, cand, o):
     if not meta or not (sd / "train.xyz").is_file():
         M.not_ready(f"split {R['split']} not built: run `finetune.py data {R['run']}` first")
     if not meta["inputs_complete"] and not (o.allow_partial or R["bench"]):
-        M.not_ready(f"split {R['split']} was built from incomplete inputs (G collect not complete); rebuild with "
-                    f"`data` after G collect, or pass --allow-partial")
+        M.not_ready(f"split {R['split']} was built from incomplete inputs (G collect, or G collect --d0 once plan_d0 "
+                    f"exists, not complete); rebuild with `data` after the collects, or pass --allow-partial")
     _guard_imports()
     if o.epochs is None:
         o.epochs = 200 if C["kind"] == "mace" else 1000
@@ -1574,6 +1739,7 @@ def main(argv=None):
     a.add_argument("--fmax-cap", type=float, default=FMAX_CAP)
     a.add_argument("--valid-frac", type=float, default=VALID_FRAC)
     a.add_argument("--force", action="store_true")
+    a.add_argument("--dry", action="store_true")
     a = sub.add_parser("fetch")
     a.add_argument("cand")
     a = sub.add_parser("train")
@@ -1603,7 +1769,7 @@ def main(argv=None):
     sub.add_parser("status")
     o = ap.parse_args(argv)
     if o.cmd == "data":
-        return cmd_data(o.runs, o.all, o.with_al, o.fmax_cap, o.valid_frac, o.force)
+        return cmd_data(o.runs, o.all, o.with_al, o.fmax_cap, o.valid_frac, o.force, o.dry)
     if o.cmd == "fetch":
         return cmd_fetch(o.cand)
     if o.cmd == "train":

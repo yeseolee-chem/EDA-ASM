@@ -35,6 +35,26 @@ CLI (exit 0 = done / up to date, 2 = incomplete (resubmit) or usage, 3 = STOP; s
                                             rigidly translated copy (identical = ORCA ignores the .hess $atoms
                                             coordinates; decision G-2sel) -> results/G2_probe_<rxn>.json
   collect                                   MLTENV=reactot: $MLT/dft/gen_{G1,G2,G3}.extxyz + results/G_report.json
+                                            (D1 only: never reads the D0 plan or D0 records)
+
+D0 extension (user decision 'D0' 2026-11-04, results/DECISIONS.md; code in gen_d0.py, decisions gen_d0.DECISIONS_D0):
+the Coley 5,269 D0 reactions (repo-root labels_all.json, 5,260 ok) go into the MLIP training data with the D1 rules;
+a SEPARATE plan, separate records / Hessians / STOP file / outputs; evaluation stays on the D1 T1 folds.
+  plan_d0 [--limit N] [--n-g2 auto|K] [--n-near 2|1] [--force]
+                                            MLTENV=reactot: $MLT/dft/plan/{plan_d0.parquet, g2_plan_d0.json,
+                                            g2_pool_d0.json, d0_class.csv, plan_d0_meta.json}, results/G_plan_d0.json
+                                            (no QM). Re-running with another --n-g2 only changes D0G2 (prefix of the
+                                            stratified ranking); auto = budget rule on the g0_d0 fits when present;
+                                            --n-near may change after D0 records exist (the n1 / i rows are identical)
+  g0_d0 [--n-rand 30] [--n-label 10] [--n-g2 auto|K] [--label-rxns a,b] [--max-atoms N]
+                                            MLTENV=reactot, 16 cores: D0 G-0 -> results/G0_estimate_d0.json (exit 3 =
+                                            D1 (max of G-0 and observed) + D0 prediction > 5,000 core-h, also reported
+                                            for --n-near 1; D0 parity is recorded, never a stop; auto pilots: 1 D0G2
+                                            pilot only if the plan selects D0G2 reactions)
+  run <D0G1|D0G3> <i|@I> <n> [--only ids] [--rev] [--dry]     as run G1/G3, records $MLT/dft/runs/<D0G1|D0G3>/
+  run_g2 <i|@I> <n> --d0 [--only rxns] [--dry]                 as run_g2, units g2_plan_d0.json, $MLT/dft/runs/D0G2/
+  collect --d0                              MLTENV=reactot: $MLT/dft/gen_{D0G1,D0G2,D0G3}.extxyz +
+                                            results/G_report_d0.json (D1 outputs untouched)
 
 Outputs ($MLT = $MLT_SCRATCH, default /gpfs/tmp_cpu2/yeseo1ee/mlts)
   $MLT/dft/plan/plan.parquet   struct_id, group, kind, rxn_ids, folds, dipoles (leakage tags, mlt_common), n_atoms,
@@ -95,6 +115,8 @@ sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 import orca_io as OI  # noqa: E402
 
+sys.modules.setdefault("gen_dft", sys.modules[__name__])   # gen_d0 imports this module: one copy when run as __main__
+
 CODE_VERSION = "mlts-gen-dft-1"
 T_START = time.time()
 
@@ -104,12 +126,23 @@ PLAN_DIR = DFT / "plan"
 PLAN_PQ, PLAN_META, G2_PLAN = PLAN_DIR / "plan.parquet", PLAN_DIR / "plan_meta.json", PLAN_DIR / "g2_plan.json"
 RUNS, HESS_DIR, STEPS = DFT / "runs", DFT / "hess", DFT / "steps"
 STOP_FILE = DFT / "STOP"
+STOP_D1 = STOP_FILE                           # the D1 STOP path (STOP_FILE becomes STOP_D0 in a D0 process)
 D1G3_SHADOW = DFT / "g2" / "_d1g3"            # D1G3_SCRATCH for the d1_g3 import (nothing is written there)
 EXT = {g: DFT / f"gen_{g}.extxyz" for g in ("G1", "G2", "G3")}
 G_PLAN_JSON, G0_JSON = M.RES / "G_plan.json", M.RES / "G0_estimate.json"
 G_REPORT, G2_CHECK = M.RES / "G_report.json", M.RES / "G2_check.json"
 G_STATUS = M.ANALYSIS / "d1_g2" / "results" / "G_status.csv"
 G3_UNITS = M.G3 / "O" / "units"               # Phase I data: L.<rxn> (G3L, 20) and B.<rxn> (Part B, 40)
+# D0 (gen_d0.py): separate plan / Hessian cache / STOP file / outputs, so the D1 plan, run and collect paths never see them
+D0_GROUPS = ("D0G1", "D0G2", "D0G3")
+PLAN_D0_PQ, PLAN_D0_META = PLAN_DIR / "plan_d0.parquet", PLAN_DIR / "plan_d0_meta.json"
+G2_PLAN_D0, G2_POOL_D0, D0_CLASS_CSV = PLAN_DIR / "g2_plan_d0.json", PLAN_DIR / "g2_pool_d0.json", PLAN_DIR / "d0_class.csv"
+HESS_D0 = DFT / "hess_d0"                    # xTB Freq at the D0 label TSs (d0ts_<rid>) and the D0 molecules (d0m...)
+STOP_D0 = DFT / "STOP_D0"
+EXT_D0 = {g: DFT / f"gen_{g}.extxyz" for g in D0_GROUPS}
+G_PLAN_D0_JSON, G0_D0_JSON, G_REPORT_D0 = M.RES / "G_plan_d0.json", M.RES / "G0_estimate_d0.json", M.RES / "G_report_d0.json"
+UNIT_KINDS = ("react_ref", "react_disp", "d0_react_ref", "d0_react_disp", "d0_ts_near", "d0_ts_imag")   # sliced by mol_id
+D0_TS_DISP_KINDS = ("d0_ts_near", "d0_ts_imag")
 
 # ---------------------------------------------------------------- constants
 E_RANGE = (0.5, 3.0)              # kcal/mol, harmonic energy of a normal-mode displacement
@@ -271,10 +304,23 @@ def write_stop(msg):
 
 
 def stopped():
-    if STOP_FILE.is_file():
-        print(f"[STOP] {STOP_FILE} exists: {STOP_FILE.read_text().strip()}", file=sys.stderr, flush=True)
-        return True
+    """the D1 STOP always counts (also in a D0 process, whose STOP_FILE is STOP_D0 after d0_stopped)."""
+    for f in dict.fromkeys((STOP_D1, STOP_FILE)):
+        if f.is_file():
+            print(f"[STOP] {f} exists: {f.read_text().strip()}", file=sys.stderr, flush=True)
+            return True
     return False
+
+
+def d0_stopped():
+    """D0 commands: the D1 STOP (systematic, e.g. the level check) blocks them; their own failures go to STOP_D0 only
+    (write_stop), so a D0 problem never blocks a D1 resubmission (decision D0-stop). stopped() keeps checking the D1
+    STOP after the switch."""
+    global STOP_FILE
+    if stopped():
+        return True
+    STOP_FILE = STOP_D0
+    return stopped()
 
 
 def n_heavy(syms):
@@ -632,9 +678,10 @@ def phase_i_rxns():
     return out
 
 
-def g2_hess_check(rid):
-    """the g3l.hess_check rules without the D1 modules (process-pool worker)."""
-    g2d = M.G2_FINAL / str(rid)
+def g2_hess_check(rid, base=None):
+    """the g3l.hess_check rules without the D1 modules (process-pool worker); base = the g2_final root (D1 $G2 default,
+    gen_d0 passes the G2c D0 root)."""
+    g2d = Path(base or M.G2_FINAL) / str(rid)
     hp, xp, ip = g2d / "work" / "ts.hess", g2d / "ts.xyz", g2d / "work" / "ts.inp"
     out = dict(rxn_id=rid, ok=False, reason="", hess=str(hp), start=str(xp))
     if not ((g2d / ".done").is_file() and xp.is_file()):
@@ -860,11 +907,12 @@ def cmd_plan(limit=None, n_g2=N_G2, force=False):
     return 0
 
 
-def load_plan():
+def load_plan(d0=False):
     import pandas as pd
-    if not PLAN_PQ.is_file():
-        M.not_ready(f"{PLAN_PQ} missing: run 'gen_dft.py plan' first")
-    return pd.read_parquet(PLAN_PQ)
+    p = PLAN_D0_PQ if d0 else PLAN_PQ
+    if not p.is_file():
+        M.not_ready(f"{p} missing: run 'gen_dft.py {'plan_d0' if d0 else 'plan'}' first")
+    return pd.read_parquet(p)
 
 
 # ================================================================ EnGrad worker (run, g0)
@@ -974,9 +1022,11 @@ def engrad(work, text, syms, pos, env, name="g"):
                 scf_cycles=int(ns[-1]) if ns else None)
 
 
-def mol_hess(mid, syms, pos, charge, mult, ctx):
-    """xTB Hessian of a G3 molecule at its reference geometry, cached ($MLT/dft/hess/<mid>.hess.gz + .json)."""
-    hz, hj = HESS_DIR / f"{mid}.hess.gz", HESS_DIR / f"{mid}.json"
+def mol_hess(mid, syms, pos, charge, mult, ctx, hdir=None, extra=None):
+    """xTB Hessian of a G3 molecule at its reference geometry, cached ($MLT/dft/hess/<mid>.hess.gz + .json).
+    D0 (gen_d0): hdir = $MLT/dft/hess_d0 (D0 label TSs d0ts_<rid> and D0 molecules), extra = fields added to the json."""
+    hdir = Path(hdir or HESS_DIR)
+    hz, hj = hdir / f"{mid}.hess.gz", hdir / f"{mid}.json"
     with ctx.lock("hess:" + mid):
         info = _rj(hj)
         if info is not None and info.get("status") == "ok" and hz.is_file():
@@ -1002,21 +1052,28 @@ def mol_hess(mid, syms, pos, charge, mult, ctx):
                     break
             if not ok:
                 M.write_json(hj, dict(status="fail", reason="xTB Freq failed twice", mol_id=mid, runs=runs,
-                                      core_h=sum(r["wall_s"] for r in runs) / 3600, finished=_now()))
+                                      core_h=sum(r["wall_s"] for r in runs) / 3600, finished=_now(), **(extra or {})))
                 raise HessFail("xTB Freq failed twice")
             write_gz(hz, work / "h.hess")
             fr = hess_freqs(work / "h.hess")
             info = dict(status="ok", mol_id=mid, header=XTB_HEADER, runs=runs, core_h=sum(r["wall_s"] for r in runs) / 3600,
                         imag_cm=[f for f in fr if f < 0], n_freq=len(fr), finished=_now(), slurm_job=_jobtag())
+            if extra:
+                info.update(extra)
             M.write_json(hj, info)
             return hz, info
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
 
-def mol_disp(r, syms, pos, ctx):
+def _hess_extra(r, syms):
+    return dict(n_atoms=len(syms), d0_id=int(r["d0_id"]), kind=r["kind"]) if r["kind"].startswith("d0_") else None
+
+
+def mol_disp(r, syms, pos, ctx, hdir=None):
     """react_disp geometry: decision G-near on the molecule's xTB Hessian with its own seeded RNG."""
-    hz, info = mol_hess(r["mol_id"], syms, pos, int(r["charge"]), int(r["mult"]), ctx)
+    hz, info = mol_hess(r["mol_id"], syms, pos, int(r["charge"]), int(r["mult"]), ctx, hdir=hdir,
+                        extra=_hess_extra(r, syms))
     hd = OI.read_hess(hz)
     if list(hd["symbols"]) != list(syms):
         raise HessFail("hess atom order != reference")
@@ -1036,6 +1093,39 @@ def mol_disp(r, syms, pos, ctx):
     return pos + dx, inf
 
 
+def ts_disp_d0(r, syms, pos, ctx):
+    """d0_ts_near / d0_ts_imag geometry (decision D0-G1): the G1 rules on an xTB Freq at the D0 label TS, computed here
+    (no xTB Hessian exists at the Coley TS) and cached as $MLT/dft/hess_d0/d0ts_<rid>.hess.gz. Draws exactly in the G1
+    order with default_rng(seed = SEED + D0 offset + rid): E1, E2, |delta|, sign, direction 1, direction 2 (the imaginary
+    displacement uses no draw), so the 3 rows of a reaction are reproducible independently of each other."""
+    hz, info = mol_hess(r["mol_id"], syms, pos, int(r["charge"]), int(r["mult"]), ctx, hdir=HESS_D0,
+                        extra=_hess_extra(r, syms))
+    hd = OI.read_hess(hz)
+    if list(hd["symbols"]) != list(syms):
+        raise HessFail("hess atom order != D0 label TS")
+    sh = hd["pos_bohr"] * M.BOHR2A - pos
+    dev = float(np.abs(sh - sh.mean(0)).max())
+    if dev > HESS_TOL_A:
+        raise HessFail(f"hess geometry != D0 label TS ({dev:.2e} A)")
+    lam, L, nu, sm, ntr = vib_modes(hd["hessian"], hd["masses"], hd["pos_bohr"])
+    d = json.loads(r["disp"])
+    j = int(d["e_index"])
+    rng = np.random.default_rng(int(r["seed"]))
+    e12 = rng.uniform(*E_RANGE, size=2)
+    dmag = float(rng.uniform(*DELTA_RANGE))
+    sgn = 1.0 if rng.random() < 0.5 else -1.0
+    if j == 0:
+        dx, inf = imag_displace(L, sm, nu, pos, d["pairs"], sgn * dmag)
+    else:
+        dx, inf = nm_displace(rng, lam, L, sm, nu, float(e12[0]))
+        if j == 2:
+            dx, inf = nm_displace(rng, lam, L, sm, nu, float(e12[1]))
+    inf.update(hess=str(hz), hess_core_h=info.get("core_h"), n_imag_xtb=int((nu < 0).sum()),
+               imag_cm=[float(x) for x in nu[nu < 0]], ntr=ntr, freq_dev_cm=freq_dev(nu, ntr, hess_freqs(hz)),
+               hess_geom_dev_A=dev, e_index=j, seed=int(r["seed"]))
+    return pos + dx, inf
+
+
 def run_struct(r, ctx):
     """one plan row -> runs/<group>/<struct_id>.json (+ .out.gz); skipped when the record exists."""
     group, sid = r["group"], r["struct_id"]
@@ -1049,9 +1139,16 @@ def run_struct(r, ctx):
                n_heavy=n_heavy(syms), charge=int(r["charge"]), mult=int(r["mult"]), src=r["src"],
                plan_disp=json.loads(r["disp"] or "{}"), code=CODE_VERSION, level="label",
                keywords=M.LABEL_GRAD_LINE.strip(), slurm_job=_jobtag(), host=socket.gethostname())
-    if r["kind"] == "react_disp":
+    if r["kind"].startswith("d0_"):                              # D0 plan rows only (gen_d0): D0 id / class
+        rec.update(d0_id=int(r["d0_id"]), d0_class=str(r["d0_class"]))
+    if r["kind"] in ("react_disp", "d0_react_disp") + D0_TS_DISP_KINDS:
         try:
-            pos, rec["disp"] = mol_disp(r, syms, pos, ctx)
+            if r["kind"] == "react_disp":
+                pos, rec["disp"] = mol_disp(r, syms, pos, ctx)
+            elif r["kind"] == "d0_react_disp":
+                pos, rec["disp"] = mol_disp(r, syms, pos, ctx, hdir=HESS_D0)
+            else:
+                pos, rec["disp"] = ts_disp_d0(r, syms, pos, ctx)
         except HessFail as e:
             rec.update(status="fail", reason=f"xtb_hessian: {e}", symbols=syms, pos_A=pos.tolist(), core_h=0.0,
                        attempts=[], finished=_now())
@@ -1116,13 +1213,16 @@ def cmd_run(group, i, n, only=None, dry=False, rev=False):
     """rev (--rev, decision G-helper): the same slice in reverse order (smallest first). A helper task
     `run <group> 0 1 --rev` walks the whole group from the small end while the n-slice tasks walk theirs from the
     large end; run_struct skips structures whose record exists when it claims them, so the two meet without
-    redoing finished work (only the structures in flight at the meeting point can run twice)."""
-    if group not in ("G1", "G3"):
-        print("run: group must be G1 or G3", file=sys.stderr)
+    redoing finished work (only the structures in flight at the meeting point can run twice).
+    D0G1 / D0G3 (gen_d0 plan_d0): the same code on $MLT/dft/plan/plan_d0.parquet, records runs/<D0G1|D0G3>/, a D0
+    reaction's 3 TS rows (one xTB TS Hessian) and a D0 molecule's 3 rows stay in one slice (UNIT_KINDS)."""
+    if group not in ("G1", "G3", "D0G1", "D0G3"):
+        print("run: group must be G1, G3, D0G1 or D0G3", file=sys.stderr)
         return 2
-    if stopped():
+    d0 = group.startswith("D0")
+    if (d0_stopped() if d0 else stopped()):
         return 3
-    P = load_plan()
+    P = load_plan(d0=d0)
     G = P[P.group == group]
     if only:
         rows = [r for r in G.to_dict("records") if r["struct_id"] in only]
@@ -1133,7 +1233,7 @@ def cmd_run(group, i, n, only=None, dry=False, rev=False):
             return 2
         units = {}
         for r in G.to_dict("records"):
-            key = r["mol_id"] if r["kind"] in ("react_ref", "react_disp") else r["struct_id"]
+            key = r["mol_id"] if r["kind"] in UNIT_KINDS else r["struct_id"]
             units.setdefault(key, []).append(r)
         U = [(k, sum(float(x["n_atoms"]) ** 3 for x in v), v) for k, v in units.items()]
         if dry:
@@ -1332,15 +1432,18 @@ def cmd_g2_probe(rid, maxiter=2, shift_bohr=1.0):
 
 
 def g2_unit(u, ctx, D, O, G3L):
-    """one G-2 OptTS -> runs/G2/<rxn>/{unit.json (last), steps.json, ...}."""
+    """one G-2 OptTS -> runs/G2/<rxn>/{unit.json (last), steps.json, ...}. A D0 unit (gen_d0) carries run_group 'D0G2'
+    (runs/D0G2/<d0 rxn>/) and its own label_ts (the Coley TS); D1 units have neither key set differently."""
     rid = int(u["rxn_id"])
-    ud = RUNS / "G2" / str(rid)
+    ud = RUNS / u.get("run_group", "G2") / str(rid)
     uj = ud / "unit.json"
     if uj.is_file():
         return "skip", 0.0
     base = dict(rxn_id=rid, struct_id=u["struct_id"], job_id=u["job_id"], n_atoms=u["n_atoms"], dipole=u["dipole"],
                 g1_class=u["g1_class"], fold_T1=u["fold"], rxn_ids=u["rxn_ids"], folds=u["folds"], dipoles=u["dipoles"],
                 code=CODE_VERSION, level="label", slurm_job=_jobtag(), host=socket.gethostname())
+    if "d0_id" in u:
+        base.update(d0_id=int(u["d0_id"]), d0_class=u["d0_class"], charge=int(u["charge"]), run_group=u["run_group"])
     sp = ud / "starts.json"
     starts = _rj(sp) or []
     if len(starts) >= MAX_STARTS:
@@ -1390,7 +1493,7 @@ def g2_unit(u, ctx, D, O, G3L):
         if fin is not None:
             if list(fin[0]) != list(syms):
                 raise RuntimeError("ORCA final geometry has a different atom order")
-            lts = M.read_xyz(M.label_ts(rid))
+            lts = M.read_xyz(u.get("label_ts") or M.label_ts(rid))
             fx, lx = np.asarray(fin[1], float), np.asarray(lts[1], float)
             shp = dict(label=O.shape(D, (list(fin[0]), fx), (list(lts[0]), lx), pairs),
                        start=O.shape(D, (list(fin[0]), fx), (list(syms), xyz), pairs),
@@ -1445,14 +1548,20 @@ def g2_unit(u, ctx, D, O, G3L):
     return status, core
 
 
-def cmd_run_g2(i, n, only=None, dry=False):
-    if stopped():
+def cmd_run_g2(i, n, only=None, dry=False, d0=False):
+    """d0 (--d0): the D0G2 units of g2_plan_d0.json (with --only: any unit of the ranked pool g2_pool_d0.json, e.g. the
+    g0_d0 pilot); records runs/D0G2/<d0 rxn>/; the guard is the same D1 G3L input check (same builder)."""
+    if (d0_stopped() if d0 else stopped()):
         return 3
-    if not G2_PLAN.is_file():
-        M.not_ready(f"{G2_PLAN} missing: run 'gen_dft.py plan' first")
-    units = M.read_json(G2_PLAN)["rxns"]
+    gp, grp = (G2_PLAN_D0, "D0G2") if d0 else (G2_PLAN, "G2")
+    if not gp.is_file():
+        M.not_ready(f"{gp} missing: run 'gen_dft.py {'plan_d0' if d0 else 'plan'}' first")
+    units = M.read_json(gp)["rxns"]
+    if d0 and only and G2_POOL_D0.is_file():
+        units = M.read_json(G2_POOL_D0)["ranked"]
     if dry:
-        return dry_report("run_g2", [(str(u["rxn_id"]), float(u["n_atoms"]) ** 3, u) for u in units], n)
+        return dry_report(f"run_g2{' --d0' if d0 else ''}", [(str(u["rxn_id"]), float(u["n_atoms"]) ** 3, u)
+                                                             for u in units], n)
     try:
         D, O, G3L = d1_g3()
         g = g2_guard(D, G3L)
@@ -1470,20 +1579,20 @@ def cmd_run_g2(i, n, only=None, dry=False):
             return 2
         mine, loads = slice_units([(str(u["rxn_id"]), float(u["n_atoms"]) ** 3, u) for u in units], n, i)
     slots = max(1, _cpus() // G2_NPROCS)
-    todo = [u for u in mine if not (RUNS / "G2" / str(u["rxn_id"]) / "unit.json").is_file()]
-    print(f"[run_g2 {i}/{n}] {len(mine)} reactions, {len(todo)} to do, {slots} slots x {G2_NPROCS} ranks, guard "
+    todo = [u for u in mine if not (RUNS / grp / str(u["rxn_id"]) / "unit.json").is_file()]
+    print(f"[run_g2{' --d0' if d0 else ''} {i}/{n}] {len(mine)} reactions, {len(todo)} to do, {slots} slots x {G2_NPROCS} ranks, guard "
           f"{g['n_header_identical']}/{g['n']} header identical, job {_jobtag()} on {socket.gethostname()}, "
           f"{time_left_h():.1f} h left", flush=True)
     ctx = Ctx("g2")
     t0 = time.time()
     run_items(todo, slots, ctx, RESERVE_G2_H, lambda u, c: g2_unit(u, c, D, O, G3L), lambda u: u["rxn_id"])
-    left = [u["rxn_id"] for u in mine if not (RUNS / "G2" / str(u["rxn_id"]) / "unit.json").is_file()]
-    summ = dict(group="G2", slice=i, n_slices=n, only=sorted(only) if only else None, n_rxns=len(mine),
+    left = [u["rxn_id"] for u in mine if not (RUNS / grp / str(u["rxn_id"]) / "unit.json").is_file()]
+    summ = dict(group=grp, slice=i, n_slices=n, only=sorted(only) if only else None, n_rxns=len(mine),
                 n_todo_at_start=len(todo), stats=dict(ctx.stats), core_h=ctx.core_h, wall_s=time.time() - t0,
                 n_left=len(left), left=left, halt=ctx.halt, timed_out=ctx.timed_out, guard=g, load_all=loads,
                 slurm_job=_jobtag(), host=socket.gethostname(), finished=_now(), code=CODE_VERSION)
     if not only:
-        M.write_json(STEPS / f"run_G2_{i:02d}of{n:02d}.json", summ)
+        M.write_json(STEPS / f"run_{grp}_{i:02d}of{n:02d}.json", summ)
     print(json.dumps({k: summ[k] for k in ("stats", "core_h", "n_left", "halt", "timed_out")}), flush=True)
     if ctx.halt:
         return 3
@@ -1526,10 +1635,10 @@ def pick_pilots(units, k):
     return [int(pool[p]["rxn_id"]) for p in pos]
 
 
-def run_g2_subprocess(ids):
-    """the G-2 pilots: 'gen_dft.py run_g2 0 1 --only ...' in the D1 env (jobs/env.sh MLTENV=d1)."""
-    cmd = ["bash", "-c", 'cd "$0" && export MLTENV=d1 && source jobs/env.sh && exec "$PY" gen_dft.py run_g2 0 1 --only "$1"',
-           str(HERE), ",".join(str(x) for x in ids)]
+def run_g2_subprocess(ids, d0=False):
+    """the G-2 pilots: 'gen_dft.py run_g2 0 1 --only ...' in the D1 env (jobs/env.sh MLTENV=d1); d0 adds --d0."""
+    cmd = ["bash", "-c", 'cd "$0" && export MLTENV=d1 && source jobs/env.sh && exec "$PY" gen_dft.py run_g2 0 1 --only "$1"'
+           + (" --d0" if d0 else ""), str(HERE), ",".join(str(x) for x in ids)]
     env = dict(os.environ, SLURM_CPUS_PER_TASK=str(max(G2_NPROCS, _cpus())))
     t0 = time.time()
     p = subprocess.run(cmd, env=env)
@@ -1813,12 +1922,25 @@ def main(argv=None):
     a.add_argument("n", type=int)
     a.add_argument("--only", default=None)
     a.add_argument("--dry", action="store_true")
+    a.add_argument("--d0", action="store_true")
     a = sub.add_parser("g2_check")
     a.add_argument("--rxns", default=None)
     a = sub.add_parser("g2_probe")
     a.add_argument("rxn", type=int)
     a.add_argument("--maxiter", type=int, default=2)
-    sub.add_parser("collect")
+    a = sub.add_parser("collect")
+    a.add_argument("--d0", action="store_true")
+    a = sub.add_parser("plan_d0")
+    a.add_argument("--limit", type=int, default=None)
+    a.add_argument("--n-g2", default="auto")
+    a.add_argument("--n-near", type=int, default=2)
+    a.add_argument("--force", action="store_true")
+    a = sub.add_parser("g0_d0")
+    a.add_argument("--n-rand", type=int, default=30)
+    a.add_argument("--n-label", type=int, default=10)
+    a.add_argument("--n-g2", default="auto")
+    a.add_argument("--label-rxns", default=None)
+    a.add_argument("--max-atoms", type=int, default=None)
     try:
         x = ap.parse_args(argv)
     except SystemExit:
@@ -1832,13 +1954,22 @@ def main(argv=None):
         return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.rev)
     if x.cmd == "run_g2":
         only = _ints(x.only)
-        return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry)
+        return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.d0)
     if x.cmd == "g2_check":
         return cmd_g2_check(_ints(x.rxns))
     if x.cmd == "g2_probe":
         return cmd_g2_probe(x.rxn, x.maxiter)
     if x.cmd == "collect":
+        if x.d0:
+            import gen_d0                                                      # noqa: E402  (D0 only)
+            return gen_d0.cmd_collect_d0()
         return cmd_collect()
+    if x.cmd == "plan_d0":
+        import gen_d0                                                          # noqa: E402
+        return gen_d0.cmd_plan_d0(x.limit, x.n_g2, x.force, x.n_near)
+    if x.cmd == "g0_d0":
+        import gen_d0                                                          # noqa: E402
+        return gen_d0.cmd_g0_d0(x.n_rand, x.n_label, x.n_g2, _ints(x.label_rxns), x.max_atoms)
     print(__doc__)
     return 2
 
