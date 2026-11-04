@@ -1452,6 +1452,10 @@ def g2_unit(u, ctx, D, O, G3L):
     uj = ud / "unit.json"
     if uj.is_file():
         return "skip", 0.0
+    if getattr(ctx, "skip_inflight_h", None):                   # --rev helper (decision G2-helper): a unit another job
+        spf = ud / "starts.json"                                   # started recently is left to that job
+        if spf.is_file() and time.time() - spf.stat().st_mtime < ctx.skip_inflight_h * 3600:
+            return "inflight_skip", 0.0
     base = dict(rxn_id=rid, struct_id=u["struct_id"], job_id=u["job_id"], n_atoms=u["n_atoms"], dipole=u["dipole"],
                 g1_class=u["g1_class"], fold_T1=u["fold"], rxn_ids=u["rxn_ids"], folds=u["folds"], dipoles=u["dipoles"],
                 code=CODE_VERSION, level="label", slurm_job=_jobtag(), host=socket.gethostname())
@@ -1561,9 +1565,12 @@ def g2_unit(u, ctx, D, O, G3L):
     return status, core
 
 
-def cmd_run_g2(i, n, only=None, dry=False, d0=False):
+def cmd_run_g2(i, n, only=None, dry=False, d0=False, rev=False):
     """d0 (--d0): the D0G2 units of g2_plan_d0.json (with --only: any unit of the ranked pool g2_pool_d0.json, e.g. the
-    g0_d0 pilot); records runs/D0G2/<d0 rxn>/; the guard is the same D1 G3L input check (same builder)."""
+    g0_d0 pilot); records runs/D0G2/<d0 rxn>/; the guard is the same D1 G3L input check (same builder).
+    rev (--rev, decision G2-helper): the slice smallest first, and units whose starts.json was written by another job in
+    the last 12 h are skipped (helpers next to the largest-first tasks; they meet without running a unit twice except
+    when a largest-first task reaches a unit the helper is running)."""
     if (d0_stopped() if d0 else stopped()):
         return 3
     gp, grp = (G2_PLAN_D0, "D0G2") if d0 else (G2_PLAN, "G2")
@@ -1591,12 +1598,16 @@ def cmd_run_g2(i, n, only=None, dry=False, d0=False):
             print(f"run_g2: slice {i} outside 0..{n - 1}", file=sys.stderr)
             return 2
         mine, loads = slice_units([(str(u["rxn_id"]), float(u["n_atoms"]) ** 3, u) for u in units], n, i)
+    if rev:
+        mine = mine[::-1]
     slots = max(1, _cpus() // G2_NPROCS)
     todo = [u for u in mine if not (RUNS / grp / str(u["rxn_id"]) / "unit.json").is_file()]
     print(f"[run_g2{' --d0' if d0 else ''} {i}/{n}] {len(mine)} reactions, {len(todo)} to do, {slots} slots x {G2_NPROCS} ranks, guard "
           f"{g['n_header_identical']}/{g['n']} header identical, job {_jobtag()} on {socket.gethostname()}, "
           f"{time_left_h():.1f} h left", flush=True)
     ctx = Ctx("g2")
+    if rev:
+        ctx.skip_inflight_h = 12.0
     t0 = time.time()
     run_items(todo, slots, ctx, RESERVE_G2_H, lambda u, c: g2_unit(u, c, D, O, G3L), lambda u: u["rxn_id"])
     left = [u["rxn_id"] for u in mine if not (RUNS / grp / str(u["rxn_id"]) / "unit.json").is_file()]
@@ -1605,7 +1616,7 @@ def cmd_run_g2(i, n, only=None, dry=False, d0=False):
                 n_left=len(left), left=left, halt=ctx.halt, timed_out=ctx.timed_out, guard=g, load_all=loads,
                 slurm_job=_jobtag(), host=socket.gethostname(), finished=_now(), code=CODE_VERSION)
     if not only:
-        M.write_json(STEPS / f"run_{grp}_{i:02d}of{n:02d}.json", summ)
+        M.write_json(STEPS / f"run_{grp}{'_rev' if rev else ''}_{i:02d}of{n:02d}.json", summ)
     print(json.dumps({k: summ[k] for k in ("stats", "core_h", "n_left", "halt", "timed_out")}), flush=True)
     if ctx.halt:
         return 3
@@ -1937,6 +1948,7 @@ def main(argv=None):
     a.add_argument("--only", default=None)
     a.add_argument("--dry", action="store_true")
     a.add_argument("--d0", action="store_true")
+    a.add_argument("--rev", action="store_true")
     a = sub.add_parser("g2_check")
     a.add_argument("--rxns", default=None)
     a = sub.add_parser("g2_probe")
@@ -1968,7 +1980,7 @@ def main(argv=None):
         return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.rev, x.shuffle)
     if x.cmd == "run_g2":
         only = _ints(x.only)
-        return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.d0)
+        return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.d0, x.rev)
     if x.cmd == "g2_check":
         return cmd_g2_check(_ints(x.rxns))
     if x.cmd == "g2_probe":
