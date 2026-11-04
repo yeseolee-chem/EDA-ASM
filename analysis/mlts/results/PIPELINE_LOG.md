@@ -21,3 +21,8 @@
 - 2026-11-05T02:09 p15 j1062424 | N-scan done
 - 2026-11-05T02:09 p15 j1062424 | commit 53538229: N-scan done (complete) | push origin mlts ok
 - 2026-11-05T06:33 p41 j1062548 | G-D0 done | FT-dp: blocked -> ready
+- 2026-11-05T06:33 p41 j1062548 | commit fdb07b58: G-D0 done (complete) | push origin mlts ok | FT-dp submit 1062552 data crit
+- 2026-11-05T06:53 p43 j1062566 | FT-dp: outputs incomplete -> round 1 | FT-dp submit 1062572 data crit
+- 2026-11-05T07:04 p44 j1062571 | FT-dp: outputs incomplete -> round 2 | FT-dp submit 1062579 data crit
+- 2026-11-05T07:14 p45 j1062578 | FT-dp adopt 1062580 (ft_data, CANCELLED by 1627) from sacct history as data
+- 2026-11-05T07:24 p46 j1062583 | FT-dp done | FT-p: blocked -> ready
