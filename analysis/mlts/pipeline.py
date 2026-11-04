@@ -1341,15 +1341,17 @@ def nur_report_ok(P, n_done):
 def units_nscan(P, S, st):
     """one unit per uploaded, not yet scanned tar: `inv_nurion.py scan <tar> --workers 8 ::: inv_nurion.py verify
     <tar>` (cpu1/cpu2, 8 cores, 24 GB; done = <out>/<tar>/.done); a collect after them whenever more tars are processed
-    than the last N_report counted. Tars still uploading or not uploaded wait (the stage re-arms, decision N-scan). The
-    user deletes the scanned copies by hand (no release)."""
+    than the last N_report counted. Tars still uploading or not uploaded wait (the stage re-arms, decision N-scan).
+    After a successful verify the uploaded copy is deleted by `release` (user 2026-11-05 00:1x: "업로드가 끝나면 …
+    파일들을 뽑아내고 … tar 파일들 전부 삭제"; release re-checks sha256, .done, report and the extxyz read-back first)."""
     rows = nur_tars(P)
     u = []
     for r in rows:
         if r["state"] == "pending":
             stem = r["tar"]
             u += one(f"scan/{nur_short(stem)}", ["inv_nurion.py", "scan", stem, "--workers", "8", ":::", "inv_nurion.py",
-                                                 "verify", stem], env="reactot", part="C", c=8, mem=24, disk_gb=1.0,
+                                                 "verify", stem, ":::", "inv_nurion.py", "release", stem, "--reviewed-by",
+                                                 "user-auto-delete-2026-11-05"], env="reactot", part="C", c=8, mem=24, disk_gb=1.0,
                      done=lambda P_, s=stem: (nur_out(P_) / s / ".done").is_file())
     nd = sum(r["state"] in ("done", "released") for r in rows)
     goal = sum(r["state"] in ("pending", "done", "released") for r in rows)      # processed once these scans end

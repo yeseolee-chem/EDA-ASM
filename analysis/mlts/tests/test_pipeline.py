@@ -1637,7 +1637,8 @@ def n7_nscan():
     c = E.calls("inv_nurion.py scan")
     check(len(c) == 1 and f"inv_nurion.py scan {stems[0]} --workers 8 ::: inv_nurion.py verify {stems[0]}" in c[0]
           and "-p cpu1,cpu2" in c[0] and "--cpus-per-task=8" in c[0] and "--mem=24G" in c[0] and "MLTENV=reactot" in c[0]
-          and "release" not in c[0], f"one scan ::: verify for the uploaded tar only ({c})")
+          and f"::: inv_nurion.py release {stems[0]} --reviewed-by user-auto-delete-2026-11-05" in c[0],
+          f"one scan ::: verify ::: release (user auto-delete 11-05) for the uploaded tar only ({c})")
     ft = E.stage("FT-dp")
     check(ft["status"] == "blocked" and "N partial ok" in ft["why"] and not E.calls("finetune.py data"),
           f"FT-dp waits for the Nurion data ({ft['status']}: {ft['why'][:120]})")
