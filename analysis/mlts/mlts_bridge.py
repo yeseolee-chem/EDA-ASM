@@ -329,7 +329,10 @@ class MACEWrap:
                 o = model(b.to_dict(), compute_force=True, training=False)
                 F.append(o["forces"].detach().double().cpu().numpy().reshape(-1, n3))
                 k += bs
-            except torch.cuda.OutOfMemoryError:
+            except RuntimeError as e:          # torch.cuda.OutOfMemoryError, or TorchScript's plain RuntimeError
+                if not (isinstance(e, torch.cuda.OutOfMemoryError) or "out of memory" in str(e).lower()):
+                    raise
+                b = o = None                   # drop the failed batch before freeing the cache
                 torch.cuda.empty_cache()
                 if bs == 1:
                     raise

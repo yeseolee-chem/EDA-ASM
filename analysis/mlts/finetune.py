@@ -29,12 +29,25 @@ d0_react_disp); the C-2 check also derives the D0 reaction from the struct id (d
 d0g2_<rid>_s*), independent of the info, STOPs on a holdout TS-derived row, on a D0 TS kind without any D0 reaction and
 on a G4 row that is neither a D1-target row nor d0_id-tagged; the holdout file must match every recorded sha256
 (plan, results copy, data jsons; missing / changed = STOP); its sha256 enters the split fingerprint and every data json.
+Nurion (user decision 'Nurion', DECISIONS FT-nurion): NUR = $MLT/dft/nurion.extxyz.gz (inv_nurion collect; kinds nur_*
+of D1-target jobs, nur_x_* of every other job; leakage tags set by inv_nurion) is a required input of every run (complete
+= present and described by results/N_report.json; N_report complete = all 23 tars is recorded, the pipeline N-gate
+decides), read once per build as a stream (no gzip seek, no full temp copy) after D0G3 and before G4 (dedupe priority).
+Same leakage rules (FT_k / FT_LODO drop by tags OR targets(), test = all-held-out rxn_ids); Nurion rows without rxn_ids
+(non-target jobs) carry their core's T1 fold + own dipole and are validation rows when their job core is a validation core.
+Size cap (user decision 'FT-cap', DECISIONS FT-cap): every split's train set <= 200,000 and validation set <= 20,000
+structures, same for every candidate (test uncapped unless --cap-test): tier 1 = all non-Nurion rows (always kept), tier 2
+= Nurion TS-near rows (nur_ts_final, or a nur_ TS kind with dform_label_A <= 0.3 A), tier 3 = every other Nurion row; the
+room left by tier 1 goes 70 % / 30 % to tiers 2 / 3 (seeded round-robin over job ids). TS-near (FT-1) includes the nur_ TS
+kinds within 0.3 A of the label TS.
 
 CLI (submit from analysis/mlts; exit 0 = done / up to date, 2 = not ready / incomplete (resubmit), 3 = STOP)
-  data <run ...> | --all  [--with-al] [--fmax-cap 10] [--valid-frac 0.10] [--force] [--dry]
+  data <run ...> | --all  [--with-al] [--fmax-cap 10] [--valid-frac 0.10] [--cap-train 200000] [--cap-valid 20000]
+        [--cap-test 0] [--force] [--dry]
         MLTENV=mlts or reactot, CPU: $MLT/ft/data/<split>/{train,valid[,test]}.xyz + meta.json,
-        results/ft/<run>_data.json (counts by kind / source, C-2 leakage check, input sha256);
-        --dry: read + split + C-2 check only, counts printed, nothing written
+        results/ft/<run>_data.json (counts by kind / source / tier before and after the cap, cap record, C-2 leakage
+        check, input sha256 incl. nurion.extxyz.gz + N_report.json); --cap-* 0 = no cap;
+        --dry: read + split + cap + C-2 check only, counts printed, nothing written
   fetch <cand>                     download the foundation into $MLT/cache (reuses ~/.cache/mace read-only)
   train <run> <cand> [--with-al] [--epochs 200] [--budget-h 12] [--stop-h 24] [--batch-size B] [--lr X]
         [--ew X] [--fw X] [--patience 6] [--subset N] [--allow-partial] [--force]
@@ -45,6 +58,7 @@ CLI (submit from analysis/mlts; exit 0 = done / up to date, 2 = not ready / inco
   status                           one line per run
 
 sbatch (from analysis/mlts; login: one-shot submits only; `squeue -u $USER -h | wc -l` first; L=$MLT/logs):
+  (data, measured 11-05 with 658,901 Nurion structures: pool 5.6 min (Nurion stream 279 s), peak RSS 6.1 GiB for 2 splits)
   JD=$(sbatch --parsable -p cpu1,cpu2 -J ft_data --time=48:00:00 -c 4 --mem=48G --output=$L/%x_%j.out \
        --dependency=afterok:<G collect job> --kill-on-invalid-dep=yes --export=ALL,MLTENV=mlts \
        jobs/mlt.slurm finetune.py data FTpilot_MACE-OMOL-0_0 FTpilot_AIMNet2_0)
@@ -69,6 +83,7 @@ sys.dont_write_bytecode = True
 
 import argparse  # noqa: E402
 import hashlib  # noqa: E402
+import io  # noqa: E402
 import json  # noqa: E402
 import math  # noqa: E402
 import os  # noqa: E402
@@ -88,9 +103,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 
-CODE_VERSION = "mlts-ft-3"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
+CODE_VERSION = "mlts-ft-4"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
                                     # -3: D0-plus / D0-gauss holdout drop (+ siblings) + independent C-2 holdout / G4
                                     #     checks (FT-d0hold); splits rebuilt (no production data built with -3 yet)
+                                    # -4: Nurion input (FT-nurion) + per-split size cap with tiers (FT-cap), nur_ TS kinds
+                                    #     in TS-near (FT-ts-near); splits rebuilt
 T_START = time.time()
 
 # ---------------------------------------------------------------- paths
@@ -104,6 +121,10 @@ INPUTS = (("I", DFT / "existing.extxyz"), ("G1", DFT / "gen_G1.extxyz"), ("G2", 
           ("G3", DFT / "gen_G3.extxyz"))
 D0_INPUTS = (("D0G1", DFT / "gen_D0G1.extxyz"), ("D0G2", DFT / "gen_D0G2.extxyz"), ("D0G3", DFT / "gen_D0G3.extxyz"))
 AL_INPUT = ("G4", DFT / "gen_G4.extxyz")
+NUR = "NUR"
+NUR_INPUT = (NUR, DFT / "nurion.extxyz.gz")         # inv_nurion collect (user decision 'Nurion'; DECISIONS FT-nurion)
+N_REPORT = M.RES / "N_report.json"                  # inv_nurion collect report (extxyz_bytes, n_structures, complete)
+D1_MANIFEST = M.D1RUN / "d1_manifest.csv"           # job_id -> dipole / skeleton (core of non-target Nurion jobs)
 G_REPORT = M.RES / "G_report.json"
 G_REPORT_D0 = M.RES / "G_report_d0.json"
 PLAN_D0 = DFT / "plan" / "plan_d0.parquet"           # exists = the D0 data are required (user decision 'D0')
@@ -125,8 +146,16 @@ DEDUPE_DEC = 5                                     # positions rounded to 1e-5 A
 FMAX_CAP = 10.0                                    # eV/A, per-structure max atomic |F| (decision FT-fcap)
 VALID_FRAC = 0.10
 TS_NEAR_ALWAYS = ("ts_near", "ts_imag", "ts_label", "d0_ts_near", "d0_ts_imag", "d0_ts_label", "d0_ts_grad")
-TS_NEAR_IF_CLOSE = ("ts_path", "ts_final", "g2_path", "ts_final_g2", "al_ts", "d0_g2_path", "d0_ts_final_g2")
+NUR_TS_KINDS = ("nur_ts_path", "nur_ts_final", "nur_tsguess_opt", "nur_path", "nur_neb", "nur_fwd_bwd")  # inv_nurion
+TS_NEAR_IF_CLOSE = ("ts_path", "ts_final", "g2_path", "ts_final_g2", "al_ts", "d0_g2_path", "d0_ts_final_g2") + NUR_TS_KINDS
 TS_NEAR_DFORM_A = 0.3
+CAP_TRAIN, CAP_VALID, CAP_TEST = 200_000, 20_000, 20_000  # decision FT-cap (structures per split; 0 = no cap);
+#   test capped too (lead 11-05: FT-1 test-side metrics are descriptive, FT-2 uses reaction lists; saves ~15-25 GB)
+CAP_DEFAULTS = dict(train=CAP_TRAIN, valid=CAP_VALID, test=CAP_TEST)
+CAP_TIER2_FRAC = 0.70                               # share of the room left by tier 1 that goes to tier 2 (FT-cap)
+CAP_SEED_OFF = 1000                                 # cap seed = SEED + 1000 + the split offset (parse_run)
+NUR_KEEP_INFO = ("d0_id",)                          # info a Nurion structure keeps after its row is built (memory)
+NUR_READ_CHUNK = 5000                               # frames per parsed chunk of the streamed nurion.extxyz.gz
 D1DESIGN_GROUP = re.compile(r"D1-\d+-r\d+")          # Phase I d1_validation D1-design groups (DECISIONS FT-d1val)
 ALL_T1_FOLDS = ("0", "1", "2", "3", "4")
 FT1_TARGET = dict(force_mae_kcal_A=0.6, rel_e_mae_kcal=0.3)
@@ -164,10 +193,14 @@ DECISIONS = {
                 "agree, a disagreement is counted) -> validation = whole fold_core groups ('<dipole>/<skeleton>', "
                 "mlt_common.targets) drawn in a seeded random order until >= 10 % of the remaining D1 reactions; a "
                 "structure is validation iff it has D1 rxn_ids and all of them are validation reactions (molecules "
-                "shared with training reactions and untagged D0 data -> train). Seeds: SEED+100+k (fold k), SEED+200+i "
-                "(all_s<i>), SEED+300+d (lodo d). test = dropped structures whose rxn_ids are all held out.",
+                "shared with training reactions and untagged D0 data -> train); a Nurion row without rxn_ids whose job "
+                "core is a validation core is validation too (FT-nurion). Seeds: SEED+100+k (fold k), SEED+200+i "
+                "(all_s<i>), SEED+300+d (lodo d). test = dropped structures whose rxn_ids are all held out. Then the "
+                "size cap (FT-cap).",
     "FT-dedupe": "exact duplicates: same element sequence and positions rounded to 1e-5 A; the first occurrence (input "
-                 "order I, G1, G2, G3, then G4) is kept and gets the union of the leakage tags; |dE|, |dF| recorded.",
+                 "order I, G1, G2, G3, D0G1-3, NUR (Nurion), then G4) is kept and gets the union of the leakage tags; "
+                 "|dE|, |dF| recorded. A non-Nurion row duplicated by a Nurion row stays (tier 1) with the united tags; "
+                 "a Nurion row that a G4 row duplicates counts as tier 1 in the *_al splits (FT-cap).",
     "FT-fcap": "per-structure max atomic |F| > 10 eV/A (0.19 Eh/bohr; early OptTS / LooseOpt steps of Phase I) is "
                "dropped; the measured distribution is in the split meta (fmax_eV_A).",
     "FT-frame": "training energy E_fit = REF_energy - sum ATOM_REF_EH[Z] x EH2EV (fixed, rounded per-element constants): "
@@ -207,11 +240,16 @@ DECISIONS = {
                  "(exit 3).",
     "FT-ts-near": "TS-near (FT-1) = kind ts_near / ts_imag / ts_label / d0_ts_near / d0_ts_imag / d0_ts_label / "
                   "d0_ts_grad, or kind ts_path / ts_final / g2_path / ts_final_g2 / al_ts / d0_g2_path / d0_ts_final_g2 "
+                  "/ nur_ts_path / nur_ts_final / nur_tsguess_opt / nur_path / nur_neb / nur_fwd_bwd "
                   "with dform_label_A <= 0.3 A (max over the two forming bonds of |d - d_label|, label TS + "
                   "formed_pairs_ts; computed here for single-D1-reaction records without one; D0 records carry it from "
-                  "gen_dft collect --d0, against the D0 label TS). D0 rows without D1 rxn_ids are train-only, so the "
+                  "gen_dft collect --d0, against the D0 label TS; Nurion target-job records from inv_nurion scan, "
+                  "against the label TS). D0 rows without D1 rxn_ids are train-only, so the "
                   "D0 kinds change only the train n_ts_near count, never an FT-1 metric (Phase I d0_ts_path / "
-                  "d0_ts_final are therefore not added).",
+                  "d0_ts_final are therefore not added). nur_x_* (non-target jobs) are never TS-near: no rxn_ids, and "
+                  "their dform_own_A is against their own TS, not a label TS. nur_ts_final is TS-near only within 0.3 A "
+                  "(as Phase I ts_final; N_report 11-04: 51 of 6,740 are farther), although tier 2 of FT-cap takes it "
+                  "always.",
     "FT-d0": "D0 (user decision 'D0', gen_d0.DECISIONS_D0): gen_D0G{1,2,3}.extxyz are read after G3 (before G4) whenever "
              "present; once $MLT/dft/plan/plan_d0.parquet exists the inputs are complete only if results/"
              "G_report_d0.json is complete for the current plan_d0 (plan_sha256) and every D0 group with ok structures "
@@ -240,6 +278,44 @@ DECISIONS = {
                  "tag = STOP (exit 3). The file must match every recorded sha256 (g2_plan_d0.json, plan_d0_meta.json, "
                  "results/d0_holdout.csv, every data json / split meta; a missing file with a record = STOP); its sha256 "
                  "enters the split fingerprint (inputs 'D0holdout') and every data json (d0_holdout).",
+    "FT-nurion": "Nurion label-level data (user decision 'Nurion', inv_nurion.py; DECISIONS 'Nurion 추출'): "
+                 "$MLT/dft/nurion.extxyz.gz (collect of every processed result tar; kinds nur_* = D1-target jobs, "
+                 "nur_x_* = every other job) is an input of every run. Inputs are complete only if it exists and "
+                 "results/N_report.json describes it (extxyz_bytes == file size); N_report complete (all 23 result "
+                 "tars) is recorded, not required (the pipeline N-gate decides when FT data may be built). Read once "
+                 "per data build as a stream: the gzip is decompressed front to back, frames are cut on their atom-count "
+                 "lines and parsed in chunks of 5,000 through a node-local ${TMPDIR:-/tmp} file by "
+                 "mlt_common.read_extxyz (no seek in the gzip: ase seeks per frame, quadratic); the stream is hashed: "
+                 "its sha256 must equal the one recorded for the fingerprint (else not ready: a collect replaced the "
+                 "file), and when N_report describes the file read (same bytes) the structure count must equal its "
+                 "n_structures (STOP otherwise); a Nurion structure keeps only numbers / positions / REF_forces / info "
+                 "d0_id after its row is built (memory). Read after D0G3, before G4 (FT-dedupe). "
+                 "Leakage tags = inv_nurion's (target rows: the reaction's rxn_ids / fold / dipole; molecules: the "
+                 "union over every D1 target using them; non-target jobs: rxn_ids '', folds = their core's T1 fold "
+                 "(none for D'' cores), dipoles = own dipole; D0 controls: d0_id + D0 class), so the C-2 rules are "
+                 "unchanged (FT_k / FT_LODO_d drop by tag OR targets(); test = all rxn_ids held out; FT-d0hold by "
+                 "d0_id). Validation (agent, recommended option): a Nurion row without rxn_ids whose job core "
+                 "('<dipole>/<skeleton>' of $D1RUN/d1_manifest.csv = fold_core) is a validation core is a validation "
+                 "row, so whole validation cores stay out of training; other rows without rxn_ids train.",
+    "FT-cap": "size cap (user decision 'FT-cap', recommended option): one MACE-OMOL-0 epoch takes 0.7-0.8 h per 62.6k "
+              "structures on an RTX 3090, so all Nurion structures (658,901 from 13 tars, ~1.1 M from 23) would make an "
+              "epoch ~13 h and break the 12 GPU-h budget -> every split's train set is capped at 200,000 and its "
+              "validation set at 20,000 structures (test not capped; --cap-test N optional), the same for every "
+              "candidate (the cap belongs to the split: FT_k / FTpilot_<cand>_k / BENCH share fold k). Tier 1 = every "
+              "non-Nurion row (I, G1-3, D0G1-3; G4 in the *_al splits, + a Nurion row that absorbed a G4 duplicate) — "
+              "always kept; tier 2 = Nurion TS-near rows: kind nur_ts_final, or nur_ts_path / nur_tsguess_opt / "
+              "nur_path / nur_neb / nur_fwd_bwd with dform_label_A <= 0.3 A (target jobs, against the label TS); "
+              "tier 3 = every other Nurion row (incl. all nur_x_*: their dform_own_A is against their own TS). Over "
+              "the cap: room = cap - tier 1; tier 2 gets round(0.7 x room), tier 3 the rest; a tier with fewer rows "
+              "gives its room to the other. Within a tier: seeded round-robin over job ids (one target job = one D1 "
+              "reaction): groups in a seeded random order, rows of a group in a seeded random order, rank 0 of every "
+              "group first, then rank 1, ... (broad coverage; long trajectories do not dominate). Seed = "
+              "mlt_common.SEED + 1000 + the split offset of parse_run (fold k 100+k, all_s i 200+i, lodo d 300+d); "
+              "rng = numpy default_rng([seed, set (train 0 / valid 1 / test 2), tier]). The validation cap works on "
+              "the validation rows only (validation cores). The C-2 leakage check runs on every kept row before the "
+              "cap (a superset of what is written). Recorded per split meta and data json: counts before / after "
+              "(by input / source / kind / tier, Nurion kinds by tier, jobs covered), room, quotas, seeds, the cap "
+              "values, sha256 of nurion.extxyz.gz and of results/N_report.json.",
     "FT-relE": "within-reaction relative energy: structures of one reaction (single rxn_id) and one composition, "
                "E - mean(E) of the group (groups of >= 2), MAE over structures; primary on TS-near structures, also "
                "on all single-reaction structures. MACE uses interaction_energy (no float32 E0 quantisation).",
@@ -310,7 +386,8 @@ def parse_run(run, with_al=False):
     split = {"fold": f"fold{val}", "all": f"all_s{val}", "lodo": f"lodo{val}"}[mode] + ("_al" if al else "")
     seed_off = {"fold": 100, "all": 200, "lodo": 300}[mode] + val
     return dict(run=base + ("_al" if al else ""), base=base, mode=mode, val=val, cand=cand, split=split, al=al,
-                bench=bench, valid_seed=M.SEED + seed_off, train_seed=M.SEED + (val if mode == "all" else 0))
+                bench=bench, valid_seed=M.SEED + seed_off, train_seed=M.SEED + (val if mode == "all" else 0),
+                cap_seed=M.SEED + CAP_SEED_OFF + seed_off)
 
 
 def _wtorch(obj, path):
@@ -327,6 +404,12 @@ def _mkdir(p):
     M.assert_write_ok(p)
     Path(p).mkdir(parents=True, exist_ok=True)
     return Path(p)
+
+
+def _rss_gib():
+    """peak resident memory of this process (GiB; Linux ru_maxrss is in KiB)."""
+    import resource
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2, 2)
 
 
 def _du_gb(p):
@@ -377,8 +460,89 @@ def _guard_imports():
 
 # ================================================================ data
 def input_files(with_al):
-    """read order (= dedupe priority): I, G1, G2, G3, D0G1, D0G2, D0G3, then G4 (decision FT-d0)."""
-    return list(INPUTS) + list(D0_INPUTS) + ([AL_INPUT] if with_al else [])
+    """read order (= dedupe priority): I, G1, G2, G3, D0G1, D0G2, D0G3, NUR, then G4 (decisions FT-d0, FT-nurion)."""
+    return list(INPUTS) + list(D0_INPUTS) + [NUR_INPUT] + ([AL_INPUT] if with_al else [])
+
+
+def nur_state(st):
+    """(complete, meta) of the Nurion input (decision FT-nurion): nurion.extxyz.gz present and results/N_report.json
+    describing it (extxyz_bytes == file size). N_report complete (all 23 result tars) is recorded, not required."""
+    e = st.get(NUR) or {}
+    J = _rj(N_REPORT) or {}
+    nb = J.get("extxyz_bytes")
+    match = bool(e.get("present")) and nb is not None and int(nb) == int(e.get("bytes") or -1)
+    return match, dict(rule="FT-nurion", extxyz=str(NUR_INPUT[1]), extxyz_present=bool(e.get("present")),
+                       extxyz_sha256=e.get("sha256"), extxyz_bytes=e.get("bytes"), N_report=str(N_REPORT),
+                       N_report_present=N_REPORT.is_file(),
+                       N_report_sha256=M.sha256(N_REPORT) if N_REPORT.is_file() else None,
+                       N_report_complete=J.get("complete"), tars_done=J.get("tars_done"),
+                       tars_expected=J.get("tars_expected"), n_tars_not_done=len(J.get("tars_not_done") or []),
+                       n_structures_report=J.get("n_structures"), N_report_extxyz_bytes=nb, report_matches_extxyz=match,
+                       N_report_signature=J.get("signature"))
+
+
+class _ShaReader(io.RawIOBase):
+    """raw file wrapper: sha256 + byte count of everything read (the gzip stream reads the file once, front to back)."""
+
+    def __init__(self, f):
+        self.f, self.h, self.n = f, hashlib.sha256(), 0
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        d = self.f.read(len(b))
+        b[:len(d)] = d
+        self.h.update(d)
+        self.n += len(d)
+        return len(d)
+
+
+def iread_extxyz_gz(path, chunk=NUR_READ_CHUNK, info=None):
+    """mlt_common.read_extxyz of a (multi-member) extxyz.gz as a stream (decision FT-nurion): the gzip is decompressed
+    once front to back (never seeked: ase seeks to every frame, quadratic on gzip), frames are cut on their atom-count
+    lines, and each chunk of `chunk` frames is written to a node-local ${TMPDIR:-/tmp} file, parsed by
+    mlt_common.read_extxyz (identical tag handling) and deleted. Yields ase.Atoms; at the end info gets sha256 + bytes
+    of the file actually read (a concurrent collect replaces the file by rename: the open handle keeps the old one)."""
+    import gzip
+    import tempfile
+    tmpdir = os.environ.get("TMPDIR") or "/tmp"
+    info = {} if info is None else info
+    with open(path, "rb") as fr:
+        info["bytes_at_open"] = os.fstat(fr.fileno()).st_size
+        hr = _ShaReader(fr)
+        with gzip.GzipFile(fileobj=hr, mode="rb") as gz, io.TextIOWrapper(gz, encoding="utf-8") as f:
+            eof = False
+            while not eof:
+                buf, n = [], 0
+                while n < chunk:
+                    line = f.readline()
+                    if not line:
+                        eof = True
+                        break
+                    if not line.strip():
+                        continue
+                    k = int(line.split()[0])
+                    buf.append(line)
+                    for _ in range(k + 1):
+                        buf.append(f.readline())
+                    n += 1
+                if not n:
+                    break
+                fd, tmp = tempfile.mkstemp(suffix=".extxyz", prefix="ftnur_", dir=tmpdir)
+                try:
+                    with os.fdopen(fd, "w") as g:
+                        g.writelines(buf)
+                    del buf
+                    al = M.read_extxyz(tmp)
+                finally:
+                    os.unlink(tmp)
+                if len(al) != n:
+                    M.stop(f"{path}: a chunk of {n} frames parsed to {len(al)} structures")
+                yield from al
+        while hr.read(1 << 22):                          # the rest (if any) -> the hash covers the whole file
+            pass
+        info.update(sha256=hr.h.hexdigest(), bytes_read=hr.n)
 
 
 def d0_state(st):
@@ -467,12 +631,16 @@ def inputs_state(with_al):
     if D0_HOLDOUT.is_file():                             # D0-plus holdout list: part of the split fingerprint
         st["D0holdout"] = dict(path=str(D0_HOLDOUT), present=True, sha256=M.sha256(D0_HOLDOUT),
                                bytes=D0_HOLDOUT.stat().st_size)
+    if st[NUR]["present"] and D1_MANIFEST.is_file():     # job cores of non-target Nurion rows (validation, FT-nurion)
+        st["D1manifest"] = dict(path=str(D1_MANIFEST), present=True, sha256=M.sha256(D1_MANIFEST),
+                                bytes=D1_MANIFEST.stat().st_size)
     g = _rj(G_REPORT) or {}
-    base = [n for n, _ in INPUTS] + (["G4"] if with_al else [])
+    base = [n for n, _ in INPUTS] + [NUR] + (["G4"] if with_al else [])
     d0_req, d0_ok, d0_meta = d0_state(st)
-    complete = all(st[n]["present"] for n in base) and bool(g.get("complete")) and d0_ok
+    nur_ok, nur_meta = nur_state(st)
+    complete = all(st[n]["present"] for n in base) and bool(g.get("complete")) and d0_ok and nur_ok
     return st, complete, dict(G_report=str(G_REPORT), G_report_complete=g.get("complete"), d0_required=d0_req,
-                              d0_complete=d0_ok, **d0_meta)
+                              d0_complete=d0_ok, nurion_complete=nur_ok, nurion=nur_meta, **d0_meta)
 
 
 def split_fingerprint(split, st, params):
@@ -495,19 +663,30 @@ class Pool:
         self.hold_ids, self.hold_meta = d0_holdout()     # decision FT-d0hold
         self.atoms, rows = [], []
         self.read_info = {}
+        self.jcore, self.jcore_meta = {}, dict(loaded=False)
+        self.stats = {}
         for name, p in input_files(with_al):
             if not (p.is_file() and p.stat().st_size > 0):
                 continue
             t0 = time.time()
-            al = M.read_extxyz(p)
-            self.read_info[name] = dict(n=len(al), read_s=round(time.time() - t0, 1))
-            print(f"[data] read {name} {len(al)} structures ({time.time() - t0:.0f} s)", flush=True)
-            for a in al:
+            nur = name == NUR
+            rinfo = {}
+            if nur:
+                self._load_jcore()
+            n0 = len(rows)
+            for a in (iread_extxyz_gz(p, info=rinfo) if nur else M.read_extxyz(p)):
                 rows.append(self._row(a, name))
                 rows[-1]["i"] = len(self.atoms)
+                if nur:                                  # FT-nurion: nothing else of the info is used after _row
+                    a.info = {k: a.info[k] for k in NUR_KEEP_INFO if k in a.info}
                 self.atoms.append(a)
+            n = len(rows) - n0
+            self.read_info[name] = dict(n=n, read_s=round(time.time() - t0, 1), peak_rss_gib=_rss_gib())
+            print(f"[data] read {name} {n} structures ({time.time() - t0:.0f} s, peak RSS {_rss_gib()} GiB)",
+                  flush=True)
+            if nur:
+                self._nur_count_check(p, n, rinfo)
         self.n_read = len(rows)
-        self.stats = {}
         self._d0_overlay(rows)
         self._d1design_overlay(rows)
         self._fill_dform(rows)
@@ -515,9 +694,53 @@ class Pool:
         rows = self._dedupe(rows)
         rows = self._drop_holdout(rows)
         P = pd.DataFrame(rows)
+        del rows
         P = self._filters(P, fmax_cap)
         self._tag_check(P)
-        self.P = P.reset_index(drop=True)
+        P = P.reset_index(drop=True)
+        P["tier"] = tier_of(P)                           # decision FT-cap (G4 duplicates: build_split, *_al only)
+        self.P = P
+        self._nur_stats(P)
+
+    def _load_jcore(self):
+        """decision FT-nurion: job id -> fold_core '<dipole>/<skeleton>' of the D1 run manifest (the core of a
+        non-target Nurion job, whose rows have no rxn_ids: validation iff it is a validation core)."""
+        if not D1_MANIFEST.is_file():
+            self.jcore_meta = dict(loaded=False, reason=f"{D1_MANIFEST} missing: non-target Nurion rows -> train")
+            return
+        import pandas as pd
+        D = pd.read_csv(D1_MANIFEST, usecols=["job_id", "dipole", "skeleton"], dtype=str).fillna("")
+        self.jcore = dict(zip(D.job_id, D.dipole + "/" + D.skeleton))
+        self.jcore_meta = dict(loaded=True, path=str(D1_MANIFEST), n_jobs=len(self.jcore))
+
+    def _nur_count_check(self, p, n, rinfo):
+        """decision FT-nurion: the streamed structure count must equal N_report n_structures when the report describes
+        the file that was read (same bytes); STOP otherwise (a reader or collect problem)."""
+        J = _rj(N_REPORT) or {}
+        nb = J.get("extxyz_bytes")
+        same = nb is not None and int(nb) == rinfo.get("bytes_read")
+        self.stats["nurion_read"] = dict(path=str(p), n_read=n, n_report=J.get("n_structures"),
+                                         report_describes_file=same, sha256_stream=rinfo.get("sha256"),
+                                         bytes_read=rinfo.get("bytes_read"), bytes_at_open=rinfo.get("bytes_at_open"),
+                                         chunk_frames=NUR_READ_CHUNK, tmpdir=os.environ.get("TMPDIR") or "/tmp")
+        if same and J.get("n_structures") is not None and int(J["n_structures"]) != n:
+            M.stop(f"{p}: {n} structures read, N_report n_structures {J['n_structures']} (FT-nurion)")
+
+    def _nur_stats(self, P):
+        N = P[P.input == NUR]
+        if not len(N) and NUR not in self.read_info:
+            self.stats["nurion"] = dict(present=False)
+            return
+        norx = N[N.rxn.map(len) == 0]
+        cores = set(self.rcore.values())
+        self.stats["nurion"] = dict(
+            present=True, rule=DECISIONS["FT-nurion"], read=self.read_info.get(NUR), n_kept=int(len(N)),
+            by_kind=dict(Counter(N.kind)), by_tier={str(k): int(v) for k, v in Counter(N.tier).items()},
+            n_ts_near=int(ts_near_mask(N).sum()), n_jobs=int(N.grp.nunique()),
+            n_rxns=len({x for r in N.rxn for x in r}), n_rows_without_rxn_ids=int(len(norx)),
+            n_rows_without_rxn_ids_in_d1_core=int(norx.jcore.isin(list(cores)).sum()),
+            n_rows_without_rxn_ids_by_kind=dict(Counter(norx.kind)), job_cores=self.jcore_meta,
+            n_rows_absorbing_g4_duplicate=int(N.g4dup.sum()))
 
     @staticmethod
     def _tags(s):
@@ -538,7 +761,11 @@ class Pool:
         rx = tuple(sorted({int(x) for x in self._tags(a.info.get("rxn_ids"))}))
         e_eh = float(a.info.get("e_eh", float(a.info["REF_energy"]) / M.EH2EV))
         dform = a.info.get("dform_label_A")
-        return dict(struct_id=str(a.info.get("struct_id")), kind=str(a.info.get("kind")), source=str(a.info.get("source")),
+        job = str(a.info.get("job", "") or "") if inp == NUR else ""
+        # grp: round-robin unit of the size cap (Nurion: the job; FT-cap); jcore: core of a Nurion row without rxn_ids
+        grp = job or (M.tag_list(rx) if rx else str(a.info.get("struct_id")))
+        return dict(grp=grp, jcore=self.jcore.get(job, "") if (job and not rx) else "", g4dup=False,
+                    struct_id=str(a.info.get("struct_id")), kind=str(a.info.get("kind")), source=str(a.info.get("source")),
                     input=inp, level=str(a.info.get("level", "label")), n_atoms=len(a),
                     formula=a.get_chemical_formula(mode="hill"), rxn=rx,
                     folds=frozenset(self._tags(a.info.get("folds"))),
@@ -664,6 +891,8 @@ class Pool:
                 continue
             j = first[k]
             ndrop += 1
+            if r["input"] == "G4" and j["input"] == NUR:      # FT-cap: the AL geometry survives as this row -> tier 1
+                j["g4dup"] = True                              # in the *_al splits
             if r["input"] != "G4" or j["input"] == "G4":     # FT-d0hold: a duplicate of a held row is dropped too
                 j["hold"] = bool(j["hold"] or r["hold"])
             j["hold_al"] = bool(j["hold_al"] or r["hold"] or r["hold_al"])   # G4 -> base: *_al splits only
@@ -700,8 +929,8 @@ class Pool:
         st["dropped_fmax_cap"] = int(cap.sum())
         st["dropped_fmax_cap_by_kind"] = dict(Counter(P.kind[cap]))
         st["fmax_eh_bohr_equiv_cap"] = (fmax_cap or 0) / M.EHBOHR2EVA
-        e_fit = np.array([P.e_eh.iat[n] * M.EH2EV - atom_ref_ev(self.atoms[int(P.i.iat[n])].numbers)
-                          for n in range(len(P))])
+        e_eh, ii = P.e_eh.to_numpy(float), P.i.to_numpy()          # (no per-row .iat: ~1e6 rows with Nurion)
+        e_fit = np.array([e_eh[n] * M.EH2EV - atom_ref_ev(self.atoms[int(ii[n])].numbers) for n in range(len(P))])
         P["e_fit"] = e_fit
         st["e_fit_eV"] = _q(e_fit, (0.0, 0.5, 1.0))
         st["e_ref_check_max_abs_eV"] = float(np.abs(P.e_ref_check).max()) if len(P) else 0.0
@@ -715,15 +944,20 @@ class Pool:
         return P[~drop]
 
     def _tag_check(self, P):
-        nf, nd, nx, unknown, d0_cls, d0_none = 0, 0, 0, 0, 0, 0
+        nf, nd, nx, unknown, d0_cls, d0_none, nur_norx = 0, 0, 0, 0, 0, 0, 0
+        nf_by = Counter()                                        # fold mismatches by input:kind (review aid)
         for r in P.itertuples():
             if not r.rxn:
-                if r.folds:
+                if r.input == NUR:
+                    nur_norx += 1                                # Nurion non-target job / unused molecule: core fold
+                elif r.folds:                                    # + own dipole without rxn_ids (inv_nurion rule)
                     nf += 1
+                    nf_by[f"{r.input}:{r.kind}"] += 1
                 elif r.dipoles and str(r.kind).startswith("d0_"):
                     d0_cls += 1                                  # D0: class only (decision FT-d0), not a mismatch
                 elif r.dipoles:
                     nf += 1
+                    nf_by[f"{r.input}:{r.kind}"] += 1
                 elif str(r.kind).startswith("d0_"):
                     d0_none += 1
                 continue
@@ -732,6 +966,7 @@ class Pool:
                 continue
             if {str(self.rfold[x]) for x in r.rxn} != set(r.folds):
                 nf += 1
+                nf_by[f"{r.input}:{r.kind}"] += 1
             want = {self.rdip[x] for x in r.rxn}
             if not want <= set(r.dipoles):
                 nd += 1
@@ -739,25 +974,29 @@ class Pool:
                 nx += 1                                          # superset: + a D0 class (shared fragment, overlay)
         bad_cls = [r.struct_id for r in P.itertuples() if not r.d0cls <= r.dipoles]
         n_cls = int(sum(bool(x) for x in P.d0cls))
-        self.stats["tag_check"] = dict(fold_tag_mismatch=nf, dipole_tag_mismatch=nd, dipole_tag_superset=nx,
+        self.stats["tag_check"] = dict(fold_tag_mismatch=nf, fold_tag_mismatch_by=dict(nf_by.most_common(12)),
+                                       dipole_tag_mismatch=nd, dipole_tag_superset=nx,
                                        unknown_rxn_ids=unknown, d0_class_only=d0_cls, d0_untagged=d0_none,
                                        n_rows_with_d0_class=n_cls, d0_class_not_in_dipoles=len(bad_cls),
+                                       nurion_without_rxn_ids=nur_norx,
                                        note="drop rule = tag rule OR targets() rule, so a mismatch cannot leak; "
                                             "dipole_tag_mismatch = a D1 dipole missing from the tag, superset = extra "
                                             "(D0) classes; d0_class_only = D0 rows with only a dipole class; "
-                                            "d0_class_not_in_dipoles > 0 = STOP (FT-d0)")
+                                            "d0_class_not_in_dipoles > 0 = STOP (FT-d0); nurion_without_rxn_ids = "
+                                            "Nurion rows with core folds / dipoles but no rxn_ids (FT-nurion)")
         if bad_cls:
             M.stop(f"C-2: {len(bad_cls)} rows whose D0 class is not in their dipoles tag (FT_LODO leak); first "
                    f"{bad_cls[:5]}")
 
 
 def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params, write=True):
-    """write False (data --dry): the same drop / validation / C-2 leakage logic, nothing written, empty sets reported."""
+    """write False (data --dry): the same drop / validation / cap / C-2 leakage logic, nothing written."""
     P, T = pool.P, pool.T
     if not R["al"]:
         P = P[P.input != "G4"]
     else:
         P = P[~P.hold_al.astype(bool)]                  # FT-d0hold: base rows whose G4 duplicate is held (AL only)
+        P = P.assign(tier=np.where(P.g4dup.to_numpy(bool), 1, P.tier.to_numpy()))   # FT-cap: AL geometry -> tier 1
     mode, val = R["mode"], R["val"]
     if mode == "fold":
         held = set(T.rxn_id[T.fold_T1 == val].astype(int))
@@ -787,7 +1026,17 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
         n += ncore[cores[i]]
     V = {x for x in Rr if pool.rcore[x] in chosen}
     is_val = keep.rxn.map(lambda r: len(r) > 0 and all(x in V for x in r)).astype(bool)
+    # FT-nurion: a Nurion row without rxn_ids (non-target job) of a validation core is a validation row
+    nt_val = ((keep.input == NUR) & (keep.rxn.map(len) == 0) & keep.jcore.isin(sorted(chosen))).astype(bool)
+    is_val = is_val | nt_val
     train, valid = keep[~is_val], keep[is_val]
+    # FT-cap: per-set size cap by tiers (the C-2 check below runs on every kept row, a superset of the capped sets)
+    train_pre, valid_pre, test_pre = train, valid, test
+    cp = params.get("cap") or {}
+    frac2 = float(cp.get("tier2_frac", CAP_TIER2_FRAC))
+    train, cap_tr = cap_set(train, cp.get("train", 0), R["cap_seed"], 0, frac2)
+    valid, cap_va = cap_set(valid, cp.get("valid", 0), R["cap_seed"], 1, frac2)
+    test, cap_te = cap_set(test, cp.get("test", 0), R["cap_seed"], 2, frac2)
     if write and (not len(valid) or not len(train)):
         M.not_ready(f"{split_name}: empty train ({len(train)}) or validation ({len(valid)}) set")
     # C-2 leakage check (independent of the drop code: targets() folds / dipoles of every used rxn_id)
@@ -834,7 +1083,8 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
                 kept_holdout_ts_rows=len(bad_h), kept_holdout_ts_first=bad_h[:5], kept_holdout_molecule_rows=mol_h,
                 kept_rows_with_d0_struct_id=int(n_sid), kept_d0_ts_rows_without_d0_reaction=len(unid),
                 kept_d0_ts_rows_without_d0_reaction_first=unid[:5], kept_g4_rows_unidentified=len(bad_g4),
-                kept_g4_rows_unidentified_first=bad_g4[:5])
+                kept_g4_rows_unidentified_first=bad_g4[:5], n_kept_nurion=int((keep.input == NUR).sum()),
+                checked_on="every kept row before the size cap (FT-cap): a superset of the written train + valid")
     leak["pass_"] = leak["used_cap_heldout"] == 0 and len(bad_t) == 0 and bad_tag == 0 and bad_d0 == 0 and \
         (mode == "all" or leak["n_kept_d1design"] == 0) and not bad_h and leak["d0_holdout_sha_matches_pool"] and \
         not unid and not bad_g4
@@ -842,8 +1092,12 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
         M.stop(f"C-2 leakage in split {split_name}: {leak}")
 
     def counts(D):
+        nur = D[D.input == NUR]
         return dict(n=int(len(D)), by_kind=dict(Counter(D.kind)), by_source=dict(Counter(D.source)),
-                    by_input=dict(Counter(D.input)), n_rxns=len({x for r in D.rxn for x in r}),
+                    by_input=dict(Counter(D.input)), by_tier={str(k): int(v) for k, v in sorted(Counter(D.tier).items())},
+                    nurion_by_tier_kind={str(t): dict(Counter(nur.kind[nur.tier == t])) for t in (1, 2, 3)
+                                         if (nur.tier == t).any()},
+                    n_nurion_jobs=int(nur.grp.nunique()), n_rxns=len({x for r in D.rxn for x in r}),
                     n_atoms=_q(D.n_atoms, (0.0, 0.5, 1.0)), n_ts_near=int(ts_near_mask(D).sum()))
 
     sd = _mkdir(FT_DATA / split_name) if write else FT_DATA / split_name
@@ -858,21 +1112,86 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
     meta = dict(split=split_name, mode=mode, val=val, al=R["al"], fingerprint=fp, inputs=st, inputs_complete=complete,
                 g_report=gmeta, params=params, files=files, valid_seed=R["valid_seed"], valid_frac_target=valid_frac,
                 valid=dict(n_cores=len(chosen), n_rxns=len(V), frac_rxns=len(V) / max(1, len(Rr)),
-                           n_cores_total=len(cores), n_rxns_total=len(Rr)),
-                counts=dict(train=counts(train), valid=counts(valid), test=counts(test)), leakage_C2=leak,
+                           n_cores_total=len(cores), n_rxns_total=len(Rr),
+                           n_nurion_rows_without_rxn_ids_valid_core=int(nt_val.sum())),
+                counts=dict(train=counts(train), valid=counts(valid), test=counts(test)),
+                counts_precap=dict(train=counts(train_pre), valid=counts(valid_pre), test=counts(test_pre)),
+                cap=dict(rule=DECISIONS["FT-cap"], params=cp, cap_seed=R["cap_seed"], train=cap_tr, valid=cap_va,
+                         test=cap_te),
+                nurion=gmeta.get("nurion"), leakage_C2=leak,
                 pool=dict(read=pool.read_info, n_read=pool.n_read, **pool.stats), atom_ref_eh=ATOM_REF_EH,
                 energy_keys=dict(REF_energy="eV absolute label level", E_fit="eV, REF_energy - sum ATOM_REF_EH x EH2EV "
                                  "(training key)", REF_forces="eV/A"),
                 d0_holdout=pool.stats.get("d0_holdout"),
                 decisions={k: DECISIONS[k] for k in ("FT-split", "FT-dedupe", "FT-fcap", "FT-frame", "FT-ts-near", "FT-d0",
-                                                     "FT-d1val", "FT-d0hold")},
+                                                     "FT-d1val", "FT-d0hold", "FT-nurion", "FT-cap")},
                 written=_now(), **_jobtag())
     if write:
         M.write_json(sd / "meta.json", meta)
-    print(f"[data{'' if write else ' dry'}] {split_name}: train {len(train)} valid {len(valid)} test {len(test)} | "
-          f"valid rxns {len(V)}/{len(Rr)} | leak pass {leak['pass_']} | train by input {dict(Counter(train.input))}",
-          flush=True)
+    print(f"[data{'' if write else ' dry'}] {split_name}: train {len(train)} (pre-cap {len(train_pre)}) valid "
+          f"{len(valid)} (pre-cap {len(valid_pre)}) test {len(test)} | valid rxns {len(V)}/{len(Rr)} | leak pass "
+          f"{leak['pass_']} | train by input {dict(Counter(train.input))} | train by tier "
+          f"{counts(train)['by_tier']} | peak RSS {_rss_gib()} GiB", flush=True)
     return meta
+
+
+def tier_of(D):
+    """decision FT-cap: 1 = non-Nurion row, 2 = Nurion TS-near (nur_ts_final, or a nur_ TS kind with dform_label_A <=
+    0.3 A), 3 = any other Nurion row."""
+    nur = (D.input == NUR).to_numpy()
+    t2 = nur & (ts_near_mask(D).to_numpy() | (D.kind == "nur_ts_final").to_numpy())
+    return np.where(~nur, 1, np.where(t2, 2, 3)).astype(np.int8)
+
+
+def rr_pick(groups, n, rng):
+    """decision FT-cap: positions of n rows by a seeded round-robin over groups (seeded group order, seeded order
+    within a group; rank 0 of every group, then rank 1, ...)."""
+    import pandas as pd
+    codes, uniq = pd.factorize(np.asarray(groups, dtype=object))
+    gpos = rng.permutation(len(uniq))[codes]
+    order = np.lexsort((rng.random(len(codes)), codes))          # by group, then a random key
+    sc = codes[order]
+    start = np.r_[0, np.flatnonzero(np.diff(sc)) + 1]
+    rank = np.empty(len(codes), np.int64)
+    rank[order] = np.arange(len(sc)) - np.repeat(start, np.diff(np.r_[start, len(sc)]))
+    return np.lexsort((gpos, rank))[:int(n)]                     # by rank, then the group's position
+
+
+def cap_set(D, cap, seed, set_idx, frac2=CAP_TIER2_FRAC):
+    """decision FT-cap: (rows kept, record). Tier 1 always; over the cap, the room left by tier 1 goes round(frac2 x
+    room) to tier 2 and the rest to tier 3 (a short tier gives its room to the other), each by rr_pick."""
+    cap = int(cap or 0)
+    tier = D.tier.to_numpy()
+    grp = D.grp.to_numpy()
+    nb = {t: int((tier == t).sum()) for t in (1, 2, 3)}
+
+    def groups(mask):
+        g = Counter(grp[mask])
+        return dict(n_groups=len(g), max_rows_per_group=max(g.values()) if g else 0)
+
+    rec = dict(cap=cap, n_before=int(len(D)), tiers_before={str(t): v for t, v in nb.items()},
+               seed=[int(seed), int(set_idx)], rng="numpy default_rng([seed, set, tier])")
+    if cap <= 0 or len(D) <= cap:
+        return D, dict(rec, applied=False, n_after=int(len(D)), tiers_after=rec["tiers_before"],
+                       reason="no cap" if cap <= 0 else "within the cap")
+    room = max(0, cap - nb[1])
+    q2 = min(nb[2], int(math.floor(frac2 * room + 0.5)))
+    q3 = min(nb[3], room - q2)
+    q2 = min(nb[2], room - q3)
+    keep = tier == 1
+    for t, q in ((2, q2), (3, q3)):
+        idx = np.flatnonzero(tier == t)
+        if q >= len(idx):
+            keep[idx] = True
+        elif q > 0:
+            keep[idx[rr_pick(grp[idx], q, np.random.default_rng([int(seed), int(set_idx), t]))]] = True
+    out = D[keep]
+    ta = out.tier.to_numpy()
+    rec.update(applied=True, room=room, quota={"2": q2, "3": q3}, tier2_frac=frac2, n_after=int(len(out)),
+               tiers_after={str(t): int((ta == t).sum()) for t in (1, 2, 3)}, tier1_over_cap=nb[1] > cap,
+               groups_before={str(t): groups(tier == t) for t in (2, 3)},
+               groups_after={str(t): groups(keep & (tier == t)) for t in (2, 3)})
+    return out, rec
 
 
 def export_atoms(a, r):
@@ -894,28 +1213,57 @@ def ts_near_mask(D):
     return kind.isin(TS_NEAR_ALWAYS) | (kind.isin(TS_NEAR_IF_CLOSE) & (dform <= TS_NEAR_DFORM_A))
 
 
-def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False):
+def nur_stream_check(pool, st):
+    """decision FT-nurion: the Nurion file the pool streamed must be the one inputs_state hashed (fingerprint, data
+    json); a collect that replaced it in between = not ready (resubmit)."""
+    rd = pool.stats.get("nurion_read") or {}
+    want = (st.get(NUR) or {}).get("sha256")
+    if want and rd.get("sha256_stream") != want:
+        M.not_ready(f"{NUR_INPUT[1]} changed during the build (stream sha256 {str(rd.get('sha256_stream'))[:12]} != "
+                    f"{want[:12]}; collect running?) - resubmit")
+
+
+def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False, caps=None):
     Rs = [parse_run(r, with_al) for r in runs] + ([parse_run(r, with_al) for r in ALL_RUNS] if all_ else [])
     if not Rs:
         raise SystemExit("data: give run names or --all")
+    t_data = time.time()
     any_al = any(R["al"] for R in Rs)
     st, complete, gmeta = inputs_state(any_al)
     if any_al and not st["G4"]["present"]:
         M.not_ready(f"--with-al: {AL_INPUT[1]} missing")
+    caps = dict(CAP_DEFAULTS, **(caps or {}))
     params = dict(code=CODE_VERSION, fmax_cap=fmax_cap, valid_frac=valid_frac, dedupe_decimals=DEDUPE_DEC,
-                  atom_ref_eh=ATOM_REF_EH, ts_near=[TS_NEAR_ALWAYS, TS_NEAR_IF_CLOSE, TS_NEAR_DFORM_A])
+                  atom_ref_eh=ATOM_REF_EH, ts_near=[TS_NEAR_ALWAYS, TS_NEAR_IF_CLOSE, TS_NEAR_DFORM_A],
+                  cap=dict(caps, tier2_frac=CAP_TIER2_FRAC, seed_base=M.SEED + CAP_SEED_OFF,
+                           tiers="1 non-Nurion | 2 Nurion nur_ts_final or TS-near nur_ TS kind | 3 other Nurion",
+                           sampler="round-robin over job ids (rr_pick)"))
     splits = {}
     for R in Rs:
         splits.setdefault(R["split"], R)
-    if dry:                                            # --dry: pool + split logic + C-2 check, nothing written
+    if dry:                                            # --dry: pool + split + cap logic + C-2 check, nothing written
         pool = Pool(any_al, fmax_cap)
+        nur_stream_check(pool, st)
+        t_pool = time.time() - t_data
         out = {}
+
+        def cnt(c):
+            return {k: dict(n=v["n"], by_input=v["by_input"], by_tier=v["by_tier"], n_rxns=v["n_rxns"],
+                            nurion_by_tier_kind=v["nurion_by_tier_kind"], n_nurion_jobs=v["n_nurion_jobs"],
+                            by_kind=v["by_kind"], n_ts_near=v["n_ts_near"]) for k, v in c.items()}
+
         for s, R in splits.items():
             m = build_split(pool, s, R, valid_frac, split_fingerprint(s, st, params), st, complete, gmeta, params,
                             write=False)
-            out[s] = dict(counts={k: dict(n=v["n"], by_input=v["by_input"], by_kind=v["by_kind"], n_ts_near=v["n_ts_near"])
-                                  for k, v in m["counts"].items()}, leakage_C2=m["leakage_C2"])
+            json.dumps(m, default=M._json_default)    # the meta a real build writes must serialise
+            out[s] = dict(counts=cnt(m["counts"]), counts_precap=cnt(m["counts_precap"]),
+                          cap={k: v for k, v in m["cap"].items() if k != "rule"}, valid=m["valid"],
+                          leakage_C2=m["leakage_C2"])
         print(json.dumps(dict(dry=True, inputs_complete=complete, g_report=gmeta,
+                              build=dict(pool_s=round(t_pool, 1), wall_s=round(time.time() - t_data, 1),
+                                         peak_rss_gib=_rss_gib(), host=socket.gethostname()),
+                              nurion=pool.stats.get("nurion"), nurion_read=pool.stats.get("nurion_read"),
+                              dedupe={k: v for k, v in (pool.stats.get("dedupe") or {}).items() if k != "method"},
                               inputs={k: dict(present=v["present"], bytes=v.get("bytes")) for k, v in st.items()},
                               d0_holdout={k: v for k, v in (pool.stats.get("d0_holdout") or {}).items() if k != "rule"},
                               read=pool.read_info, tag_check=pool.stats.get("tag_check"),
@@ -936,22 +1284,28 @@ def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False):
     metas = {}
     if todo:
         pool = Pool(any_al, fmax_cap)
+        nur_stream_check(pool, st)
         for s, R, fp in todo:
             metas[s] = build_split(pool, s, R, valid_frac, fp, st, complete, gmeta, params)
     for R in Rs:
         meta = metas.get(R["split"]) or M.read_json(FT_DATA / R["split"] / "meta.json")
         out = dict(run=R["run"], split=R["split"], split_dir=str(FT_DATA / R["split"]), run_info=R,
                    fingerprint=meta["fingerprint"], inputs_complete=meta["inputs_complete"],
-                   counts=meta["counts"], valid=meta["valid"], leakage_C2=meta["leakage_C2"],
+                   counts=meta["counts"], counts_precap=meta.get("counts_precap"),
+                   cap={k: v for k, v in (meta.get("cap") or {}).items() if k != "rule"},
+                   nurion=meta.get("nurion"), nurion_pool=meta["pool"].get("nurion"),
+                   valid=meta["valid"], leakage_C2=meta["leakage_C2"],
                    inputs={k: dict(present=v["present"], sha256=v.get("sha256")) for k, v in meta["inputs"].items()},
                    filters=meta["pool"].get("filters"), dedupe=meta["pool"].get("dedupe"),
                    tag_check=meta["pool"].get("tag_check"),
                    d0_holdout={k: v for k, v in (meta["pool"].get("d0_holdout") or {}).items() if k != "rule"},
                    d0_holdout_sha256=(meta["pool"].get("d0_holdout") or {}).get("sha256"),
+                   files=meta.get("files"), build=dict(wall_s=round(time.time() - t_data, 1), peak_rss_gib=_rss_gib(),
+                                                       split_built_here=R["split"] in metas),
                    written=_now(), **_jobtag())
         M.write_json(RES_FT / f"{R['run']}_data.json", out)
-    print(json.dumps(dict(inputs_complete=complete, runs={R["run"]: dict(split=R["split"], built=R["split"] in metas)
-                                                           for R in Rs})), flush=True)
+    print(json.dumps(dict(inputs_complete=complete, wall_s=round(time.time() - t_data, 1), peak_rss_gib=_rss_gib(),
+                          runs={R["run"]: dict(split=R["split"], built=R["split"] in metas) for R in Rs})), flush=True)
     return 0
 
 
@@ -1897,6 +2251,9 @@ def main(argv=None):
     a.add_argument("--with-al", action="store_true")
     a.add_argument("--fmax-cap", type=float, default=FMAX_CAP)
     a.add_argument("--valid-frac", type=float, default=VALID_FRAC)
+    a.add_argument("--cap-train", type=int, default=CAP_TRAIN, help="train structures per split (FT-cap; 0 = no cap)")
+    a.add_argument("--cap-valid", type=int, default=CAP_VALID, help="validation structures per split (0 = no cap)")
+    a.add_argument("--cap-test", type=int, default=CAP_TEST, help="test structures per split (default 0 = no cap)")
     a.add_argument("--force", action="store_true")
     a.add_argument("--dry", action="store_true")
     a = sub.add_parser("fetch")
@@ -1928,7 +2285,8 @@ def main(argv=None):
     sub.add_parser("status")
     o = ap.parse_args(argv)
     if o.cmd == "data":
-        return cmd_data(o.runs, o.all, o.with_al, o.fmax_cap, o.valid_frac, o.force, o.dry)
+        return cmd_data(o.runs, o.all, o.with_al, o.fmax_cap, o.valid_frac, o.force, o.dry,
+                        caps=dict(train=o.cap_train, valid=o.cap_valid, test=o.cap_test))
     if o.cmd == "fetch":
         return cmd_fetch(o.cand)
     if o.cmd == "train":
