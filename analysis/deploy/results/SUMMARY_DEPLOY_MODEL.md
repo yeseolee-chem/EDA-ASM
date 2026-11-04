@@ -58,7 +58,7 @@ fold별 선택 칸과 최적 epoch: f0 3×64 / 77, f1 3×64 / 46, f2 2×128 / 92
 | **I-3 (SMILES부터 연쇄 smoke, 10반응)** | **통과**(`results/I3_chain.json`): autodE 새 실행 10/10 .done(4코어 × 10, 1.83 core-h) → L → M → F → T → predict_tf final, 5짝 모두 예측, 형식 검사 모두 통과 |
 
 - I-3에서 10반응으로는 맞출 수 없는 전체 집합 관문(L-1 · L-2 · L-4 실제 실행분, F-3 · Q-a 비율, T 원소 9종 · d_in)은 사유를 적고 subset 예외로 두었다. L-2(새 TS = g2_final의 원자 순열)는 새 autodE 실행에서는 성립하지 않는 것이 정상이라, LADDER 비교(같은 형성 결합 · A_idx, 무거운 원자 RMSD)로 대신했다.
-- 확장된 `predict_tf.py`(DEPLOY_MODEL_W 13-1: `--model-dir`, `--readout`, 출력 열 `readout`)를 적용했다. 기본 옵션에서 원래 파일과 비트 단위로 같은 결과를 낸다(`results/w/patch_test.json`, I2-0).
+- 확장된 `predict_tf.py`(DEPLOY_MODEL_W 13-1: `--model-dir`, `--readout`, 출력 열 `readout`)를 적용했다. 기본 옵션에서 원래 파일과 비트 단위로 같은 결과를 낸다(`results/w/patch_test.json`). 확장 뒤 I2 검사(I2-0 · I2-1 · I2-2 · I2-4, I-3 출력 재예측 포함) 모두 통과(`results/w/I2_selftest.json`).
 
 ## 5. 배포 실행 명세에 넘길 것
 

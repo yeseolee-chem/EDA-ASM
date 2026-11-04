@@ -2,7 +2,7 @@
 
 - 명령서 `docs/specs/DEPLOY_MODEL_W.md`, 사전 등록 `results/w/PREREG_W.md`(commit 17f52d7e, K 학습 전), 결정 기록 `results/DECISIONS.md`.
 - 시작 조건 0-1(DEPLOY G-C 통과)은 G-C 영가설 검사 결과에 따른 편차로 통과시켰다(`S0_start_w.json`의 `G_C_deviation`, `results/NULL_gc.json`).
-- 진행: 0 → B → C → R → K → P → E → D → (W2 건너뜀) → I2 → S.
+- 진행: 0 → B → C → R → K → P → E → D → (W2 건너뜀) → I2(모두 통과) → S. 이 명령서는 여기서 멈춘다.
 
 ## 결론
 
@@ -106,7 +106,17 @@ lfW는 유해 오차 H를 3 %(CI 0.7–6 %) 줄였지만, 장벽 · disp MAE가 
 
 ## 8. I2 — 추론기 확장과 검사
 
-(I2 결과를 기다리는 중)
+`results/w/I2_selftest.json` all_pass true (job 1061423, A10, 228 s). 확장된 `predict_tf.py` sha256 0ad03045…(패치 검사 `patch_test.json` 통과 후 계산 노드에서 적용).
+
+| # | 검사 | 결과 | 기준 |
+|---|---|---|---|
+| I2-0 | DEPLOY I-1 · I-2를 확장된 predict_tf.py 기본 옵션으로 | I-1 2.87e-6, I-2 0.0 (A10) | ≤ 1e-4 · ≤ 1e-6 |
+| I2-1 | `--model cv --model-dir $DEPW/units --readout direct` 대 `K_predictions_w` | 2.6e-6 (72,790행) | ≤ 1e-4 |
+| I2-2 | `--readout graph` 대 E의 graph 값 | lfW 1.6e-6, lf 1.4e-6 | ≤ 1e-4 |
+| I2-3 | W2 final 재예측 | 해당 없음(W2 없음) | — |
+| I2-4 | DEPLOY I-3 연쇄 출력(SMILES부터 10반응)을 채택 모델(lf) · direct로 | 5짝 예측, 열 · 행 수 · 유한값 모두 맞음 | 형식 |
+
+I2-4: 첫 실행(1061334)에서는 I-3 출력 이름(`fu2_lf/tokens`, `X182_lf.parquet`, `i3_pairs.csv`)이 검사 코드가 찾는 이름과 달라 실행되지 않았다. 원본을 고치지 않고 이름만 맞춘 symlink 폴더 `$DEPW/i3_view`로 다시 돌렸다(DECISIONS).
 
 ## 9. 계산량
 
@@ -116,7 +126,7 @@ lfW는 유해 오차 H를 3 %(CI 0.7–6 %) 줄였지만, 장벽 · disp MAE가 
 | K (lfW 5 unit, lfV는 같은 실행의 r = 0 부분) | A10 2.59 GPU-h (fold당 27–37분) |
 | P (graph 예측 15 task) | A10 약 0.1 GPU-h |
 | E · D | CPU 수 분 |
-| I2 | (기다리는 중) |
+| 패치 검사 · I2 | CPU 130 s · A10 2회 약 0.13 GPU-h |
 
 GPU 종류: 명령서는 RTX 3090 우선이지만 gpu1 대기가 길어 K · P · I2를 모두 A10에서 돌렸다(DECISIONS 'W K 제출'). 한 비교 안에서는 같은 종류다.
 
