@@ -9,6 +9,8 @@ ENVN=$1; shift
 NAME=mlt_sandbox; GRES=()
 if [ -n "${SBX_GPU:-}" ]; then NAME=mlt_gsandbox; GRES=(--gres=gpu:1); fi
 SB=${MLT_SANDBOX:-$(squeue -u "$USER" -h -n "$NAME" -t R -o %i | head -1)}
+# CPU tests fall back to the GPU sandbox (16 CPUs) when no CPU sandbox runs (CPU sandbox cancelled 11-04, user OK)
+[ -n "$SB" ] || [ -n "${SBX_GPU:-}" ] || SB=$(squeue -u "$USER" -h -n mlt_gsandbox -t R -o %i | head -1)
 [ -n "$SB" ] || { echo "no running $NAME job"; exit 2; }
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 exec srun --jobid="$SB" --overlap -n1 -c"${SBX_C:-4}" --mem="${SBX_MEM:-8G}" "${GRES[@]}" timeout "${SBX_T:-560}" \

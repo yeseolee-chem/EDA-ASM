@@ -1112,7 +1112,11 @@ def dry_report(name, units, n):
     return 0
 
 
-def cmd_run(group, i, n, only=None, dry=False):
+def cmd_run(group, i, n, only=None, dry=False, rev=False):
+    """rev (--rev, decision G-helper): the same slice in reverse order (smallest first). A helper task
+    `run <group> 0 1 --rev` walks the whole group from the small end while the n-slice tasks walk theirs from the
+    large end; run_struct skips structures whose record exists when it claims them, so the two meet without
+    redoing finished work (only the structures in flight at the meeting point can run twice)."""
     if group not in ("G1", "G3"):
         print("run: group must be G1 or G3", file=sys.stderr)
         return 2
@@ -1136,8 +1140,10 @@ def cmd_run(group, i, n, only=None, dry=False):
             return dry_report(f"run {group}", U, n)
         mine, loads = slice_units(U, n, i)
         rows = [x for v in mine for x in v]
+        if rev:
+            rows = [x for v in mine[::-1] for x in v]                 # unit order reversed, a molecule's rows together
     todo = [r for r in rows if not rec_path(group, r["struct_id"]).is_file()]
-    print(f"[run {group} {i}/{n}] {len(rows)} structures, {len(todo)} to do, {_cpus()} workers, job {_jobtag()} on "
+    print(f"[run {group} {i}/{n}{' rev' if rev else ''}] {len(rows)} structures, {len(todo)} to do, {_cpus()} workers, job {_jobtag()} on "
           f"{socket.gethostname()}, {time_left_h():.1f} h left", flush=True)
     ctx = Ctx("g")
     t0 = time.time()
@@ -1149,7 +1155,7 @@ def cmd_run(group, i, n, only=None, dry=False):
                 load_this=loads[i] if loads else None, load_all=loads, slurm_job=_jobtag(), host=socket.gethostname(),
                 finished=_now(), code=CODE_VERSION)
     if not only:
-        M.write_json(STEPS / f"run_{group}_{i:02d}of{n:02d}.json", summ)
+        M.write_json(STEPS / f"run_{group}{'_rev' if rev else ''}_{i:02d}of{n:02d}.json", summ)
     print(json.dumps({k: summ[k] for k in ("stats", "core_h", "n_left", "halt", "timed_out")}), flush=True)
     if ctx.halt:
         return 3
@@ -1801,6 +1807,7 @@ def main(argv=None):
     a.add_argument("n", type=int)
     a.add_argument("--only", default=None)
     a.add_argument("--dry", action="store_true")
+    a.add_argument("--rev", action="store_true")
     a = sub.add_parser("run_g2")
     a.add_argument("i")
     a.add_argument("n", type=int)
@@ -1822,7 +1829,7 @@ def main(argv=None):
         return cmd_g0(x.n_rand, x.n_label, x.n_g2, _ints(x.label_rxns))
     if x.cmd == "run":
         only = {s for s in str(x.only).split(",") if s} if x.only else None
-        return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry)
+        return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.rev)
     if x.cmd == "run_g2":
         only = _ints(x.only)
         return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry)

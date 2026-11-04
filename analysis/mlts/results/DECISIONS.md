@@ -41,3 +41,5 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
   - A-2(mlts_autode.py)에 넘길 것: finalize_lf · meta_lf가 읽는 `.done_ts/.done_stereo/.done_ref`(또는 `.fail_*`), `ref_result.json`(alt_used), `stereo_result.json`, ts_result.json의 `checks.flag_async` · `checks.no_foreign_bond` · `charge_*`도 `$MLT/ade/jobs/<job_id>/`에 복사해야 한다.
   - 비용: HF 0.158 core-h/반응(32 worker, MaxRSS 9.3 GB) → 9,266반응 약 1,460 core-h.
   - 규칙 기록: agent가 login에서 `python3 -c 1` 1번(grep 명령 안), `cmp` for 루프 1번, `sleep 1` 1번. 시험 job 2개(1061693, 1061697).
+- **CPU sandbox 취소 (11-04 14:3x, 사용자 "필요없는 것이면 취소")**: mlt_sandbox 1061585(16코어)를 취소했다(실행 중인 시험 step 없음). CPU 시험은 jobs/sbx.sh가 GPU sandbox mlt_gsandbox 1061635(16 CPU)로 넘긴다. GPU sandbox는 다리 · Z · A-2 코드 시험이 끝날 때까지 둔다.
+- **G-helper (11-04 14:4x, 사용자 "잡 칸 하나 채워 병렬 가속")**: 빈 실행 칸 하나에 G1 보조 job 1061779(cpu2 64코어)를 넣었다. `gen_dft.py run G1 0 1 --rev`(새 옵션)는 G1 전체를 작은 구조부터 거꾸로 돈다. 기존 3 task는 큰 구조부터 돌고, run_struct가 구조를 잡을 때 기록이 있으면 건너뛰므로 양쪽이 가운데에서 만나며 끝난 일을 다시 하지 않는다(만나는 순간 진행 중인 몇십 개만 중복될 수 있음). G1 예상 7.2 h → 약 5.4 h(256코어). collect 1061711의 의존성에 1061779를 더했다(scontrol update).
