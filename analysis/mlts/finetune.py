@@ -103,7 +103,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 
-CODE_VERSION = "mlts-ft-4"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
+CODE_VERSION = "mlts-ft-5"          # -5: G-D1-trunc accepted as complete inputs (splits rebuilt so their meta says so)
                                     # -3: D0-plus / D0-gauss holdout drop (+ siblings) + independent C-2 holdout / G4
                                     #     checks (FT-d0hold); splits rebuilt (no production data built with -3 yet)
                                     # -4: Nurion input (FT-nurion) + per-split size cap with tiers (FT-cap), nur_ TS kinds
@@ -638,9 +638,26 @@ def inputs_state(with_al):
     base = [n for n, _ in INPUTS] + [NUR] + (["G4"] if with_al else [])
     d0_req, d0_ok, d0_meta = d0_state(st)
     nur_ok, nur_meta = nur_state(st)
-    complete = all(st[n]["present"] for n in base) and bool(g.get("complete")) and d0_ok and nur_ok
-    return st, complete, dict(G_report=str(G_REPORT), G_report_complete=g.get("complete"), d0_required=d0_req,
-                              d0_complete=d0_ok, nurion_complete=nur_ok, nurion=nur_meta, **d0_meta)
+    g_ok, g_why = g_report_ok(g)
+    complete = all(st[n]["present"] for n in base) and g_ok and d0_ok and nur_ok
+    return st, complete, dict(G_report=str(G_REPORT), G_report_complete=g.get("complete"), G_report_ok=g_why,
+                              d0_required=d0_req, d0_complete=d0_ok, nurion_complete=nur_ok, nurion=nur_meta, **d0_meta)
+
+
+G2_TRUNC_MIN = 317                                  # user cancelled D1 G-2 at 317/400 (DECISIONS 'Nurion'; launcher G-D1-trunc)
+
+
+def g_report_ok(g):
+    """(ok, why): G_report complete, or the user's D1 G-2 truncation (G1 and G3 complete, G-2 >= 317 units kept)."""
+    if g.get("complete"):
+        return True, "complete"
+    gr = g.get("groups") or {}
+    try:
+        ok = (int(gr["G1"]["n_missing"] or 0) == 0 and int(gr["G3"].get("n_missing") or 0) == 0
+              and int(gr["G2"]["n_units"]) >= G2_TRUNC_MIN)
+    except (KeyError, TypeError, ValueError):
+        ok = False
+    return ok, ("G-D1-trunc (user: G-2 stopped at %s/400)" % gr.get("G2", {}).get("n_units")) if ok else "incomplete"
 
 
 def split_fingerprint(split, st, params):
