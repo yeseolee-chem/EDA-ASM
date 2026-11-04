@@ -19,3 +19,5 @@
 - 2026-11-05T01:49 p13 j1062409 | N-scan: queued -> ready | N-scan submit 1062416 scan/g01_021 crit
 - 2026-11-05T01:59 p14 j1062415 | N-scan: queued -> ready | N-scan submit 1062425 collect@23 crit
 - 2026-11-05T02:09 p15 j1062424 | N-scan done
+- 2026-11-05T02:09 p15 j1062424 | commit 53538229: N-scan done (complete) | push origin mlts ok
+- 2026-11-05T06:33 p41 j1062548 | G-D0 done | FT-dp: blocked -> ready
