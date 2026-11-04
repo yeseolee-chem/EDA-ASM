@@ -1,0 +1,588 @@
+{
+ "phase": "G plan D0",
+ "code": "mlts-gen-d0-2",
+ "written": "2026-11-04 19:54:39",
+ "host": "n108.hpc",
+ "wall_s": 22.595720529556274,
+ "fingerprint": {
+  "code": "mlts-gen-d0-2",
+  "files": {
+   "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-mlts/labels_all.json": "62c0e7845045d0810627e88f1f52a3f353059bd78ac12ed89f8cd0f053a08753",
+   "/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/full_dataset.csv": "5f08c6b2dc04dd3ae11c74b2e0251a595b230915c7196d7a67e96bfac7f1e12d",
+   "/gpfs/tmp_cpu2/yeseo1ee/geo1b/d0/labels_d0_q.json": "05df8b43299ecbf970aa19a6e4cb81a425f6f0d20e25b0a26445b672c1d2db05",
+   "/gpfs/tmp_cpu2/yeseo1ee/geo1b/d0/d0_folds.csv": "873724245e7b9897d926e9cc1a042091166a3523f009d2102794bb6d83534c4e",
+   "/gpfs/tmp_cpu2/yeseo1ee/d1_ladder/labels_d1_cr2.json": "7e5882bce4d47dcd8164b61320a390530463bfa14731029c122d7f09920b6755",
+   "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-mlts/analysis/d1_pair/results/S_folds.csv": "944a1d1439eb0d54dff90f58f40476c21109cf3a5b71b4bb0f755651b216dcb7",
+   "/gpfs/tmp_cpu2/yeseo1ee/d1/d1_run/d1_manifest.csv": "d6abae6446d3fd294db706cebcbc290771f712803033e12695cb5a75bcee06f5"
+  },
+  "limit": null,
+  "seed": 20261104,
+  "seed_off": 2000000,
+  "roots": {
+   "prof": "/gpfs/tmp_cpu2/yeseo1ee/eda_asm_raw/dipolar_cycloaddition/extracted/full_dataset_profiles",
+   "eda": "/gpfs/tmp_cpu2/yeseo1ee/eda_smd_relabel/inputs",
+   "g2c": "/gpfs/tmp_cpu2/yeseo1ee/g2c/d0/g2_final"
+  },
+  "d1val": [
+   20,
+   25,
+   34,
+   47,
+   72,
+   105,
+   160,
+   208,
+   220,
+   367,
+   500,
+   953,
+   3220,
+   3381,
+   3432,
+   3530,
+   3544,
+   3545,
+   3554,
+   3606,
+   3620,
+   3737,
+   3784,
+   4006
+  ],
+  "n_near": 1
+ },
+ "limit": null,
+ "decisions": {
+  "D0-scope": "D0 = labels_all.json status ok (5,260) minus every reaction that is the same reaction as a D1 target by any of (a) the stereo-free canonical reaction SMILES (geo1b canon_rxn, copied unchanged), (b) the resonance-invariant reaction identity (D0-ident: sorted reactant identities >> sorted product identities), (c) the geo1b d0_folds.csv overlap rows (vs the D1 manifest); skipped entirely (counted). (b) adds 3270 (= D1 1001155/56/96/97; its ylide is written in another resonance form, so (a) and (c) miss it). STOP if an identity cannot be built, if a planned reaction still has a D1 identity, or if a d1_validation D0 reaction is in the skip set (its Phase I tags would be incomplete). Evaluation stays on the D1 T1 folds.",
+  "D0-ident": "molecule identity = RDKit standard InChI of the map-free, stereo-free molecule (invariant to resonance form / charge placement, stereo, InChI mobile H; 'smi:' + stereo-free canonical SMILES if no InChI). Every D0 <-> D1 comparison uses it (reaction skip, D1-shared molecules and TS fragments, the D1 dipole of a shared dipole molecule) and the class union of D0-only molecules; the pre-review string rule (raw SMILES part) is reported only. Over-matching (stereo variants) only adds tags or skips; on these data identity = string + one resonance pair (C=[N+](C)[CH-]C(C)=O = [CH2-][N+](C)=CC(C)=O).",
+  "D0-level": "D0 label TS = Coley G16 B3LYP-D3BJ/def2-SVP SMD(water) OptTS (profile TS_*.xyz, 5 decimals = the eda.inp coordinates); the reactants are the Coley r*.xyz (G16 level, inferred). Not stationary at the ORCA label level (Phase I d0_ts_grad median max|g| 4.7e-4 Eh/bohr vs D1 1.4e-5, ~30x): a program / level difference (G16 B3LYP = VWN3 vs ORCA B3LYP = VWN5, RIJCOSX def2/J, ORCA SMD, grids), not rounding; the D1 config 'parity with the D0 labels' refers to the TZVP SP / EDA stage, not to this gradient level. Every D0 structure is ordinary label-level E/F data; nothing assumes zero force; g0_d0 flags the parity against 10 x the measured D1 label-TS median (recorded, never a stop).",
+  "D0-G1": "per D0 reaction 2 d0_ts_near + 1 d0_ts_imag with the G-near / G-imag rules (gen_dft) on an xTB Freq (gen_dft XTB_HEADER = the D1 TS Hessian header) at the D0 label TS, computed in the run step and cached as $MLT/dft/hess_d0/d0ts_<rid>.hess.gz; default_rng(SEED + 2,000,000 + rid), draws in the G1 order (the n1 and i rows do not depend on --n-near). Deviation from spec 3 ('label TS Hessian if one exists'): a G16 B3LYP/def2-SVP Hessian exists at every Coley TS (profile frequency_logs.tar.gz) but is not used (other program and level, archive orientation, no validated parser); xTB is the mode source of D1 G1 as well.",
+  "D0-G3": "TS fragments = the (1)/(2) tags of the SMD-relabel eda.inp ($D0_EDA/rxn_%04d, (1) = dipole) in TS atom order, charge = labels charge{k}. Molecules = D0 Q keys (labels_d0_q cr.key1/key2: mirror-merged SMILES + |alt|cfg + |s3d, the D0 analogue of the D1 cr.key: distinct reference states stay distinct); a key whose identity (D0-ident) is a D1 molecule identity is skipped (D1 G3 already has 3 structures of it); geometry = member with the lowest labels_all e_frag{k}_rel_eh (ties: smallest rid) = profile rel{k}_file; 3 structures (ref + 2 G-near displacements), seed keyhash('D0|' + key), Hessians $MLT/dft/hess_d0/d0m<sha>. A Q key without a SMILES (no identity) is a STOP.",
+  "D0-G2": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= 5,000 x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
+  "D0-budget": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > 5,000 core-h = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1.",
+  "D0-nnear": "--n-near 1|2 (default 2 = the G1 rule) may change after D0 records exist (same fingerprint apart from n_near): the n1 / i rows are identical for both values; records of dropped n2 rows stay on disk and collect --d0 keeps them (reported as extra).",
+  "D0-tags": "rxn_ids / folds '' on every D0 structure except below (no D1 reaction; FT_k keeps them); dipoles = the D0 dipole class (FT_LODO_d drops D0 reactions of class d). TS fragments whose molecule identity is a D1 molecule identity: + the union of the D1 tags of every D1 target using that identity (all |fixed states merged; these rows follow the D1 rules, so they can be validation / test). D0-only molecules: dipoles = union of the classes of every planned D0 reaction using that identity (all Q keys). Extra info: d0_id (D0 rxn_id, never in rxn_ids), d0_class, charge.",
+  "D0-class": "stereo_utils.dipole_backbone (ring rule, = d0_manifest dipole_smiles) -> (t1, c, t2); allyl type = central degree >= 3, O centre, or aromatic backbone (mesoionic rings); propargyl = central N of degree 2. N allyl: CC azomethine ylide, CN d0_azomethine imine, CO nitrone; N propargyl: CC d0_nitrile ylide, CN d0_diazo (terminal N degree 1) / d0_nitrile imine, CO nitrile oxide, NN azide; O: CC carbonyl ylide, CN d0_carbonyl imine; anything else d0_other_<c><t1t2>. Must reproduce the D1 dipole of all 9,266 targets and the D1 dipole of every shared dipole SMILES (else STOP). Mesoionic rings take the class of their backbone (conservative for LODO).",
+  "D0-kinds": "new kind names d0_ts_near, d0_ts_imag, d0_ts_label, d0_frag, d0_react_ref, d0_react_disp, d0_g2_path, d0_ts_final_g2 (prefix as the Phase I d0_* kinds), groups D0G1 / D0G2 / D0G3; finetune TS-near = d0_ts_near / d0_ts_imag / d0_ts_label (+ Phase I d0_ts_grad) always, d0_g2_path / d0_ts_final_g2 when dform_label_A (written by collect --d0 against the D0 label TS) <= 0.3 A.",
+  "D0-sep": "separate plan ($MLT/dft/plan/plan_d0.parquet, g2_plan_d0.json, g2_pool_d0.json, d0_class.csv), records runs/D0G1, D0G2, D0G3, Hessians hess_d0/, STOP_D0, outputs gen_D0G{1,2,3}.extxyz + results/G_report_d0.json; the D1 plan / run / collect never read them.",
+  "D0-g0": "g0_d0: 30 EnGrads (6 per n_atoms quintile of D0G1 + D0G3) + 10 undisplaced D0 label TSs (n_atoms quantiles 0.05-0.95; not the 24 Phase I d0_ts_grad reactions) + D0G2 pilots (--n-g2 auto: 1 = the first ranked pool unit with n_atoms <= the pool median, only if the plan selects > 0 D0G2 reactions; their measured core-h enters the total); fit = D0 log-log over every ok D0 EnGrad on disk if >= 10, else the D1 G-0 fit x the mean D0 / D1-fit ratio; xTB Freq c N^2 from the D0 Hessians (>= 3) else the prior; budget basis D0-budget; parity: median > 1e-3 Eh/bohr = off_stationary, > 10 x the D1 label-TS median = above_10x_d1_median (flags, never a stop); total > 5,000 core-h = exit 3 (spec STOP).",
+  "D0-d1val": "the 24 D0 reactions of d1_validation (Phase I d0_* data) stay in D0G1 / D0G3 (no displaced or fragment data exist for them), are no parity picks (Phase I d0_ts_grad) and are not in the D0G2 pool.",
+  "D0-charge": "charge = labels_all charge1 + charge2 (0/0 5,002, 0/-2 197, 0/+1 61), multiplicity 1; written to records and extxyz info 'charge' (finetune total_charge, odd-electron filter).",
+  "D0-stop": "D0 commands refuse to start under the D1 STOP; their own systematic failures write $MLT/dft/STOP_D0 only, so D0 never blocks a D1 resubmission."
+ },
+ "d0": {
+  "n_records": 5265,
+  "n_ok": 5260,
+  "n_overlap_skipped": 6,
+  "overlap_canon_vs_d1_targets": {
+   "3221": [
+    1000537
+   ],
+   "3223": [
+    1000650,
+    1000671
+   ],
+   "3260": [
+    1000646,
+    1000667
+   ],
+   "3285": [
+    1001683
+   ],
+   "3306": [
+    1000656,
+    1000677
+   ]
+  },
+  "overlap_ident_vs_d1_targets": {
+   "3221": [
+    1000537
+   ],
+   "3223": [
+    1000650,
+    1000671
+   ],
+   "3260": [
+    1000646,
+    1000667
+   ],
+   "3270": [
+    1001155,
+    1001156,
+    1001196,
+    1001197
+   ],
+   "3285": [
+    1001683
+   ],
+   "3306": [
+    1000656,
+    1000677
+   ]
+  },
+  "overlap_d0_folds": [
+   3221,
+   3223,
+   3260,
+   3285,
+   3306
+  ],
+  "overlap_only_in_d0_folds": [],
+  "overlap_only_canon": [],
+  "overlap_ident_not_canon_or_folds": [
+   3270
+  ],
+  "overlap_canon_not_ident": [],
+  "n_planned_reactions": 5254,
+  "n_d1val_reactions": 24,
+  "d1val_ids": [
+   20,
+   25,
+   34,
+   47,
+   72,
+   105,
+   160,
+   208,
+   220,
+   367,
+   500,
+   953,
+   3220,
+   3381,
+   3432,
+   3530,
+   3544,
+   3545,
+   3554,
+   3606,
+   3620,
+   3737,
+   3784,
+   4006
+  ]
+ },
+ "classes": {
+  "by_class_ok": {
+   "d0_nitrile ylide": 762,
+   "nitrile oxide": 17,
+   "d0_nitrile imine": 187,
+   "d0_carbonyl oxide": 33,
+   "carbonyl ylide": 959,
+   "nitrone": 69,
+   "d0_azomethine imine": 470,
+   "azomethine ylide": 2230,
+   "d0_diazo": 101,
+   "d0_other_ONN": 39,
+   "d0_carbonyl imine": 241,
+   "d0_azoxy": 9,
+   "d0_azimine": 114,
+   "azide": 29
+  },
+  "by_class_planned": {
+   "d0_nitrile ylide": 762,
+   "nitrile oxide": 17,
+   "d0_nitrile imine": 187,
+   "d0_carbonyl oxide": 33,
+   "carbonyl ylide": 959,
+   "nitrone": 68,
+   "d0_azomethine imine": 470,
+   "azomethine ylide": 2229,
+   "d0_diazo": 101,
+   "d0_other_ONN": 39,
+   "d0_carbonyl imine": 241,
+   "d0_azoxy": 9,
+   "d0_azimine": 114,
+   "azide": 25
+  },
+  "n_d1_class_ok": 3304,
+  "n_unclassified": 0,
+  "n_aromatic": 589,
+  "aromatic_by_class": {
+   "d0_carbonyl imine": 36,
+   "azomethine ylide": 368,
+   "d0_azomethine imine": 33,
+   "carbonyl ylide": 152
+  },
+  "d1_reproduced": {
+   "n": 9266,
+   "mismatches": 0
+  },
+  "shared_dipole_molecules": {
+   "n_identities": 13,
+   "n_reactions_planned": 38,
+   "mismatches": 0
+  }
+ },
+ "counts": {
+  "n_rows": 30802,
+  "n_engrad_structures": 30802,
+  "n_g2_reactions": 0,
+  "by_group": {
+   "D0G1": 10508,
+   "D0G3": 20294
+  },
+  "by_group_kind": {
+   "D0G1/d0_ts_imag": 5254,
+   "D0G1/d0_ts_near": 5254,
+   "D0G3/d0_frag": 10508,
+   "D0G3/d0_react_disp": 6524,
+   "D0G3/d0_react_ref": 3262
+  },
+  "n_atoms": {
+   "D0G1/d0_ts_imag": {
+    "n": 5254,
+    "median": 44.0,
+    "mean": 44.53311762466692,
+    "min": 14.0,
+    "max": 94.0,
+    "sum": 233977.0,
+    "p10": 31.0,
+    "p90": 59.0
+   },
+   "D0G1/d0_ts_near": {
+    "n": 5254,
+    "median": 44.0,
+    "mean": 44.53311762466692,
+    "min": 14.0,
+    "max": 94.0,
+    "sum": 233977.0,
+    "p10": 31.0,
+    "p90": 59.0
+   },
+   "D0G3/d0_frag": {
+    "n": 10508,
+    "median": 22.0,
+    "mean": 22.26655881233346,
+    "min": 6.0,
+    "max": 60.0,
+    "sum": 233977.0,
+    "p10": 12.0,
+    "p90": 33.0
+   },
+   "D0G3/d0_react_disp": {
+    "n": 6524,
+    "median": 24.0,
+    "mean": 24.783874923359903,
+    "min": 7.0,
+    "max": 60.0,
+    "sum": 161690.0,
+    "p10": 15.0,
+    "p90": 35.0
+   },
+   "D0G3/d0_react_ref": {
+    "n": 3262,
+    "median": 24.0,
+    "mean": 24.783874923359903,
+    "min": 7.0,
+    "max": 60.0,
+    "sum": 80845.0,
+    "p10": 15.0,
+    "p90": 35.0
+   }
+  },
+  "by_charge": {
+   "-2": 597,
+   "0": 30019,
+   "1": 186
+  },
+  "with_d1_rxn_ids": {
+   "D0G1/d0_ts_imag": 0,
+   "D0G1/d0_ts_near": 0,
+   "D0G3/d0_frag": 511,
+   "D0G3/d0_react_disp": 0,
+   "D0G3/d0_react_ref": 0
+  },
+  "fold_tagged": {
+   "-1": {
+    "D0G3/d0_frag": 131
+   },
+   "0": {
+    "D0G3/d0_frag": 346
+   },
+   "1": {
+    "D0G3/d0_frag": 229
+   },
+   "2": {
+    "D0G3/d0_frag": 440
+   },
+   "3": {
+    "D0G3/d0_frag": 380
+   },
+   "4": {
+    "D0G3/d0_frag": 234
+   }
+  },
+  "dipole_tag_counts": {
+   "d0_nitrile ylide": 4158,
+   "azide": 598,
+   "azomethine ylide": 13854,
+   "nitrile oxide": 562,
+   "nitrone": 946,
+   "carbonyl ylide": 6488,
+   "d0_nitrile imine": 1036,
+   "d0_carbonyl oxide": 234,
+   "d0_azomethine imine": 3143,
+   "d0_diazo": 572,
+   "d0_other_ONN": 285,
+   "d0_carbonyl imine": 1561,
+   "d0_azoxy": 66,
+   "d0_azimine": 765
+  }
+ },
+ "excluded": {
+  "n_g1": 0,
+  "g1": {},
+  "n_frag": 0,
+  "frag": {}
+ },
+ "checks": {
+  "frag_partition": {
+   "n_first_nf1_is_frag1": 0,
+   "n_pairs_cross_fragments": 5254,
+   "n_frag1_ref_formula_equal": 5254,
+   "n_frag2_ref_formula_equal": 5254
+  },
+  "n_ref_read_errors": 0,
+  "freq_dev_cm": "computed in the run step (records disp.freq_dev_cm; G_report_d0.json)",
+  "n_frag_shared_d1": {
+   "f1": 38,
+   "f2": 473,
+   "string_rule": 509
+  },
+  "identity_guard": {
+   "violations": 0,
+   "rule": "planned reactions / fragments / molecules vs D1 identities, d0_class within dipoles"
+  }
+ },
+ "molecules": {
+  "method": "TS fragments = the (1)/(2) tags of the SMD-relabel eda.inp ($D0_EDA/rxn_%04d, (1) = dipole) in TS atom order, charge = labels charge{k}. Molecules = D0 Q keys (labels_d0_q cr.key1/key2: mirror-merged SMILES + |alt|cfg + |s3d, the D0 analogue of the D1 cr.key: distinct reference states stay distinct); a key whose identity (D0-ident) is a D1 molecule identity is skipped (D1 G3 already has 3 structures of it); geometry = member with the lowest labels_all e_frag{k}_rel_eh (ties: smallest rid) = profile rel{k}_file; 3 structures (ref + 2 G-near displacements), seed keyhash('D0|' + key), Hessians $MLT/dft/hess_d0/d0m<sha>. A Q key without a SMILES (no identity) is a STOP.",
+  "identity": "molecule identity = RDKit standard InChI of the map-free, stereo-free molecule (invariant to resonance form / charge placement, stereo, InChI mobile H; 'smi:' + stereo-free canonical SMILES if no InChI). Every D0 <-> D1 comparison uses it (reaction skip, D1-shared molecules and TS fragments, the D1 dipole of a shared dipole molecule) and the class union of D0-only molecules; the pre-review string rule (raw SMILES part) is reported only. Over-matching (stereo variants) only adds tags or skips; on these data identity = string + one resonance pair (C=[N+](C)[CH-]C(C)=O = [CH2-][N+](C)=CC(C)=O).",
+  "n_keys": 3301,
+  "n_occurrences": 10508,
+  "n_shared_with_d1_skipped": 39,
+  "shared_keys": [
+   "dipolarophile:BrC1=CC2CCC1C2|s3d:BrC1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:C#CC(=O)OC|s3d:C#CC(=O)OC",
+   "dipolarophile:C#CC(C)=O|s3d:C#CC(C)=O",
+   "dipolarophile:C#CC|s3d:C#CC",
+   "dipolarophile:C#COC|s3d:C#COC",
+   "dipolarophile:C#Cc1ccccc1|s3d:C#Cc1ccccc1",
+   "dipolarophile:C/C=C/C|s3d:C/C=C/C",
+   "dipolarophile:C/C=C\\C|s3d:C/C=C\\C",
+   "dipolarophile:C1=C(c2ccccc2)C2CCC1C2|s3d:C1=C(c2ccccc2)[C@@H]2CC[C@H]1C2",
+   "dipolarophile:C1=CC2CCC1C2|s3d:C1=C[C@H]2CC[C@@H]1C2",
+   "dipolarophile:C=C(C)C|s3d:C=C(C)C",
+   "dipolarophile:C=CC(=O)OC|s3d:C=CC(=O)OC",
+   "dipolarophile:C=CC(C)=O|s3d:C=CC(C)=O",
+   "dipolarophile:C=CC|s3d:C=CC",
+   "dipolarophile:C=C|s3d:C=C",
+   "dipolarophile:CC#CC|s3d:CC#CC",
+   "dipolarophile:CC(=O)C1=CC2CCC1C2|s3d:CC(=O)C1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:CC(=O)C1C#CCCCCC1|s3d:CC(=O)[C@@H]1C#CCCCCC1",
+   "dipolarophile:CC1=C(C)C2CCC1C2|s3d:CC1=C(C)[C@H]2CC[C@@H]1C2",
+   "dipolarophile:CC1=CC2CCC1C2|s3d:CC1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:COC(=O)C1=CC2CCC1C2|s3d:COC(=O)C1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:COC(=O)C1C#CCCCCC1|s3d:COC(=O)[C@@H]1C#CCCCCC1",
+   "dipolarophile:COC1=CC2CCC1C2|s3d:COC1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:ClC1C#CCCCCC1|s3d:Cl[C@@H]1C#CCCCCC1",
+   "dipolarophile:FC(F)(F)C1=CC2CCC1C2|s3d:FC(F)(F)C1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:FC1=CC2CCC1C2|s3d:FC1=C[C@@H]2CC[C@H]1C2",
+   "dipolarophile:FC1C#CCCCCC1|s3d:F[C@@H]1C#CCCCCC1",
+   "dipolarophile:N#CC1=CC2CCC1C2|s3d:N#CC1=C[C@@H]2CC[C@H]1C2",
+   "dipole:C=[N+](C)[CH-]C(C)=O|s3d:C=[N+](C)[CH-]C(C)=O",
+   "dipole:CC#[N+][O-]|s3d:CC#[N+][O-]",
+   "dipole:CC(=O)C#[N+][O-]|s3d:CC(=O)C#[N+][O-]",
+   "dipole:COC(=O)[N-][N+]#N|s3d:COC(=O)[N-][N+]#N",
+   "dipole:C[N-][N+]#N|s3d:C[N-][N+]#N",
+   "dipole:[CH2-][N+](C)=Cc1ccccc1|alt|cfg:C31809840be~Nd19cb45bfe:t|s3d:[CH2-]/[N+](C)=C/c1ccccc1",
+   "dipole:[CH2-][O+]=CC(=O)OC|alt|cfg:Ca599f5c4ac~O8a4d8cbf5c:c|s3d:[CH2-]/[O+]=C\\C(=O)OC",
+   "dipole:[CH2-][O+]=CC(=O)OC|s3d:[CH2-]/[O+]=C\\C(=O)OC",
+   "dipole:[CH2-][O+]=CC(C)=O|alt|cfg:C60167061f9~O2c2cdbdd6d:t|s3d:[CH2-]/[O+]=C/C(C)=O",
+   "dipole:[CH2-][O+]=CC|s3d:[CH2-]/[O+]=C\\C",
+   "dipole:[O-][N+]#Cc1ccccc1|s3d:[O-][N+]#Cc1ccccc1"
+  ],
+  "n_shared_string_rule": 38,
+  "shared_identity_only": [
+   "dipole:C=[N+](C)[CH-]C(C)=O|s3d:C=[N+](C)[CH-]C(C)=O"
+  ],
+  "shared_string_only": [],
+  "shared_by_kind": {
+   "dipolarophile": 28,
+   "dipole": 11
+  },
+  "n_new": 3262,
+  "new_by_kind": {
+   "dipole": 2577,
+   "dipolarophile": 685
+  },
+  "n_alt_keys_new": 1808,
+  "n_without_key": 0,
+  "n_new_identities": 2173,
+  "n_new_keys_class_union_wider": 25,
+  "members_per_molecule": {
+   "n": 3262,
+   "median": 2.0,
+   "mean": 3.0646842427958307,
+   "min": 1.0,
+   "max": 679.0,
+   "sum": 9997.0,
+   "p10": 1.0,
+   "p90": 5.0
+  },
+  "n_keys_formula_differs": 0,
+  "keys_formula_differs": [],
+  "n_keys_charge_differs": 0,
+  "keys_charge_differs": [],
+  "n_structures": 9786
+ },
+ "g2_pool": {
+  "rule": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= 5,000 x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
+  "n_candidates": 4793,
+  "n_d1val_excluded": 24,
+  "n_no_g2c_dir": 437,
+  "excluded": {},
+  "n_pool": 4793,
+  "strata": {
+   "azide": 25,
+   "azomethine ylide": 2075,
+   "carbonyl ylide": 898,
+   "d0_azimine": 111,
+   "d0_azomethine imine": 451,
+   "d0_azoxy": 7,
+   "d0_carbonyl imine": 222,
+   "d0_carbonyl oxide": 23,
+   "d0_diazo": 91,
+   "d0_nitrile imine": 175,
+   "d0_nitrile ylide": 602,
+   "d0_other_ONN": 30,
+   "nitrile oxide": 15,
+   "nitrone": 68
+  },
+  "n_translated_hess": 1323,
+  "g2c_chosen": {
+   "r2": 1594,
+   "orig": 1644,
+   "r1": 1555
+  },
+  "n_atoms": {
+   "n": 4793,
+   "median": 44.0,
+   "mean": 44.60025036511579,
+   "min": 14.0,
+   "max": 94.0,
+   "sum": 213769.0,
+   "p10": 31.0,
+   "p90": 59.0
+  }
+ },
+ "budget": {
+  "d1_g0": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-mlts/analysis/mlts/results/G0_estimate.json",
+  "basis": {
+   "d1_total": 3403.053278608468,
+   "d1_g0_total": 2968.77448378215,
+   "d1_projected_total": 3403.053278608468,
+   "engrad_slowdown": 1.145922738290349,
+   "g2_slowdown": 1.146785923712748,
+   "rule": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > 5,000 core-h = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1."
+  },
+  "d1_total": 3403.053278608468,
+  "fits": {
+   "engrad": {
+    "a": 5.260598679397096e-05,
+    "b": 1.913309413155704
+   },
+   "xtb": {
+    "a": 2.5e-06,
+    "b": 2.0
+   },
+   "g2_ratio": 1.146785923712748,
+   "source": "d1_g0_fit"
+  },
+  "d1_engrad_fit": {
+   "a": 5.260598679397096e-05,
+   "b": 1.913309413155704,
+   "n": 60,
+   "rms_log": 0.1805164320660326,
+   "model": "core_h = a * n_atoms^b (log-log least squares)"
+  },
+  "d1_g2_fit": {
+   "a": 0.0011500632828778626,
+   "b": 2.193590553141108,
+   "n": 22,
+   "rms_log": 0.30190490730694713,
+   "model": "core_h = a * n_atoms^b (log-log least squares)"
+  },
+  "d0_predicted_by_item": {
+   "D0G1/d0_ts_imag": 475.6876964014234,
+   "D0G1/d0_ts_near": 475.6876964014234,
+   "D0G3/d0_frag": 266.18509325855473,
+   "D0G3/d0_react_disp": 199.08368539902435,
+   "D0G3/d0_react_ref": 99.54184269951422,
+   "D0G1/xtb_ts_hessians": 31.64545569899823,
+   "D0G3/xtb_mol_hessians": 6.323147238556125
+  },
+  "d0_g1_g3": 1554.1546170974946,
+  "d0_n2_rows_share": 0.0,
+  "d0g2_units_on_disk": [],
+  "d0g2_measured_core_h": 0.0,
+  "rule": {
+   "cap_with_margin": 4500.0,
+   "margin": 0.1,
+   "d1_total": 3403.053278608468,
+   "d0_g1_g3": 1554.1546170974946,
+   "room_for_g2": -457.20789570596276,
+   "margin_met_without_g2": false,
+   "n_g2": 0,
+   "g2_core_h": 0.0,
+   "g2_core_h_per_rxn": {
+    "n": 4793,
+    "median": 5.312101412886031,
+    "mean": 5.9008070125123995,
+    "min": 0.4308635184555732,
+    "max": 28.082690372045526,
+    "sum": 28282.568010971932,
+    "p10": 2.464001765974893,
+    "p90": 10.109468784146953
+   },
+   "g2_ratio": 1.146785923712748,
+   "total_with_g2": 4957.207895705963,
+   "cap_met": true,
+   "n_g2_at_cap_no_margin": 6
+  },
+  "n_g2_selected": 0,
+  "n_g2_source": "rule:d1_g0_fit",
+  "d0_g2_selected_core_h": 0.0,
+  "d1_observed": {
+   "G1": {
+    "n_sampled": 1500,
+    "n_files": 25497,
+    "ratio": 1.1358437566178075
+   },
+   "G3": {
+    "n_sampled": 1500,
+    "n_files": 21424,
+    "ratio": 1.1866347010694025
+   },
+   "G2": {
+    "n_units": 250,
+    "ratio": 1.146785923712748
+   },
+   "d1_projected_core_h": {
+    "by_group": {
+     "G1": 1577.3918477026016,
+     "G2": 1417.687271911938,
+     "G3": 407.9741589939286
+    },
+    "total": 3403.053278608468,
+    "rule": "G-0 group prediction x max(1, observed ratio)"
+   }
+  }
+ },
+ "outputs": {
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/plan_d0.parquet": "3ed927e2e67b1d6012e76d98169daed2fe4904b76616549c7740498716d392a3",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_plan_d0.json": "b424b38cafb516ee118f896e6c646d11f805b8a4b96b273a6fa1ef8c0414f6d0",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_pool_d0.json": "b6d290e153298bd4be3de8092eb9b6e440ebea57c88900c626a9b4b929d6e7bb",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_class.csv": "2749951110e0f0423381af975fdadfd6c88d812548487e9e2eff43d27dedd005"
+ }
+}
