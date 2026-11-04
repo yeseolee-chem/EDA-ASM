@@ -105,12 +105,17 @@ def main():
 
     out["candidates"] = [try_calc(n, f) for n, f in cands]
     imp = {}
-    for mod in ("sella", "orca_mlips"):
+    for mod in ("sella", "orca_mlips_plugins", "orca_mlips_plugins.mlip_server", "aimnet", "jax"):
         try:
-            m = __import__(mod)
+            m = __import__(mod, fromlist=["_"])
             imp[mod] = dict(ok=True, file=getattr(m, "__file__", None))
         except Exception as exc:
             imp[mod] = dict(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
+    try:
+        import orca_mlips_plugins.mlip_backends as MB
+        imp["orca_mlips_models"] = {k: list(getattr(MB, f"get_available_{k}_models")()) for k in ("mace", "aimnet2")}
+    except Exception as exc:
+        imp["orca_mlips_models"] = dict(ok=False, error=f"{type(exc).__name__}: {exc}"[:300])
     out["imports"] = imp
     mlip_ok = [c["name"] for c in out["candidates"] if c.get("ok") and not c["name"].startswith("GFN2")]
     out["mlip_ok"] = mlip_ok

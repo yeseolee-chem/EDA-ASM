@@ -253,9 +253,38 @@ def ext_atoms(symbols, pos_A, energy_eh, grad_eh_bohr, **info):
     return a
 
 
+EXT_TAGS = ("rxn_ids", "folds", "dipoles")
+
+
 def write_extxyz(path, atoms_list):
+    """the tag strings are written as JSON lists: ase 3.28 writes '' unquoted ('rxn_ids= folds=...'), so its reader
+    folds the next keys into the empty value, and it reads '0,3' / '1000301' back as int arrays. read_extxyz restores
+    the comma-joined strings."""
     from ase.io import write
-    return _atomic(path, lambda t: write(str(t), list(atoms_list), format="extxyz"))
+    out = []
+    for a in atoms_list:
+        b = a.copy()
+        for k in EXT_TAGS:
+            if k in b.info:
+                b.info[k] = [x for x in str(b.info[k]).split(",") if x]
+        out.append(b)
+    return _atomic(path, lambda t: write(str(t), out, format="extxyz"))
+
+
+def read_extxyz(path, index=":"):
+    """inverse of write_extxyz: tags back to comma-joined strings ('' when empty); id-like keys back to str."""
+    import numpy as np
+    from ase.io import read
+    al = read(str(path), index=index, format="extxyz")
+    for a in (al if isinstance(al, list) else [al]):
+        for k in EXT_TAGS:
+            if k in a.info:
+                v = a.info[k]                                   # list of str; '[]' comes back as an empty float array
+                a.info[k] = ",".join(str(x) for x in v) if isinstance(v, (list, tuple, np.ndarray)) else str(v)
+        for k in ("struct_id", "kind", "source", "level", "group"):
+            if k in a.info:
+                a.info[k] = str(a.info[k])
+    return al
 
 
 def tag_list(xs):
