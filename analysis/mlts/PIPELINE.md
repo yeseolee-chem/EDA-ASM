@@ -45,8 +45,9 @@ Each run: stop if `$MLT/PIPELINE_PAUSE` is `exit` or `results/STOP_S.md` exists 
 
 ## HALT 풀기 / clear a HALT
 
-추천안이 정해진 분기(G-D0 경로 수 재조정, Z 후보 1개, LODO는 능동학습 자료 포함, A-3 0.70–0.85, A″ arm 입력 실패 시
-arm 제외, P-3 실행, A-3 목록 분할)는 자동으로 진행하고 DECISIONS에 적는다. 추천안이 없는 STOP(FT-2 2차 실패, A-3 < 0.70
+추천안이 정해진 분기(G-D0 사용자 선택 200 + 100의 예산 확인, Z 후보 1개, LODO는 능동학습 자료 포함, A-3 0.70–0.85,
+A″ arm 입력 실패 시 arm 제외, P-3 실행, A-3 목록 분할)는 자동으로 진행하고 DECISIONS에 적는다. 보고만 하는 단계(N-scan,
+D0-eval, X-rep와 filler)의 HALT는 그 단계에 의존하는 단계만 멈춘다. 추천안이 없는 STOP(FT-2 2차 실패, A-3 < 0.70
 또는 예산 안 엔진 없음, G 예산 초과, H-2 > 2 %, C-2 · C2-K · C-1 실패, E 등록 변경, A-4 디스크 부족, exit 3)과 운영 실패
 (재시도 소진)는 **HALT**: `results/STOP_<단계>.md`(조건 · 수치 · 선택지 · 추천)를 쓰고 그 단계와 의존 단계를 멈춘다.
 - 범위: 보통 단계의 HALT 동안에는 새 단계도 시작하지 않는다(이미 시작한 독립 단계는 계속). 보고용 filler 단계
@@ -68,8 +69,15 @@ arm 제외, P-3 실행, A-3 목록 분할)는 자동으로 진행하고 DECISION
 
 실행기는 squeue와 (pass마다) sacct에서 등록부의 이름(`g_run1`, `g_run1rev`, `g_run3`, `g_run2`, `g_collect`, `z_omol`,
 `z_mh1`, `z_aim`, `z_off24`, `z_xtb`, `z_speed`, `z_report`, `ft_data`, `ft_p_<후보>`, `g_plan_d0`, `g_g0_d0`,
-`g_run_d0g1|3|2`, `g_collect_d0`; 그 밖의 `g_*d0*`는 G-D0을 막기만 함)을 자기 작업으로 받아들인다. 그 밖의 손 제출은
-`--comment=mltp:<단계>:<작업>:manual`을 붙이면 같은 작업으로 받아들이고 중복 제출하지 않는다.
+`d0p_plan`(G-D0f), `g_run_d0g1|3|2`(배열 원소마다; 그 배열 크기가 그 묶음의 `@I n`), `g_collect_d0`, `nur_<tar 약칭>`(N-scan;
+comment `mltp:nur:<tar>:manual`도); 그 밖의 `g_*d0*`(`g_run_d0g1rev`, `g_run_d0g1shuf1-3` 등 보조 task)는 G-D0의 새 제출을
+막기만 함)을 자기 작업으로 받아들인다. 그 밖의 손 제출은 `--comment=mltp:<단계>:<작업>:manual`을 붙이면 같은 작업으로
+받아들이고 중복 제출하지 않는다.
+- D1 G-2(1061710)는 사용자가 317/400에서 취소했다(결정 'Nurion'): G-D1은 G1 · G3가 빠짐없고 G-2가 317단위 이상이면 끝난 것으로
+  보고(`G_report` complete=false여도) G-2를 다시 내지 않는다.
+- Nurion: FT 자료 단계(FT-dp, FT-d1, FT-d2)는 `results/N_report.json` complete(결과 tar 23개 모두)가 되거나, lead가
+  DECISIONS.md에 `- **N partial ok (...)**: ...`로 시작하는 줄을 쓰면(또는 `RESOLVE: param N-scan.partial_ok=1`) 시작한다.
+
 대기열 자리: 실행기는 모든 task(launcher · sandbox · 손 작업 포함) + 후속 launcher를 **19개 이하**로 두어 손 작업
 1개 자리를 늘 남긴다. pass 사이에 손 작업을 2개 이상 내면 후속 launcher가 밀려날 수 있다(ATTENTION이 알림 →
 `sbatch jobs/pipeline.slurm`).
@@ -100,23 +108,32 @@ results=["<results 아래 glob>"], filler=False, active=fn(P) | None, partial=fn
 - 보고 JSON(`results/<X>_report.json`): `complete` (bool), `n_todo`, `stop` (null | 글), `est {units_total, unit_wall_h,
   workers}`, 그리고 아래 단계별 값. 등록 이름(`add_parser("<sub>")` 등)이 파일에 있어야 실행기가 그 단계를 연다.
 
+env: R = reactot, M = mlts, D = d1 (스크립트가 필요하면 스스로 다른 env로 다시 실행). C = cpu1,cpu2, C2 = cpu2, GA = 모든 GPU.
+
 | 단계 | 명령 (env, 자원) | 끝난 조건 · 읽는 값 |
 |---|---|---|
-| G4 | `gen_dft.py g4_plan --models <FT_0..4 1차>` (R, C 4c) → `g4_opt @I n --models ...` (M, GA 16c) → `run G4 @I n` (R, cpu2 64c) → `collect --g4` | `G4_plan.json` {complete, predicted_core_h (실행 전 예산 검사), est{opt,run}}; `G4_report.json` {complete, core_h_measured.total} + `$MLT/dft/gen_G4.extxyz`; G 전체 > 5,000 → HALT |
-| X-rep | `ts_geom.py x_report` (M, C 4c) | `X_report.json` {complete} |
-| A2-smoke | `mlts_autode.py smoke --model FT_0_al` (M, GA) | `A2_smoke.json` {pass} (C-3 문구) |
-| A3 | `mlts_autode.py run a3 @I n --list $MLT/pipeline/lists/a3.csv` (M, GA 32c 96G) → `refine_dft a3 @I n` (R, cpu2 64c) → `a3_report` | `A3_report.json` {complete, arms{A, Ap, App}{same_ts_frac, core_h_median, gpu_min_median, n, disk_gb_per_rxn}, disk_gb_per_rxn, est}. 비용은 배포 비용 그대로: Ap는 G2 TS 생성 포함, App는 A 포함. 예산 A · Ap ≤ 0.6 core-h + 3 GPU-분, App ≤ 1 core-h + 3 GPU-분 |
-| A4 | fold k: `mlts_autode.py run d1:<k> @I n --model FT_<k>_al --engine <A\|Ap\|App>` (M, GA 32c 96G); App이면 `refine_dft d1:<k> @I n`; 끝에 `status` | `A4_report.json` {complete, folds{k: {complete}}}; fold −1(anchor-only)은 `FT_0_al`; Ap의 G2 TS 없는 반응은 코드가 처리 · 기록 |
+| G-D1 | 손 job 넘겨받음(`g_run1/1rev/3/2`, `g_collect`); 다시 할 때 `gen_dft.py run G1\|G3 @I n` (R, C2 64c 240G) → `collect` | `G_report.json` complete, 또는 G1 · G3 빠짐 0 + G-2 ≥ 317/400(사용자 결정 'Nurion', G-2는 다시 내지 않음) |
+| G-D0p / G-D0e | `gen_dft.py plan_d0` → `gen_dft.py g0_d0` (R, C 16c) | `G_plan_d0.json` (limit 없음) → `G0_estimate_d0.json`(계획 fingerprint − n_near 같음); 예산 = D1(실측 · 계획 기준 중 큰 값) + D0 G1/G3 + D0G2 200 + G-4 150 ≤ `gen_dft.BUDGET_CORE_H`(8,000) 아니면 HALT. g0_d0의 stop 표시(그때 상한)는 쓰지 않음 |
+| G-D0f | `gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100` (R, C 16c; 손 job `d0p_plan` 넘겨받음) | `G_plan_d0.json` budget.n_g2_selected = 200, budget.n_holdout = 100(평가 전용, 정제 안 함) + `d0_holdout.csv` |
+| G-D0 | `gen_dft.py run D0G1\|D0G3 @I n` (R, C2 64c 240G), `gen_dft.py run_g2 @I n --d0` (D, C2; 학습용 200만), `collect --d0` | `G_report_d0.json` {complete}; n = 넘겨받은 배열 크기(D0G1 2, D0G3 1, D0G2 3) |
+| N-scan | 올라왔고 아직 안 읽은 tar마다 `inv_nurion.py scan <tar> --workers 8 ::: inv_nurion.py verify <tar>` (R, C 8c 24G) → `inv_nurion.py collect` (R, C 4c 64G) | 단위 끝 = `$MLT/dft/nurion/<tar>/.done`; 단계 끝 = `N_report.json` complete(결과 tar 23개) 이고 모든 .done 뒤에 씀. 아직 안 올라온 tar는 기다림(re-arm). tar 사본은 사용자가 손으로 지운다(release 안 씀, 결정 'tar 삭제 방식') |
+| G4 | `g4_al.py g4_plan --models <FT_0..4 1차>` (R, C 4c 16G) → `g4_opt @I n --models ...` (M, GA 16c 64G) → `run G4 @I n` (R, C2 64c 240G) → `collect --g4` (R, C 4c 32G) | `G4_plan.json` {complete, n_d1 1,000, n_d0 500, predicted_core_h.total (실행 전 예산 검사), est{opt, run}}; `G4_report.json` {complete, core_h_measured.total, stop_file} + `$MLT/dft/gen_G4.extxyz`; G 실측 + G-4 > `gen_dft.BUDGET_CORE_H` → HALT |
+| X-rep | `ts_geom.py x_report` (M, C 4c) | `X_report.json` {complete, per_dipole{pass_a}} |
+| D0-eval | `ts_geom.py d0_eval run @I 3` (M, GA 16c 64G) → `ts_geom.py d0_eval report` (M, C 4c) — FT-fin 뒤, 보고만 | `D0_eval_report.json` {complete, per_model, pooled, floor_rmsd_A 0.009}; 기준 TS = Coley TS(D0-gauss), 출발 label = Coley TS, g2 = G2c xTB TS |
+| A2-smoke | `mlts_autode.py smoke --model FT_0_al` (M, GA 8c 32G) | `A2_smoke.json` {complete, pass} (C-3 문구); exit 3 + complete → 판정 규칙(HALT) |
+| A3 | `mlts_autode.py run a3 @I n --list $MLT/pipeline/lists/a3.csv` (M, GA 16c 64G: 작업자 6 × 2코어 + 서버) → `refine_dft a3 @I n` (R, C2 64c 240G) → `a3_report` (R, C 4c) | `A3_report.json` {complete, arms{A, Ap, App}{same_ts_frac, core_h_median, gpu_min_median, n, disk_gb_per_rxn, cost_basis}, est}. 비용 = 배당 비용(job 코어 · GPU를 작업자 수로 나눔): Ap는 G2 TS 생성 포함, App는 A 포함; 진척 = `$MLT/a3/<arm>/ade/jobs` |
+| A4 | fold k: `mlts_autode.py run d1:<k> @I n --model FT_<k>_al --engine <A\|Ap\|App>` (M, GA 16c 64G); App이면 `refine_dft d1:<k> @I n`; 끝에 `status` | `A4_report.json` {complete, folds{k: {complete}}}; fold −1(anchor-only)은 `FT_0_al`; App이면 A는 `$MLT/ade_pre`, DFT 정제가 `$MLT/ade`(진척은 둘 다) |
 | A4-App | (A-3이 A″ arm을 정했을 때만) `mlts_autode.py refine_dft d1:<k> @I n --root $MLT/app` (R, cpu2 64c) → `status --root $MLT/app` | `$MLT/app/reports/A4_report.json` {complete}; A″ 폴더는 `$MLT/app/ade/jobs/<job_id>/`(A-2 형식) |
 | H-App | 실행기가 `inputs_mlts.py ... --root $MLT/app` 사슬을 돌린다 | `$MLT/app/reports/H2_report.json`; K · E는 `$MLT/pipeline/arms.json` {engine, extra_arm_App, app_root, app_usable}을 읽는다 |
-| C-agg | `tests.py all` (M, GA) | `C_tests.json` {complete, C2{pass}, C7{summary}} |
-| R | `prereg_v2.py write` (R, C) | `PREREG_V2.md`를 실행기가 commit (HEAD와 같아야 K 시작) |
-| K-C2C3 | `train_k.py plan` → `train_k.py <c2\|c3> <unit> @I n` → `train_k.py select` | `K_plan.json` {complete, units[{arm, unit, n, cpus, mem_gb, gpu}]}; `K_report.json` {complete, primary, leakage_C2{pass_}} |
-| C2-K | `tests.py c2_k` (R, C 4c) | `C2K_report.json` {complete, pass, n_units, n_overlap} — K 채널 단위의 f{k} 학습 짝 ∩ fold k = ∅, 아니면 HALT |
-| E | `eval_v2.py run` (R, C 16c) | `E_report.json` {complete, grade, prereg_change_needed} |
-| W | `final_w.py channel`, `committee @I 3`, `report` | `W_report.json` {complete} |
-| P | `predict_v2.py selfcheck`, `cert @I 1` (P-3, 추천안대로 실행), `report` | `P_report.json` {complete, selfcheck_pass} |
-| S | `summary_v2.py write` | `SUMMARY_V2.md` → `STOP_S.md`("명령서 S: 멈춤"), launcher 끝 |
+| C-agg | `tests.py all` (M, GA 16c 64G) | `C_tests.json` {complete, stop, C1..C7{pass}}; C-1 … C-6 실패 또는 stop = HALT(exit 3도 판정 규칙으로), C-7은 보고만 |
+| R | `prereg_v2.py write` (R, C 2c) | `PREREG_V2.md` + `prereg_v2.json`을 실행기가 commit; 끝 = 둘 다 tracked · HEAD와 같음 · json md_sha256 = sha256(md) |
+| K-C1 | `train_k.py c1pred atoms\|xgb\|collect --refs <등록 refs>` 그리고 `--refs <다른 refs>` (R; atoms GA 8c 64G, xgb C 32c 64G, collect C 4c) | `C1_report.json` {refs = 등록 refs} + `C1_<다른>_report.json`, 둘 다 PREREG 뒤 |
+| K-C2C3 | `train_k.py plan` (R, C 2c) → `train_k.py <c2\|c3\|c1v> <unit> @I 1` (K_plan 자원) → `train_k.py select` (R, C 4c) | `K_plan.json` {complete, units[{arm, unit, n, cpus, mem_gb, gpu}]}; `K_report.json` {complete, primary, configs{c: {predictions(경로), refs, table, units_dir, rung, final}}, leakage_C2{pass_}} |
+| C2-K | `tests.py c2_k` (R, C 4c 32G) | `C2K_report.json` {complete, pass, n_units, n_overlap} — K 채널 단위의 f{k} 학습 짝 ∩ fold k = ∅, 아니면 HALT |
+| E | `eval_v2.py run` (R, C 16c 64G) | `E_report.json` {complete, grade, prereg_change_needed, prereg_change_reason} + `E_metrics_pos.csv` |
+| W | `final_w.py channel` (M, GA 8c 64G), `committee @I 3` (M, GA 16c; FT_all_s<i>_al), `report` (R, C 4c) | `W_report.json` {complete} |
+| P | `predict_v2.py selfcheck` (M, GA 16c), `cert @I 1` (R, C2 64c; P-3, 추천안대로 실행), `report` (R, C 4c) | `P_report.json` {complete, selfcheck_pass}; SMILES 입력은 `predict_v2.py predict` |
+| S | `summary_v2.py write` (R, C 2c) | `SUMMARY_V2.md` → `STOP_S.md`("명령서 S: 멈춤"), launcher 끝 |
 
 실행기가 직접 쓰는 결과: `results/FT_report.json` · `results/FT_geom.csv`(명령서 5절, FT2-r2 판정 때; FT-fin 뒤 갱신),
 `$MLT/pipeline/lists/*.csv`, `$MLT/pipeline/arms.json`.

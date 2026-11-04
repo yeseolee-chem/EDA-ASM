@@ -4,3 +4,5 @@
 - 2026-11-04T20:04 p2 j1062155 | G-D0p done | G-D0e: queued -> ready | Z-run done
 - 2026-11-04T20:04 p2 j1062155 | commit 02ec3795: G-D0p done (complete); Z-run done (complete) | push origin mlts ok
 - 2026-11-04T20:34 p3 j1062160 | G-D0 adopt 1062165_0 (g_run_d0g1) as D0G1[0] | G-D0 adopt 1062165_1 (g_run_d0g1) as D0G1[1] | G-D0 adopt 1062166_0 (g_run_d0g3) as D0G3[0] | G-D0p adopt 1062164 (g_plan_d0, COMPLETED) from sacct history as plan_d0 | G-D0e HALT: g0: job 1061949 exit 3 (STOP) — log /gpfs/tmp_cpu2/yeseo1ee/mlts/logs/mltp_G-D0e_*1061949* | G-D0f: blocked -> waiting_code | Z-speed done | Z-rep done | FT-dp: blocked -> waiting_code | FT-p: blocked -> waiting_code | FT-d1: blocked -> waiting_code | FT-r1: blocked -> waiting_code | FT-d2: blocked -> waiting_code | FT-r2: blocked -> waiting_code | FT-fin: blocked -> waiting_code
+- 2026-11-04T20:34 p3 j1062160 | commit 02dbd872: G-D0e halted; Z-speed done (complete); Z-rep done (pilots MACE-OM | push origin mlts ok
+- 2026-11-04T20:44 p4 j1062197 | G-D1: running -> waiting_code

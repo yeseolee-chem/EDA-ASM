@@ -1,9 +1,9 @@
 {
  "phase": "G plan D0",
- "code": "mlts-gen-d0-2",
- "written": "2026-11-04 19:54:39",
- "host": "n108.hpc",
- "wall_s": 22.595720529556274,
+ "code": "mlts-gen-d0-3",
+ "written": "2026-11-04 23:24:12",
+ "host": "n116.hpc",
+ "wall_s": 25.917459964752197,
  "fingerprint": {
   "code": "mlts-gen-d0-2",
   "files": {
@@ -48,8 +48,7 @@
    3737,
    3784,
    4006
-  ],
-  "n_near": 1
+  ]
  },
  "limit": null,
  "decisions": {
@@ -58,8 +57,8 @@
   "D0-level": "D0 label TS = Coley G16 B3LYP-D3BJ/def2-SVP SMD(water) OptTS (profile TS_*.xyz, 5 decimals = the eda.inp coordinates); the reactants are the Coley r*.xyz (G16 level, inferred). Not stationary at the ORCA label level (Phase I d0_ts_grad median max|g| 4.7e-4 Eh/bohr vs D1 1.4e-5, ~30x): a program / level difference (G16 B3LYP = VWN3 vs ORCA B3LYP = VWN5, RIJCOSX def2/J, ORCA SMD, grids), not rounding; the D1 config 'parity with the D0 labels' refers to the TZVP SP / EDA stage, not to this gradient level. Every D0 structure is ordinary label-level E/F data; nothing assumes zero force; g0_d0 flags the parity against 10 x the measured D1 label-TS median (recorded, never a stop).",
   "D0-G1": "per D0 reaction 2 d0_ts_near + 1 d0_ts_imag with the G-near / G-imag rules (gen_dft) on an xTB Freq (gen_dft XTB_HEADER = the D1 TS Hessian header) at the D0 label TS, computed in the run step and cached as $MLT/dft/hess_d0/d0ts_<rid>.hess.gz; default_rng(SEED + 2,000,000 + rid), draws in the G1 order (the n1 and i rows do not depend on --n-near). Deviation from spec 3 ('label TS Hessian if one exists'): a G16 B3LYP/def2-SVP Hessian exists at every Coley TS (profile frequency_logs.tar.gz) but is not used (other program and level, archive orientation, no validated parser); xTB is the mode source of D1 G1 as well.",
   "D0-G3": "TS fragments = the (1)/(2) tags of the SMD-relabel eda.inp ($D0_EDA/rxn_%04d, (1) = dipole) in TS atom order, charge = labels charge{k}. Molecules = D0 Q keys (labels_d0_q cr.key1/key2: mirror-merged SMILES + |alt|cfg + |s3d, the D0 analogue of the D1 cr.key: distinct reference states stay distinct); a key whose identity (D0-ident) is a D1 molecule identity is skipped (D1 G3 already has 3 structures of it); geometry = member with the lowest labels_all e_frag{k}_rel_eh (ties: smallest rid) = profile rel{k}_file; 3 structures (ref + 2 G-near displacements), seed keyhash('D0|' + key), Hessians $MLT/dft/hess_d0/d0m<sha>. A Q key without a SMILES (no identity) is a STOP.",
-  "D0-G2": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= 5,000 x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
-  "D0-budget": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > 5,000 core-h = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1.",
+  "D0-G2": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= BUDGET_CORE_H (gen_dft; 8,000 since D0-plus) x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed), or an explicit / pinned --n-g2 K (D0-cap, D0-pin); every reaction of the holdout list (D0-hold, D0-sib) is skipped in the prefix and is never refined (D0-gauss); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
+  "D0-budget": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > BUDGET_CORE_H (5,000 in spec 0-5; 5,500 D0-n3; 8,000 D0-plus) = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1.",
   "D0-nnear": "--n-near 1|2 (default 2 = the G1 rule) may change after D0 records exist (same fingerprint apart from n_near): the n1 / i rows are identical for both values; records of dropped n2 rows stay on disk and collect --d0 keeps them (reported as extra).",
   "D0-tags": "rxn_ids / folds '' on every D0 structure except below (no D1 reaction; FT_k keeps them); dipoles = the D0 dipole class (FT_LODO_d drops D0 reactions of class d). TS fragments whose molecule identity is a D1 molecule identity: + the union of the D1 tags of every D1 target using that identity (all |fixed states merged; these rows follow the D1 rules, so they can be validation / test). D0-only molecules: dipoles = union of the classes of every planned D0 reaction using that identity (all Q keys). Extra info: d0_id (D0 rxn_id, never in rxn_ids), d0_class, charge.",
   "D0-class": "stereo_utils.dipole_backbone (ring rule, = d0_manifest dipole_smiles) -> (t1, c, t2); allyl type = central degree >= 3, O centre, or aromatic backbone (mesoionic rings); propargyl = central N of degree 2. N allyl: CC azomethine ylide, CN d0_azomethine imine, CO nitrone; N propargyl: CC d0_nitrile ylide, CN d0_diazo (terminal N degree 1) / d0_nitrile imine, CO nitrile oxide, NN azide; O: CC carbonyl ylide, CN d0_carbonyl imine; anything else d0_other_<c><t1t2>. Must reproduce the D1 dipole of all 9,266 targets and the D1 dipole of every shared dipole SMILES (else STOP). Mesoionic rings take the class of their backbone (conservative for LODO).",
@@ -68,7 +67,15 @@
   "D0-g0": "g0_d0: 30 EnGrads (6 per n_atoms quintile of D0G1 + D0G3) + 10 undisplaced D0 label TSs (n_atoms quantiles 0.05-0.95; not the 24 Phase I d0_ts_grad reactions) + D0G2 pilots (--n-g2 auto: 1 = the first ranked pool unit with n_atoms <= the pool median, only if the plan selects > 0 D0G2 reactions; their measured core-h enters the total); fit = D0 log-log over every ok D0 EnGrad on disk if >= 10, else the D1 G-0 fit x the mean D0 / D1-fit ratio; xTB Freq c N^2 from the D0 Hessians (>= 3) else the prior; budget basis D0-budget; parity: median > 1e-3 Eh/bohr = off_stationary, > 10 x the D1 label-TS median = above_10x_d1_median (flags, never a stop); total > 5,000 core-h = exit 3 (spec STOP).",
   "D0-d1val": "the 24 D0 reactions of d1_validation (Phase I d0_* data) stay in D0G1 / D0G3 (no displaced or fragment data exist for them), are no parity picks (Phase I d0_ts_grad) and are not in the D0G2 pool.",
   "D0-charge": "charge = labels_all charge1 + charge2 (0/0 5,002, 0/-2 197, 0/+1 61), multiplicity 1; written to records and extxyz info 'charge' (finetune total_charge, odd-electron filter).",
-  "D0-stop": "D0 commands refuse to start under the D1 STOP; their own systematic failures write $MLT/dft/STOP_D0 only, so D0 never blocks a D1 resubmission."
+  "D0-stop": "D0 commands refuse to start under the D1 STOP; their own systematic failures write $MLT/dft/STOP_D0 only, so D0 never blocks a D1 resubmission.",
+  "D0-plus": "user decision 'D0-plus' (2026-11-04, DECISIONS.md) as amended by 'D0-gauss': D0G2 = label-level OptTS paths from the G2c D0 xTB TS (G3L input, unchanged) for K = 200 training reactions; H = 100 evaluation-only (holdout) reactions: `gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100`. Training = the first K units of the D0-G2 ranking outside the holdout list (= exactly the rank prefix of K: the holdout is drawn from reactant-pair groups without a training unit). D0G1 / D0G3 rows do not depend on K / H (same plan fingerprint).",
+  "D0-gauss": "user decision 'D0-gauss' (2026-11-04 20:2x, 'd0\ub3c4 gaussian\uc744 \ub77c\ubca8\ub85c \uc0dd\uac01\ud558\uace0 \ud558\uae30'): the holdout reactions are not OptTS-refined (not in g2_plan_d0.json 'rxns', no D0G2 cost in the cap check, never 'missing' in collect --d0); their reference TS = the Coley G16 TS (D0-hold-ref); their TS-derived structures stay out of every FT run; run_g2 --d0 runs exactly the K training units.",
+  "D0-hold": "holdout (H evaluation reactions = H distinct reactant pairs, D0-sib): strata = the D0 dipole classes of the G2c pool (14 classes: the 5 D1 dipoles + 9 d0_* classes; the '20 per dipole class' of the request assumed 5 classes and is infeasible: nitrile oxide has 15 pool reactions in 8 reactant pairs), equal allocation by water-filling: quota_s = min(cap_s, L) with the largest L such that sum_s min(cap_s, L) <= H, the remainder +1 to the classes with cap_s > L in decreasing pool size (ties by name); cap_s = min(eligible groups_s, floor(0.5 x planned reactant pairs_s)) so a class keeps at least half of its reactant pairs for training; eligible group = no training D0G2 unit, no d1_validation reaction, no D1 target / D1-design reaction with the same reactant pair, one class; per class the eligible groups in D0-G2 rank order of their best pool member (seeded by the D0-G2 ranking rng), evaluation reaction = that best-ranked pool member, every other planned member = sibling. finetune.py drops every structure of a listed d0_id (eval + sibling) except d0_react_ref / d0_react_disp (by d0_id and by struct id, independent of the tags) and records the file sha256 in every data json; collect --d0 writes holdout=True into the extxyz info of their TS-derived rows.",
+  "D0-sib": "reactant-pair siblings (review): a D0 reaction's group = the sorted D0-ident identities of its reactant side (stereo-free, map-free; other regio / stereo channels of the same two molecules share it; 5,254 planned reactions in 2,638 groups, 4,210 in groups of >= 2). Every planned D0 reaction in the group of an evaluation reaction is listed (role sibling) and its TS-derived rows are excluded from FT like the evaluation reaction's (the analogue of the D1 T1 folds, which keep a whole core together); siblings are not evaluated and never D0G2 training units (the training prefix skips every listed reaction). No planned D0 reactant pair is a D1 target pair or a Phase I D1-design pair (checked each plan; such a group would be ineligible).",
+  "D0-hold-fix": "the holdout list is fixed by content: its sha256 is recorded in plan_d0_meta.json, g2_plan_d0.json 'holdout', d0_holdout_ref.json, results/d0_holdout.csv and every FT data json / split meta; plan_d0, collect --d0 and finetune STOP (exit 3) when the file is missing while any record exists or when its sha256 differs from any record. A later plan_d0 keeps the list whenever --n-holdout is omitted or equals its evaluation count; a different list needs --replace-holdout (gen_d0 CLI; exit 3 without) and is refused (exit 3) once any FT data json / split meta was built with a holdout or with D0 inputs; a new list needs an explicit or pinned --n-g2 (the training prefix it avoids).",
+  "D0-hold-ref": "reference TS of an evaluation reaction = the Coley G16 TS (profile TS_*.xyz = the D0 label TS of D0G1, decision D0-gauss), not an ORCA re-optimised TS; starts for the supplementary evaluation: the G2c xTB TS (xtb_start, label atom order) and the reference TS itself; metrics as FT-2; report the Gaussian-ORCA stationary-point difference (~0.009 A RMSD) as the floor. collect --d0 checks that both files exist and have the plan TS element order (reported, never replaced).",
+  "D0-cap": "explicit or pinned --n-g2 K bypasses the auto prefix rule; plan_d0 still predicts the G total = D1 (budget basis) + D0 G1 + G3 (plan rows) + measured D0G2 on disk + predicted D0G2 of the training units without unit.json (D1 g2 fit x g2_ratio; the holdout costs 0, D0-gauss) + G-4 reserve 150 core-h and STOPs (exit 3, nothing written) only when it exceeds gen_dft.BUDGET_CORE_H (8,000: DECISIONS 'D0 \uacc4\ud68d \u00b7 \uc2e4\ud589 (20:1x)' recommendation after the measured D0G2 cost; the user's D0-plus text said 7,000 at the 4.7 core-h guess); the auto rule is unchanged (prefix <= cap x 0.9; reported).",
+  "D0-pin": "`gen_d0.py plan_d0 --n-g2 K` (explicit, gen_d0 CLI) pins K in plan_d0_meta.json; later plan_d0 calls without the gen_d0 CLI keep it (auto = K; the same explicit K = up to date) and an explicit other K is a STOP (exit 3: the launcher's `plan_d0 --n-g2 <n_g2_rule>` cannot silently drop the user's 200); `gen_d0.py plan_d0 --n-g2 K'` re-pins, `gen_d0.py plan_d0 --unpin` returns to the auto rule."
  },
  "d0": {
   "n_records": 5265,
@@ -215,16 +222,18 @@
   }
  },
  "counts": {
-  "n_rows": 30802,
-  "n_engrad_structures": 30802,
-  "n_g2_reactions": 0,
+  "n_rows": 36256,
+  "n_engrad_structures": 36056,
+  "n_g2_reactions": 200,
   "by_group": {
-   "D0G1": 10508,
+   "D0G1": 15762,
+   "D0G2": 200,
    "D0G3": 20294
   },
   "by_group_kind": {
    "D0G1/d0_ts_imag": 5254,
-   "D0G1/d0_ts_near": 5254,
+   "D0G1/d0_ts_near": 10508,
+   "D0G2/d0_g2_path": 200,
    "D0G3/d0_frag": 10508,
    "D0G3/d0_react_disp": 6524,
    "D0G3/d0_react_ref": 3262
@@ -241,14 +250,24 @@
     "p90": 59.0
    },
    "D0G1/d0_ts_near": {
-    "n": 5254,
+    "n": 10508,
     "median": 44.0,
     "mean": 44.53311762466692,
     "min": 14.0,
     "max": 94.0,
-    "sum": 233977.0,
+    "sum": 467954.0,
     "p10": 31.0,
     "p90": 59.0
+   },
+   "D0G2/d0_g2_path": {
+    "n": 200,
+    "median": 45.0,
+    "mean": 45.375,
+    "min": 20.0,
+    "max": 77.0,
+    "sum": 9075.0,
+    "p10": 32.0,
+    "p90": 60.0
    },
    "D0G3/d0_frag": {
     "n": 10508,
@@ -282,13 +301,14 @@
    }
   },
   "by_charge": {
-   "-2": 597,
-   "0": 30019,
-   "1": 186
+   "-2": 803,
+   "0": 35205,
+   "1": 248
   },
   "with_d1_rxn_ids": {
    "D0G1/d0_ts_imag": 0,
    "D0G1/d0_ts_near": 0,
+   "D0G2/d0_g2_path": 0,
    "D0G3/d0_frag": 511,
    "D0G3/d0_react_disp": 0,
    "D0G3/d0_react_ref": 0
@@ -314,20 +334,20 @@
    }
   },
   "dipole_tag_counts": {
-   "d0_nitrile ylide": 4158,
-   "azide": 598,
-   "azomethine ylide": 13854,
-   "nitrile oxide": 562,
-   "nitrone": 946,
-   "carbonyl ylide": 6488,
-   "d0_nitrile imine": 1036,
-   "d0_carbonyl oxide": 234,
-   "d0_azomethine imine": 3143,
-   "d0_diazo": 572,
-   "d0_other_ONN": 285,
-   "d0_carbonyl imine": 1561,
-   "d0_azoxy": 66,
-   "d0_azimine": 765
+   "d0_nitrile ylide": 4946,
+   "azide": 624,
+   "azomethine ylide": 16170,
+   "nitrile oxide": 580,
+   "nitrone": 1016,
+   "carbonyl ylide": 7485,
+   "d0_nitrile imine": 1231,
+   "d0_carbonyl oxide": 268,
+   "d0_azomethine imine": 3632,
+   "d0_diazo": 676,
+   "d0_other_ONN": 325,
+   "d0_carbonyl imine": 1811,
+   "d0_azoxy": 75,
+   "d0_azimine": 883
   }
  },
  "excluded": {
@@ -437,7 +457,7 @@
   "n_structures": 9786
  },
  "g2_pool": {
-  "rule": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= 5,000 x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
+  "rule": "pool = G2c D0 TSs ($G2C/d0/g2_final: lowest of 3 autodE xTB runs, label atom order) with result.json status ok, the G-2sel Hessian rules (gen_dft.g2_hess_check) and the label element order, minus overlaps and the 24 d1_validation D0 reactions; strata = D0 dipole class; ranking = per-stratum shuffled positions (j + u_s) / n_s merged (default_rng([SEED, 2,000,000, 2])), so every prefix is ~proportional; N = the largest prefix with D1 + D0 G1 + G3 + D0 G2 <= BUDGET_CORE_H (gen_dft; 8,000 since D0-plus) x (1 - 0.10) core-h on the budget basis (D0-budget; units already on disk cost 0, their measured core-h is fixed), or an explicit / pinned --n-g2 K (D0-cap, D0-pin); every reaction of the holdout list (D0-hold, D0-sib) is skipped in the prefix and is never refined (D0-gauss); input = the G3L builder with charge1 + charge2 and the label forming bonds; records runs/D0G2/<rid>. A re-plan that changes the selection while a selected unit has an OptTS start without unit.json is refused (exit 2) unless --force.",
   "n_candidates": 4793,
   "n_d1val_excluded": 24,
   "n_no_g2c_dir": 437,
@@ -479,25 +499,25 @@
  "budget": {
   "d1_g0": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-mlts/analysis/mlts/results/G0_estimate.json",
   "basis": {
-   "d1_total": 3403.053278608468,
+   "d1_total": 3447.625952409806,
    "d1_g0_total": 2968.77448378215,
-   "d1_projected_total": 3403.053278608468,
-   "engrad_slowdown": 1.145922738290349,
-   "g2_slowdown": 1.146785923712748,
-   "rule": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > 5,000 core-h = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1."
+   "d1_projected_total": 3447.625952409806,
+   "engrad_slowdown": 1.1574075888505497,
+   "g2_slowdown": 1.166745549403377,
+   "rule": "budget basis (plan_d0 and g0_d0): D1 = max(D1 G-0 total, G-0 group prediction x max(1, observed / fitted core-h of the running D1 G1 / G2 / G3 records)); D0 EnGrad + xTB costs = fit x the D1 production slowdown (G-0-weighted max(1, observed ratio) of G1 + G3: g0 nodes run 16 workers, production 64); D0G2 = D1 g2 fit x max(1, D1 G-0 pilot ratio, D1 observed G2 ratio, D0 pilot / fit). Fits: the g0_d0 fits when G0_estimate_d0.json belongs to this plan (fingerprint without n_near), else the D1 G-0 fits + the xTB prior. Total > BUDGET_CORE_H (5,000 in spec 0-5; 5,500 D0-n3; 8,000 D0-plus) = g0_d0 exit 3 (spec STOP); g0_d0 also reports the total with --n-near 1."
   },
-  "d1_total": 3403.053278608468,
+  "d1_total": 3447.625952409806,
   "fits": {
    "engrad": {
-    "a": 5.260598679397096e-05,
-    "b": 1.913309413155704
+    "a": 3.2640386240417795e-05,
+    "b": 2.0629552678920304
    },
    "xtb": {
-    "a": 2.5e-06,
+    "a": 9.25401679481136e-07,
     "b": 2.0
    },
-   "g2_ratio": 1.146785923712748,
-   "source": "d1_g0_fit"
+   "g2_ratio": 1.1474963819838082,
+   "source": "g0_d0:2026-11-04 20:05:55"
   },
   "d1_engrad_fit": {
    "a": 5.260598679397096e-05,
@@ -514,50 +534,87 @@
    "model": "core_h = a * n_atoms^b (log-log least squares)"
   },
   "d0_predicted_by_item": {
-   "D0G1/d0_ts_imag": 475.6876964014234,
-   "D0G1/d0_ts_near": 475.6876964014234,
-   "D0G3/d0_frag": 266.18509325855473,
-   "D0G3/d0_react_disp": 199.08368539902435,
-   "D0G3/d0_react_ref": 99.54184269951422,
-   "D0G1/xtb_ts_hessians": 31.64545569899823,
-   "D0G3/xtb_mol_hessians": 6.323147238556125
+   "D0G1/d0_ts_imag": 532.9138770242596,
+   "D0G1/d0_ts_near": 1065.8277540485242,
+   "D0G3/d0_frag": 272.22809666437166,
+   "D0G3/d0_react_disp": 205.96814983315707,
+   "D0G3/d0_react_ref": 102.98407491657971,
+   "D0G1/xtb_ts_hessians": 11.831304098526164,
+   "D0G3/xtb_mol_hessians": 2.364038570045982
   },
-  "d0_g1_g3": 1554.1546170974946,
-  "d0_n2_rows_share": 0.0,
+  "d0_g1_g3": 2194.1172951554645,
+  "d0_n2_rows_share": 532.9138770242596,
   "d0g2_units_on_disk": [],
   "d0g2_measured_core_h": 0.0,
   "rule": {
-   "cap_with_margin": 4500.0,
+   "cap_with_margin": 7200.0,
    "margin": 0.1,
-   "d1_total": 3403.053278608468,
-   "d0_g1_g3": 1554.1546170974946,
-   "room_for_g2": -457.20789570596276,
-   "margin_met_without_g2": false,
-   "n_g2": 0,
-   "g2_core_h": 0.0,
+   "d1_total": 3447.625952409806,
+   "d0_g1_g3": 2194.1172951554645,
+   "room_for_g2": 1558.2567524347296,
+   "margin_met_without_g2": true,
+   "n_g2": 250,
+   "g2_core_h": 1557.7263609106767,
    "g2_core_h_per_rxn": {
-    "n": 4793,
-    "median": 5.312101412886031,
-    "mean": 5.9008070125123995,
-    "min": 0.4308635184555732,
-    "max": 28.082690372045526,
-    "sum": 28282.568010971932,
-    "p10": 2.464001765974893,
-    "p90": 10.109468784146953
+    "n": 4536,
+    "median": 5.315392372695929,
+    "mean": 5.953861113988651,
+    "min": 0.4311304475694167,
+    "max": 28.10008819602984,
+    "sum": 27006.714013052522,
+    "p10": 2.465528267476478,
+    "p90": 10.115731815079936
    },
-   "g2_ratio": 1.146785923712748,
-   "total_with_g2": 4957.207895705963,
+   "g2_ratio": 1.1474963819838082,
+   "total_with_g2": 7199.469608475947,
    "cap_met": true,
-   "n_g2_at_cap_no_margin": 6
+   "n_g2_at_cap_no_margin": 372,
+   "d0_fixed_parts": {
+    "note": "rule key d0_g1_g3 = the fixed D0 part = the sum of these; the holdout is not refined (D0-gauss)",
+    "d0_g1_g3": 2194.1172951554645,
+    "d0g2_measured_on_disk": 0.0
+   }
   },
-  "n_g2_selected": 0,
-  "n_g2_source": "rule:d1_g0_fit",
-  "d0_g2_selected_core_h": 0.0,
+  "n_g2_selected": 200,
+  "n_g2_source": "explicit:200+holdout:100",
+  "n_holdout": 100,
+  "d0_g2_selected_core_h": 1223.7543711505234,
+  "cap_check": {
+   "rule": "explicit or pinned --n-g2 K bypasses the auto prefix rule; plan_d0 still predicts the G total = D1 (budget basis) + D0 G1 + G3 (plan rows) + measured D0G2 on disk + predicted D0G2 of the training units without unit.json (D1 g2 fit x g2_ratio; the holdout costs 0, D0-gauss) + G-4 reserve 150 core-h and STOPs (exit 3, nothing written) only when it exceeds gen_dft.BUDGET_CORE_H (8,000: DECISIONS 'D0 \uacc4\ud68d \u00b7 \uc2e4\ud589 (20:1x)' recommendation after the measured D0G2 cost; the user's D0-plus text said 7,000 at the 4.7 core-h guess); the auto rule is unchanged (prefix <= cap x 0.9; reported).",
+   "explicit": true,
+   "pinned": 200,
+   "d1_total": 3447.625952409806,
+   "d0_g1_g3": 2194.1172951554645,
+   "d0g2_measured_on_disk": 0.0,
+   "d0g2_train_pred": 1223.7543711505234,
+   "d0g2_holdout_pred": 0.0,
+   "g4_reserve": 150.0,
+   "total": 7015.497618715794,
+   "cap": 8000.0,
+   "over_cap": false,
+   "headroom": 984.5023812842064,
+   "n_train": 200,
+   "n_holdout": 100,
+   "n_holdout_listed": 269,
+   "per_rxn_train": {
+    "n": 200,
+    "median": 5.583987221351519,
+    "mean": 6.118771855752618,
+    "min": 0.9427578798319408,
+    "max": 18.141003057900488,
+    "sum": 1223.7543711505236,
+    "p10": 2.643357095805565,
+    "p90": 10.49563811732157
+   },
+   "d0g2_pred_total": 1223.7543711505234,
+   "suggested_d0g2_tasks": 2,
+   "task_rule": "ceil(predicted D0G2 core-h / (64 cores x 12 h)); 64-core cpu2 tasks = 8 OptTS x 8 ranks"
+  },
   "d1_observed": {
    "G1": {
     "n_sampled": 1500,
-    "n_files": 25497,
-    "ratio": 1.1358437566178075
+    "n_files": 27808,
+    "ratio": 1.150171889358638
    },
    "G3": {
     "n_sampled": 1500,
@@ -565,24 +622,1582 @@
     "ratio": 1.1866347010694025
    },
    "G2": {
-    "n_units": 250,
-    "ratio": 1.146785923712748
+    "n_units": 317,
+    "ratio": 1.166745549403377
    },
    "d1_projected_core_h": {
     "by_group": {
-     "G1": 1577.3918477026016,
-     "G2": 1417.687271911938,
+     "G1": 1597.2899011509787,
+     "G2": 1442.3618922648986,
      "G3": 407.9741589939286
     },
-    "total": 3403.053278608468,
+    "total": 3447.625952409806,
     "rule": "G-0 group prediction x max(1, observed ratio)"
    }
   }
  },
+ "d0g2_selection": {
+  "rule": [
+   "user decision 'D0-plus' (2026-11-04, DECISIONS.md) as amended by 'D0-gauss': D0G2 = label-level OptTS paths from the G2c D0 xTB TS (G3L input, unchanged) for K = 200 training reactions; H = 100 evaluation-only (holdout) reactions: `gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100`. Training = the first K units of the D0-G2 ranking outside the holdout list (= exactly the rank prefix of K: the holdout is drawn from reactant-pair groups without a training unit). D0G1 / D0G3 rows do not depend on K / H (same plan fingerprint).",
+   "user decision 'D0-gauss' (2026-11-04 20:2x, 'd0\ub3c4 gaussian\uc744 \ub77c\ubca8\ub85c \uc0dd\uac01\ud558\uace0 \ud558\uae30'): the holdout reactions are not OptTS-refined (not in g2_plan_d0.json 'rxns', no D0G2 cost in the cap check, never 'missing' in collect --d0); their reference TS = the Coley G16 TS (D0-hold-ref); their TS-derived structures stay out of every FT run; run_g2 --d0 runs exactly the K training units.",
+   "holdout (H evaluation reactions = H distinct reactant pairs, D0-sib): strata = the D0 dipole classes of the G2c pool (14 classes: the 5 D1 dipoles + 9 d0_* classes; the '20 per dipole class' of the request assumed 5 classes and is infeasible: nitrile oxide has 15 pool reactions in 8 reactant pairs), equal allocation by water-filling: quota_s = min(cap_s, L) with the largest L such that sum_s min(cap_s, L) <= H, the remainder +1 to the classes with cap_s > L in decreasing pool size (ties by name); cap_s = min(eligible groups_s, floor(0.5 x planned reactant pairs_s)) so a class keeps at least half of its reactant pairs for training; eligible group = no training D0G2 unit, no d1_validation reaction, no D1 target / D1-design reaction with the same reactant pair, one class; per class the eligible groups in D0-G2 rank order of their best pool member (seeded by the D0-G2 ranking rng), evaluation reaction = that best-ranked pool member, every other planned member = sibling. finetune.py drops every structure of a listed d0_id (eval + sibling) except d0_react_ref / d0_react_disp (by d0_id and by struct id, independent of the tags) and records the file sha256 in every data json; collect --d0 writes holdout=True into the extxyz info of their TS-derived rows.",
+   "reactant-pair siblings (review): a D0 reaction's group = the sorted D0-ident identities of its reactant side (stereo-free, map-free; other regio / stereo channels of the same two molecules share it; 5,254 planned reactions in 2,638 groups, 4,210 in groups of >= 2). Every planned D0 reaction in the group of an evaluation reaction is listed (role sibling) and its TS-derived rows are excluded from FT like the evaluation reaction's (the analogue of the D1 T1 folds, which keep a whole core together); siblings are not evaluated and never D0G2 training units (the training prefix skips every listed reaction). No planned D0 reactant pair is a D1 target pair or a Phase I D1-design pair (checked each plan; such a group would be ineligible)."
+  ],
+  "n_train": 200,
+  "n_holdout": 100,
+  "n_siblings": 169,
+  "pinned_n_g2": 200,
+  "train_by_class": {
+   "azide": 1,
+   "azomethine ylide": 87,
+   "carbonyl ylide": 38,
+   "d0_azimine": 4,
+   "d0_azomethine imine": 19,
+   "d0_carbonyl imine": 9,
+   "d0_carbonyl oxide": 1,
+   "d0_diazo": 3,
+   "d0_nitrile imine": 8,
+   "d0_nitrile ylide": 26,
+   "d0_other_ONN": 1,
+   "nitrile oxide": 1,
+   "nitrone": 2
+  },
+  "holdout_by_class": {
+   "azide": 4,
+   "azomethine ylide": 9,
+   "carbonyl ylide": 8,
+   "d0_azimine": 8,
+   "d0_azomethine imine": 8,
+   "d0_azoxy": 3,
+   "d0_carbonyl imine": 8,
+   "d0_carbonyl oxide": 8,
+   "d0_diazo": 8,
+   "d0_nitrile imine": 8,
+   "d0_nitrile ylide": 8,
+   "d0_other_ONN": 8,
+   "nitrile oxide": 4,
+   "nitrone": 8
+  },
+  "pool_by_class": {
+   "azide": 25,
+   "azomethine ylide": 2075,
+   "carbonyl ylide": 898,
+   "d0_azimine": 111,
+   "d0_azomethine imine": 451,
+   "d0_azoxy": 7,
+   "d0_carbonyl imine": 222,
+   "d0_carbonyl oxide": 23,
+   "d0_diazo": 91,
+   "d0_nitrile imine": 175,
+   "d0_nitrile ylide": 602,
+   "d0_other_ONN": 30,
+   "nitrile oxide": 15,
+   "nitrone": 68
+  },
+  "excluded_by_class": {
+   "azide": {
+    "planned": 25,
+    "eval": 4,
+    "sibling": 4,
+    "excluded_frac": 0.32
+   },
+   "azomethine ylide": {
+    "planned": 2229,
+    "eval": 9,
+    "sibling": 15,
+    "excluded_frac": 0.011
+   },
+   "carbonyl ylide": {
+    "planned": 959,
+    "eval": 8,
+    "sibling": 14,
+    "excluded_frac": 0.023
+   },
+   "d0_azimine": {
+    "planned": 114,
+    "eval": 8,
+    "sibling": 18,
+    "excluded_frac": 0.228
+   },
+   "d0_azomethine imine": {
+    "planned": 470,
+    "eval": 8,
+    "sibling": 10,
+    "excluded_frac": 0.038
+   },
+   "d0_azoxy": {
+    "planned": 9,
+    "eval": 3,
+    "sibling": 2,
+    "excluded_frac": 0.556
+   },
+   "d0_carbonyl imine": {
+    "planned": 241,
+    "eval": 8,
+    "sibling": 16,
+    "excluded_frac": 0.1
+   },
+   "d0_carbonyl oxide": {
+    "planned": 33,
+    "eval": 8,
+    "sibling": 9,
+    "excluded_frac": 0.515
+   },
+   "d0_diazo": {
+    "planned": 101,
+    "eval": 8,
+    "sibling": 12,
+    "excluded_frac": 0.198
+   },
+   "d0_nitrile imine": {
+    "planned": 187,
+    "eval": 8,
+    "sibling": 19,
+    "excluded_frac": 0.144
+   },
+   "d0_nitrile ylide": {
+    "planned": 762,
+    "eval": 8,
+    "sibling": 17,
+    "excluded_frac": 0.033
+   },
+   "d0_other_ONN": {
+    "planned": 39,
+    "eval": 8,
+    "sibling": 9,
+    "excluded_frac": 0.436
+   },
+   "nitrile oxide": {
+    "planned": 17,
+    "eval": 4,
+    "sibling": 4,
+    "excluded_frac": 0.471
+   },
+   "nitrone": {
+    "planned": 68,
+    "eval": 8,
+    "sibling": 20,
+    "excluded_frac": 0.412
+   }
+  },
+  "train_n_atoms": {
+   "n": 200,
+   "median": 45.0,
+   "mean": 45.375,
+   "min": 20.0,
+   "max": 77.0,
+   "sum": 9075.0,
+   "p10": 32.0,
+   "p90": 60.0
+  },
+  "holdout_n_atoms": {
+   "n": 100,
+   "median": 39.5,
+   "mean": 41.12,
+   "min": 16.0,
+   "max": 82.0,
+   "sum": 4112.0,
+   "p10": 27.9,
+   "p90": 55.0
+  },
+  "pool_n_atoms": {
+   "n": 4793,
+   "median": 44.0,
+   "mean": 44.60025036511579,
+   "min": 14.0,
+   "max": 94.0,
+   "sum": 213769.0,
+   "p10": 31.0,
+   "p90": 59.0
+  },
+  "holdout_allocation": {
+   "rule": "holdout (H evaluation reactions = H distinct reactant pairs, D0-sib): strata = the D0 dipole classes of the G2c pool (14 classes: the 5 D1 dipoles + 9 d0_* classes; the '20 per dipole class' of the request assumed 5 classes and is infeasible: nitrile oxide has 15 pool reactions in 8 reactant pairs), equal allocation by water-filling: quota_s = min(cap_s, L) with the largest L such that sum_s min(cap_s, L) <= H, the remainder +1 to the classes with cap_s > L in decreasing pool size (ties by name); cap_s = min(eligible groups_s, floor(0.5 x planned reactant pairs_s)) so a class keeps at least half of its reactant pairs for training; eligible group = no training D0G2 unit, no d1_validation reaction, no D1 target / D1-design reaction with the same reactant pair, one class; per class the eligible groups in D0-G2 rank order of their best pool member (seeded by the D0-G2 ranking rng), evaluation reaction = that best-ranked pool member, every other planned member = sibling. finetune.py drops every structure of a listed d0_id (eval + sibling) except d0_react_ref / d0_react_disp (by d0_id and by struct id, independent of the tags) and records the file sha256 in every data json; collect --d0 writes holdout=True into the extxyz info of their TS-derived rows.",
+   "sib_rule": "reactant-pair siblings (review): a D0 reaction's group = the sorted D0-ident identities of its reactant side (stereo-free, map-free; other regio / stereo channels of the same two molecules share it; 5,254 planned reactions in 2,638 groups, 4,210 in groups of >= 2). Every planned D0 reaction in the group of an evaluation reaction is listed (role sibling) and its TS-derived rows are excluded from FT like the evaluation reaction's (the analogue of the D1 T1 folds, which keep a whole core together); siblings are not evaluated and never D0G2 training units (the training prefix skips every listed reaction). No planned D0 reactant pair is a D1 target pair or a Phase I D1-design pair (checked each plan; such a group would be ineligible).",
+   "n": 100,
+   "level": 8,
+   "n_classes": 14,
+   "max_frac": 0.5,
+   "n_siblings": 169,
+   "n_groups": 100,
+   "groups_ineligible": {
+    "has_training_d0g2_unit": 191,
+    "has_d1_validation_reaction": 24
+   },
+   "n_groups_planned": 2638,
+   "by_class": {
+    "azide": {
+     "pool": 25,
+     "planned": 25,
+     "reactant_pairs": 9,
+     "eligible_pairs": 8,
+     "cap": 4,
+     "holdout": 4,
+     "siblings": 4,
+     "excluded": 8,
+     "excluded_frac": 0.32
+    },
+    "azomethine ylide": {
+     "pool": 2075,
+     "planned": 2229,
+     "reactant_pairs": 1093,
+     "eligible_pairs": 957,
+     "cap": 546,
+     "holdout": 9,
+     "siblings": 15,
+     "excluded": 24,
+     "excluded_frac": 0.011
+    },
+    "carbonyl ylide": {
+     "pool": 898,
+     "planned": 959,
+     "reactant_pairs": 515,
+     "eligible_pairs": 455,
+     "cap": 257,
+     "holdout": 8,
+     "siblings": 14,
+     "excluded": 22,
+     "excluded_frac": 0.023
+    },
+    "d0_azimine": {
+     "pool": 111,
+     "planned": 114,
+     "reactant_pairs": 55,
+     "eligible_pairs": 52,
+     "cap": 27,
+     "holdout": 8,
+     "siblings": 18,
+     "excluded": 26,
+     "excluded_frac": 0.228
+    },
+    "d0_azomethine imine": {
+     "pool": 451,
+     "planned": 470,
+     "reactant_pairs": 248,
+     "eligible_pairs": 221,
+     "cap": 124,
+     "holdout": 8,
+     "siblings": 10,
+     "excluded": 18,
+     "excluded_frac": 0.038
+    },
+    "d0_azoxy": {
+     "pool": 7,
+     "planned": 9,
+     "reactant_pairs": 6,
+     "eligible_pairs": 4,
+     "cap": 3,
+     "holdout": 3,
+     "siblings": 2,
+     "excluded": 5,
+     "excluded_frac": 0.556
+    },
+    "d0_carbonyl imine": {
+     "pool": 222,
+     "planned": 241,
+     "reactant_pairs": 119,
+     "eligible_pairs": 101,
+     "cap": 59,
+     "holdout": 8,
+     "siblings": 16,
+     "excluded": 24,
+     "excluded_frac": 0.1
+    },
+    "d0_carbonyl oxide": {
+     "pool": 23,
+     "planned": 33,
+     "reactant_pairs": 16,
+     "eligible_pairs": 13,
+     "cap": 8,
+     "holdout": 8,
+     "siblings": 9,
+     "excluded": 17,
+     "excluded_frac": 0.515
+    },
+    "d0_diazo": {
+     "pool": 91,
+     "planned": 101,
+     "reactant_pairs": 47,
+     "eligible_pairs": 42,
+     "cap": 23,
+     "holdout": 8,
+     "siblings": 12,
+     "excluded": 20,
+     "excluded_frac": 0.198
+    },
+    "d0_nitrile imine": {
+     "pool": 175,
+     "planned": 187,
+     "reactant_pairs": 92,
+     "eligible_pairs": 78,
+     "cap": 46,
+     "holdout": 8,
+     "siblings": 19,
+     "excluded": 27,
+     "excluded_frac": 0.144
+    },
+    "d0_nitrile ylide": {
+     "pool": 602,
+     "planned": 762,
+     "reactant_pairs": 372,
+     "eligible_pairs": 290,
+     "cap": 186,
+     "holdout": 8,
+     "siblings": 17,
+     "excluded": 25,
+     "excluded_frac": 0.033
+    },
+    "d0_other_ONN": {
+     "pool": 30,
+     "planned": 39,
+     "reactant_pairs": 25,
+     "eligible_pairs": 19,
+     "cap": 12,
+     "holdout": 8,
+     "siblings": 9,
+     "excluded": 17,
+     "excluded_frac": 0.436
+    },
+    "nitrile oxide": {
+     "pool": 15,
+     "planned": 17,
+     "reactant_pairs": 8,
+     "eligible_pairs": 6,
+     "cap": 4,
+     "holdout": 4,
+     "siblings": 4,
+     "excluded": 8,
+     "excluded_frac": 0.471
+    },
+    "nitrone": {
+     "pool": 68,
+     "planned": 68,
+     "reactant_pairs": 33,
+     "eligible_pairs": 31,
+     "cap": 16,
+     "holdout": 8,
+     "siblings": 20,
+     "excluded": 28,
+     "excluded_frac": 0.412
+    }
+   }
+  },
+  "holdout_groups": [
+   {
+    "group": "g001",
+    "d0_class": "azide",
+    "eval": 1844,
+    "siblings": [
+     1843
+    ]
+   },
+   {
+    "group": "g002",
+    "d0_class": "azide",
+    "eval": 586,
+    "siblings": [
+     585
+    ]
+   },
+   {
+    "group": "g003",
+    "d0_class": "azide",
+    "eval": 1236,
+    "siblings": [
+     1237
+    ]
+   },
+   {
+    "group": "g004",
+    "d0_class": "azide",
+    "eval": 445,
+    "siblings": [
+     444
+    ]
+   },
+   {
+    "group": "g005",
+    "d0_class": "azomethine ylide",
+    "eval": 4352,
+    "siblings": [
+     4349,
+     4350,
+     4351,
+     4353,
+     4354
+    ]
+   },
+   {
+    "group": "g006",
+    "d0_class": "azomethine ylide",
+    "eval": 4617,
+    "siblings": []
+   },
+   {
+    "group": "g007",
+    "d0_class": "azomethine ylide",
+    "eval": 1509,
+    "siblings": [
+     1508
+    ]
+   },
+   {
+    "group": "g008",
+    "d0_class": "azomethine ylide",
+    "eval": 2172,
+    "siblings": [
+     2173
+    ]
+   },
+   {
+    "group": "g009",
+    "d0_class": "azomethine ylide",
+    "eval": 1904,
+    "siblings": [
+     1901,
+     1902,
+     1903
+    ]
+   },
+   {
+    "group": "g010",
+    "d0_class": "azomethine ylide",
+    "eval": 2806,
+    "siblings": []
+   },
+   {
+    "group": "g011",
+    "d0_class": "azomethine ylide",
+    "eval": 3533,
+    "siblings": [
+     3534
+    ]
+   },
+   {
+    "group": "g012",
+    "d0_class": "azomethine ylide",
+    "eval": 2650,
+    "siblings": [
+     2651
+    ]
+   },
+   {
+    "group": "g013",
+    "d0_class": "azomethine ylide",
+    "eval": 4891,
+    "siblings": [
+     4888,
+     4890,
+     4892
+    ]
+   },
+   {
+    "group": "g014",
+    "d0_class": "carbonyl ylide",
+    "eval": 2356,
+    "siblings": [
+     2357
+    ]
+   },
+   {
+    "group": "g015",
+    "d0_class": "carbonyl ylide",
+    "eval": 4980,
+    "siblings": [
+     4975,
+     4976,
+     4977,
+     4978,
+     4979
+    ]
+   },
+   {
+    "group": "g016",
+    "d0_class": "carbonyl ylide",
+    "eval": 2928,
+    "siblings": [
+     2927
+    ]
+   },
+   {
+    "group": "g017",
+    "d0_class": "carbonyl ylide",
+    "eval": 4719,
+    "siblings": [
+     4717,
+     4718,
+     4720
+    ]
+   },
+   {
+    "group": "g018",
+    "d0_class": "carbonyl ylide",
+    "eval": 5805,
+    "siblings": [
+     5806
+    ]
+   },
+   {
+    "group": "g019",
+    "d0_class": "carbonyl ylide",
+    "eval": 3189,
+    "siblings": [
+     3188
+    ]
+   },
+   {
+    "group": "g020",
+    "d0_class": "carbonyl ylide",
+    "eval": 3200,
+    "siblings": [
+     3201
+    ]
+   },
+   {
+    "group": "g021",
+    "d0_class": "carbonyl ylide",
+    "eval": 476,
+    "siblings": [
+     475
+    ]
+   },
+   {
+    "group": "g022",
+    "d0_class": "d0_azimine",
+    "eval": 3828,
+    "siblings": [
+     3824,
+     3825,
+     3826,
+     3827,
+     3829
+    ]
+   },
+   {
+    "group": "g023",
+    "d0_class": "d0_azimine",
+    "eval": 959,
+    "siblings": [
+     956,
+     957,
+     958
+    ]
+   },
+   {
+    "group": "g024",
+    "d0_class": "d0_azimine",
+    "eval": 3581,
+    "siblings": [
+     3584
+    ]
+   },
+   {
+    "group": "g025",
+    "d0_class": "d0_azimine",
+    "eval": 459,
+    "siblings": [
+     456,
+     457,
+     458
+    ]
+   },
+   {
+    "group": "g026",
+    "d0_class": "d0_azimine",
+    "eval": 1689,
+    "siblings": [
+     1690
+    ]
+   },
+   {
+    "group": "g027",
+    "d0_class": "d0_azimine",
+    "eval": 4513,
+    "siblings": [
+     4514,
+     4516,
+     4517,
+     4518
+    ]
+   },
+   {
+    "group": "g028",
+    "d0_class": "d0_azimine",
+    "eval": 3305,
+    "siblings": []
+   },
+   {
+    "group": "g029",
+    "d0_class": "d0_azimine",
+    "eval": 2005,
+    "siblings": [
+     2004
+    ]
+   },
+   {
+    "group": "g030",
+    "d0_class": "d0_azomethine imine",
+    "eval": 819,
+    "siblings": [
+     817,
+     818,
+     820
+    ]
+   },
+   {
+    "group": "g031",
+    "d0_class": "d0_azomethine imine",
+    "eval": 1585,
+    "siblings": [
+     1586,
+     1587,
+     1588
+    ]
+   },
+   {
+    "group": "g032",
+    "d0_class": "d0_azomethine imine",
+    "eval": 3743,
+    "siblings": [
+     3744
+    ]
+   },
+   {
+    "group": "g033",
+    "d0_class": "d0_azomethine imine",
+    "eval": 2980,
+    "siblings": [
+     2979
+    ]
+   },
+   {
+    "group": "g034",
+    "d0_class": "d0_azomethine imine",
+    "eval": 525,
+    "siblings": [
+     524
+    ]
+   },
+   {
+    "group": "g035",
+    "d0_class": "d0_azomethine imine",
+    "eval": 4759,
+    "siblings": []
+   },
+   {
+    "group": "g036",
+    "d0_class": "d0_azomethine imine",
+    "eval": 3318,
+    "siblings": []
+   },
+   {
+    "group": "g037",
+    "d0_class": "d0_azomethine imine",
+    "eval": 2509,
+    "siblings": [
+     2510
+    ]
+   },
+   {
+    "group": "g038",
+    "d0_class": "d0_azoxy",
+    "eval": 1646,
+    "siblings": [
+     1647
+    ]
+   },
+   {
+    "group": "g039",
+    "d0_class": "d0_azoxy",
+    "eval": 3393,
+    "siblings": []
+   },
+   {
+    "group": "g040",
+    "d0_class": "d0_azoxy",
+    "eval": 2138,
+    "siblings": [
+     2137
+    ]
+   },
+   {
+    "group": "g041",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 4645,
+    "siblings": [
+     4644
+    ]
+   },
+   {
+    "group": "g042",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 304,
+    "siblings": [
+     305
+    ]
+   },
+   {
+    "group": "g043",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 36,
+    "siblings": [
+     35,
+     37,
+     38
+    ]
+   },
+   {
+    "group": "g044",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 613,
+    "siblings": [
+     610,
+     611
+    ]
+   },
+   {
+    "group": "g045",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 4780,
+    "siblings": [
+     4777,
+     4778,
+     4779,
+     4781,
+     4782
+    ]
+   },
+   {
+    "group": "g046",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 5235,
+    "siblings": [
+     5233,
+     5234,
+     5236
+    ]
+   },
+   {
+    "group": "g047",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 3368,
+    "siblings": [
+     3369
+    ]
+   },
+   {
+    "group": "g048",
+    "d0_class": "d0_carbonyl imine",
+    "eval": 3371,
+    "siblings": []
+   },
+   {
+    "group": "g049",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 3789,
+    "siblings": []
+   },
+   {
+    "group": "g050",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 3986,
+    "siblings": [
+     3983,
+     3984,
+     3987,
+     3988
+    ]
+   },
+   {
+    "group": "g051",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 493,
+    "siblings": [
+     492
+    ]
+   },
+   {
+    "group": "g052",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 5,
+    "siblings": [
+     6
+    ]
+   },
+   {
+    "group": "g053",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 2124,
+    "siblings": [
+     2123
+    ]
+   },
+   {
+    "group": "g054",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 3690,
+    "siblings": []
+   },
+   {
+    "group": "g055",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 665,
+    "siblings": [
+     666
+    ]
+   },
+   {
+    "group": "g056",
+    "d0_class": "d0_carbonyl oxide",
+    "eval": 2828,
+    "siblings": [
+     2829
+    ]
+   },
+   {
+    "group": "g057",
+    "d0_class": "d0_diazo",
+    "eval": 2098,
+    "siblings": [
+     2097
+    ]
+   },
+   {
+    "group": "g058",
+    "d0_class": "d0_diazo",
+    "eval": 462,
+    "siblings": [
+     463
+    ]
+   },
+   {
+    "group": "g059",
+    "d0_class": "d0_diazo",
+    "eval": 1370,
+    "siblings": [
+     1369
+    ]
+   },
+   {
+    "group": "g060",
+    "d0_class": "d0_diazo",
+    "eval": 4702,
+    "siblings": [
+     4698,
+     4699,
+     4700,
+     4701,
+     4703
+    ]
+   },
+   {
+    "group": "g061",
+    "d0_class": "d0_diazo",
+    "eval": 913,
+    "siblings": [
+     912
+    ]
+   },
+   {
+    "group": "g062",
+    "d0_class": "d0_diazo",
+    "eval": 703,
+    "siblings": [
+     702
+    ]
+   },
+   {
+    "group": "g063",
+    "d0_class": "d0_diazo",
+    "eval": 976,
+    "siblings": [
+     977
+    ]
+   },
+   {
+    "group": "g064",
+    "d0_class": "d0_diazo",
+    "eval": 232,
+    "siblings": [
+     231
+    ]
+   },
+   {
+    "group": "g065",
+    "d0_class": "d0_nitrile imine",
+    "eval": 867,
+    "siblings": [
+     868,
+     869,
+     870
+    ]
+   },
+   {
+    "group": "g066",
+    "d0_class": "d0_nitrile imine",
+    "eval": 384,
+    "siblings": [
+     385
+    ]
+   },
+   {
+    "group": "g067",
+    "d0_class": "d0_nitrile imine",
+    "eval": 4926,
+    "siblings": [
+     4927
+    ]
+   },
+   {
+    "group": "g068",
+    "d0_class": "d0_nitrile imine",
+    "eval": 2482,
+    "siblings": [
+     2483
+    ]
+   },
+   {
+    "group": "g069",
+    "d0_class": "d0_nitrile imine",
+    "eval": 3648,
+    "siblings": [
+     3649,
+     3650,
+     3651,
+     3652,
+     3653
+    ]
+   },
+   {
+    "group": "g070",
+    "d0_class": "d0_nitrile imine",
+    "eval": 3643,
+    "siblings": [
+     3641,
+     3642,
+     3644,
+     3645,
+     3646
+    ]
+   },
+   {
+    "group": "g071",
+    "d0_class": "d0_nitrile imine",
+    "eval": 3898,
+    "siblings": []
+   },
+   {
+    "group": "g072",
+    "d0_class": "d0_nitrile imine",
+    "eval": 4362,
+    "siblings": [
+     4361,
+     4363,
+     4364
+    ]
+   },
+   {
+    "group": "g073",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 5524,
+    "siblings": [
+     5525,
+     5526,
+     5527,
+     5528,
+     5529
+    ]
+   },
+   {
+    "group": "g074",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 4745,
+    "siblings": []
+   },
+   {
+    "group": "g075",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 2515,
+    "siblings": [
+     2516
+    ]
+   },
+   {
+    "group": "g076",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 4210,
+    "siblings": [
+     4209,
+     4211,
+     4212,
+     4213,
+     4214
+    ]
+   },
+   {
+    "group": "g077",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 3156,
+    "siblings": []
+   },
+   {
+    "group": "g078",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 5002,
+    "siblings": []
+   },
+   {
+    "group": "g079",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 311,
+    "siblings": [
+     310,
+     312,
+     313
+    ]
+   },
+   {
+    "group": "g080",
+    "d0_class": "d0_nitrile ylide",
+    "eval": 1139,
+    "siblings": [
+     1140,
+     1141,
+     1142
+    ]
+   },
+   {
+    "group": "g081",
+    "d0_class": "d0_other_ONN",
+    "eval": 158,
+    "siblings": [
+     157
+    ]
+   },
+   {
+    "group": "g082",
+    "d0_class": "d0_other_ONN",
+    "eval": 1272,
+    "siblings": [
+     1269,
+     1271
+    ]
+   },
+   {
+    "group": "g083",
+    "d0_class": "d0_other_ONN",
+    "eval": 3304,
+    "siblings": []
+   },
+   {
+    "group": "g084",
+    "d0_class": "d0_other_ONN",
+    "eval": 4228,
+    "siblings": []
+   },
+   {
+    "group": "g085",
+    "d0_class": "d0_other_ONN",
+    "eval": 270,
+    "siblings": [
+     269
+    ]
+   },
+   {
+    "group": "g086",
+    "d0_class": "d0_other_ONN",
+    "eval": 788,
+    "siblings": []
+   },
+   {
+    "group": "g087",
+    "d0_class": "d0_other_ONN",
+    "eval": 1484,
+    "siblings": [
+     1481,
+     1482
+    ]
+   },
+   {
+    "group": "g088",
+    "d0_class": "d0_other_ONN",
+    "eval": 1478,
+    "siblings": [
+     1476,
+     1477,
+     1479
+    ]
+   },
+   {
+    "group": "g089",
+    "d0_class": "nitrile oxide",
+    "eval": 87,
+    "siblings": [
+     86
+    ]
+   },
+   {
+    "group": "g090",
+    "d0_class": "nitrile oxide",
+    "eval": 2,
+    "siblings": [
+     3
+    ]
+   },
+   {
+    "group": "g091",
+    "d0_class": "nitrile oxide",
+    "eval": 1167,
+    "siblings": [
+     1168
+    ]
+   },
+   {
+    "group": "g092",
+    "d0_class": "nitrile oxide",
+    "eval": 4367,
+    "siblings": [
+     4366
+    ]
+   },
+   {
+    "group": "g093",
+    "d0_class": "nitrone",
+    "eval": 183,
+    "siblings": [
+     182
+    ]
+   },
+   {
+    "group": "g094",
+    "d0_class": "nitrone",
+    "eval": 517,
+    "siblings": [
+     516
+    ]
+   },
+   {
+    "group": "g095",
+    "d0_class": "nitrone",
+    "eval": 2052,
+    "siblings": [
+     2053
+    ]
+   },
+   {
+    "group": "g096",
+    "d0_class": "nitrone",
+    "eval": 803,
+    "siblings": [
+     804,
+     805,
+     806
+    ]
+   },
+   {
+    "group": "g097",
+    "d0_class": "nitrone",
+    "eval": 4463,
+    "siblings": [
+     4459,
+     4460,
+     4461,
+     4462,
+     4464
+    ]
+   },
+   {
+    "group": "g098",
+    "d0_class": "nitrone",
+    "eval": 593,
+    "siblings": [
+     591,
+     592,
+     594
+    ]
+   },
+   {
+    "group": "g099",
+    "d0_class": "nitrone",
+    "eval": 4474,
+    "siblings": [
+     4472,
+     4473,
+     4475,
+     4476,
+     4477
+    ]
+   },
+   {
+    "group": "g100",
+    "d0_class": "nitrone",
+    "eval": 580,
+    "siblings": [
+     579
+    ]
+   }
+  ],
+  "sibling_checks": {
+   "n_pair_groups": 2638,
+   "group_size": {
+    "1": 1044,
+    "2": 1158,
+    "3": 48,
+    "4": 279,
+    "5": 21,
+    "6": 87,
+    "7": 1
+   },
+   "n_planned_with_d1_target_pair": 0,
+   "d1design": {
+    "n_ts_ids": 15,
+    "ts_ids": [
+     "D1-0063-r2",
+     "D1-1417-r1",
+     "D1-2186-r2",
+     "D1-2823-r1",
+     "D1-3414-r1",
+     "D1-3426-r1",
+     "D1-3556-r1",
+     "D1-3577-r1",
+     "D1-3604-r1",
+     "D1-3694-r1",
+     "D1-3719-r1",
+     "D1-3734-r1",
+     "D1-3740-r1",
+     "D1-3823-r1",
+     "D1-3842-r1"
+    ],
+    "n_planned_same_reaction": 0,
+    "n_planned_same_pair": 0
+   }
+  },
+  "holdout_changed": true,
+  "holdout": {
+   "n": 100,
+   "n_listed": 269,
+   "n_siblings": 169,
+   "sha256": "5153e6529ba31e7fb6d10d7616ca518393c10bee004f43b6913ee6d1b6b316ee",
+   "file": "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_holdout.csv",
+   "ref": "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_holdout_ref.json",
+   "rule": "holdout (H evaluation reactions = H distinct reactant pairs, D0-sib): strata = the D0 dipole classes of the G2c pool (14 classes: the 5 D1 dipoles + 9 d0_* classes; the '20 per dipole class' of the request assumed 5 classes and is infeasible: nitrile oxide has 15 pool reactions in 8 reactant pairs), equal allocation by water-filling: quota_s = min(cap_s, L) with the largest L such that sum_s min(cap_s, L) <= H, the remainder +1 to the classes with cap_s > L in decreasing pool size (ties by name); cap_s = min(eligible groups_s, floor(0.5 x planned reactant pairs_s)) so a class keeps at least half of its reactant pairs for training; eligible group = no training D0G2 unit, no d1_validation reaction, no D1 target / D1-design reaction with the same reactant pair, one class; per class the eligible groups in D0-G2 rank order of their best pool member (seeded by the D0-G2 ranking rng), evaluation reaction = that best-ranked pool member, every other planned member = sibling. finetune.py drops every structure of a listed d0_id (eval + sibling) except d0_react_ref / d0_react_disp (by d0_id and by struct id, independent of the tags) and records the file sha256 in every data json; collect --d0 writes holdout=True into the extxyz info of their TS-derived rows.",
+   "sib_rule": "reactant-pair siblings (review): a D0 reaction's group = the sorted D0-ident identities of its reactant side (stereo-free, map-free; other regio / stereo channels of the same two molecules share it; 5,254 planned reactions in 2,638 groups, 4,210 in groups of >= 2). Every planned D0 reaction in the group of an evaluation reaction is listed (role sibling) and its TS-derived rows are excluded from FT like the evaluation reaction's (the analogue of the D1 T1 folds, which keep a whole core together); siblings are not evaluated and never D0G2 training units (the training prefix skips every listed reaction). No planned D0 reactant pair is a D1 target pair or a Phase I D1-design pair (checked each plan; such a group would be ineligible).",
+   "gauss": "user decision 'D0-gauss' (2026-11-04 20:2x, 'd0\ub3c4 gaussian\uc744 \ub77c\ubca8\ub85c \uc0dd\uac01\ud558\uace0 \ud558\uae30'): the holdout reactions are not OptTS-refined (not in g2_plan_d0.json 'rxns', no D0G2 cost in the cap check, never 'missing' in collect --d0); their reference TS = the Coley G16 TS (D0-hold-ref); their TS-derived structures stay out of every FT run; run_g2 --d0 runs exactly the K training units.",
+   "refined": false,
+   "reference": "coley_g16_ts",
+   "ids": [
+    2,
+    5,
+    36,
+    87,
+    158,
+    183,
+    232,
+    270,
+    304,
+    311,
+    384,
+    445,
+    459,
+    462,
+    476,
+    493,
+    517,
+    525,
+    580,
+    586,
+    593,
+    613,
+    665,
+    703,
+    788,
+    803,
+    819,
+    867,
+    913,
+    959,
+    976,
+    1139,
+    1167,
+    1236,
+    1272,
+    1370,
+    1478,
+    1484,
+    1509,
+    1585,
+    1646,
+    1689,
+    1844,
+    1904,
+    2005,
+    2052,
+    2098,
+    2124,
+    2138,
+    2172,
+    2356,
+    2482,
+    2509,
+    2515,
+    2650,
+    2806,
+    2828,
+    2928,
+    2980,
+    3156,
+    3189,
+    3200,
+    3304,
+    3305,
+    3318,
+    3368,
+    3371,
+    3393,
+    3533,
+    3581,
+    3643,
+    3648,
+    3690,
+    3743,
+    3789,
+    3828,
+    3898,
+    3986,
+    4210,
+    4228,
+    4352,
+    4362,
+    4367,
+    4463,
+    4474,
+    4513,
+    4617,
+    4645,
+    4702,
+    4719,
+    4745,
+    4759,
+    4780,
+    4891,
+    4926,
+    4980,
+    5002,
+    5235,
+    5524,
+    5805
+   ],
+   "sibling_ids": [
+    3,
+    6,
+    35,
+    37,
+    38,
+    86,
+    157,
+    182,
+    231,
+    269,
+    305,
+    310,
+    312,
+    313,
+    385,
+    444,
+    456,
+    457,
+    458,
+    463,
+    475,
+    492,
+    516,
+    524,
+    579,
+    585,
+    591,
+    592,
+    594,
+    610,
+    611,
+    666,
+    702,
+    804,
+    805,
+    806,
+    817,
+    818,
+    820,
+    868,
+    869,
+    870,
+    912,
+    956,
+    957,
+    958,
+    977,
+    1140,
+    1141,
+    1142,
+    1168,
+    1237,
+    1269,
+    1271,
+    1369,
+    1476,
+    1477,
+    1479,
+    1481,
+    1482,
+    1508,
+    1586,
+    1587,
+    1588,
+    1647,
+    1690,
+    1843,
+    1901,
+    1902,
+    1903,
+    2004,
+    2053,
+    2097,
+    2123,
+    2137,
+    2173,
+    2357,
+    2483,
+    2510,
+    2516,
+    2651,
+    2829,
+    2927,
+    2979,
+    3188,
+    3201,
+    3369,
+    3534,
+    3584,
+    3641,
+    3642,
+    3644,
+    3645,
+    3646,
+    3649,
+    3650,
+    3651,
+    3652,
+    3653,
+    3744,
+    3824,
+    3825,
+    3826,
+    3827,
+    3829,
+    3983,
+    3984,
+    3987,
+    3988,
+    4209,
+    4211,
+    4212,
+    4213,
+    4214,
+    4349,
+    4350,
+    4351,
+    4353,
+    4354,
+    4361,
+    4363,
+    4364,
+    4366,
+    4459,
+    4460,
+    4461,
+    4462,
+    4464,
+    4472,
+    4473,
+    4475,
+    4476,
+    4477,
+    4514,
+    4516,
+    4517,
+    4518,
+    4644,
+    4698,
+    4699,
+    4700,
+    4701,
+    4703,
+    4717,
+    4718,
+    4720,
+    4777,
+    4778,
+    4779,
+    4781,
+    4782,
+    4888,
+    4890,
+    4892,
+    4927,
+    4975,
+    4976,
+    4977,
+    4978,
+    4979,
+    5233,
+    5234,
+    5236,
+    5525,
+    5526,
+    5527,
+    5528,
+    5529,
+    5806
+   ],
+   "n_groups": 100,
+   "by_class": {
+    "azide": 4,
+    "azomethine ylide": 9,
+    "carbonyl ylide": 8,
+    "d0_azimine": 8,
+    "d0_azomethine imine": 8,
+    "d0_azoxy": 3,
+    "d0_carbonyl imine": 8,
+    "d0_carbonyl oxide": 8,
+    "d0_diazo": 8,
+    "d0_nitrile imine": 8,
+    "d0_nitrile ylide": 8,
+    "d0_other_ONN": 8,
+    "nitrile oxide": 4,
+    "nitrone": 8
+   },
+   "siblings_by_class": {
+    "azide": 4,
+    "azomethine ylide": 15,
+    "carbonyl ylide": 14,
+    "d0_azimine": 18,
+    "d0_azomethine imine": 10,
+    "d0_azoxy": 2,
+    "d0_carbonyl imine": 16,
+    "d0_carbonyl oxide": 9,
+    "d0_diazo": 12,
+    "d0_nitrile imine": 19,
+    "d0_nitrile ylide": 17,
+    "d0_other_ONN": 9,
+    "nitrile oxide": 4,
+    "nitrone": 20
+   }
+  }
+ },
  "outputs": {
-  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/plan_d0.parquet": "3ed927e2e67b1d6012e76d98169daed2fe4904b76616549c7740498716d392a3",
-  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_plan_d0.json": "b424b38cafb516ee118f896e6c646d11f805b8a4b96b273a6fa1ef8c0414f6d0",
-  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_pool_d0.json": "b6d290e153298bd4be3de8092eb9b6e440ebea57c88900c626a9b4b929d6e7bb",
-  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_class.csv": "2749951110e0f0423381af975fdadfd6c88d812548487e9e2eff43d27dedd005"
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/plan_d0.parquet": "6e80d1538992c79a3352c9d75d7f3a8d3bb5102feb9a9b5171e36d752323f495",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_plan_d0.json": "a8cdf0bf9151350b7c203bfa6bc9a4f0d63ab713ed32bdf05e32abc508c96d8a",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/g2_pool_d0.json": "a8582da74271137f97a8a9344a219ec87610b930cc86ed05be05f7f888de6bef",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_class.csv": "2749951110e0f0423381af975fdadfd6c88d812548487e9e2eff43d27dedd005",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_holdout.csv": "5153e6529ba31e7fb6d10d7616ca518393c10bee004f43b6913ee6d1b6b316ee",
+  "/gpfs/tmp_cpu2/yeseo1ee/mlts/dft/plan/d0_holdout_ref.json": "4fa162dca50729d0164d62612525598145bcbc2afbd03c5f214c9bb7fe04918e"
  }
 }

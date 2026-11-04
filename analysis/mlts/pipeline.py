@@ -78,7 +78,15 @@ LOCK_STALE_S = 720              # a pass lasts <= 600 s (timeout in jobs/pipelin
 RETRY = dict(cont=4, infra=1, oom=1, noprog=2, code=6, sbatch=3)
 EXIT_GUARD = 4                  # `pipeline.py guard`: code changed after submission
 WALL_TARGET_H = 20.0
-G_BUDGET = 5000.0
+G_BUDGET_DEFAULT = 8000.0       # gen_dft.BUDGET_CORE_H (spec 0-5 5,000 -> user decisions D0-n3 5,500, D0-plus 8,000)
+G_BUDGET = G_BUDGET_DEFAULT     # kept for older callers; the live value is g_budget(P) (read from gen_dft.py)
+D0_N_NEAR, D0_N_G2_TRAIN, D0_N_HOLDOUT = 2, 200, 100   # user decisions D0-n3 / D0-plus / D0-gauss (DECISIONS.md)
+G4_RESERVE_CORE_H = 150.0       # = gen_d0.G4_RESERVE_CORE_H (G-4 ~100 D1 + ~50 D0, spec 3 / D0-plus)
+NUR_UPLOAD_DEFAULT = "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction"   # = inv_nurion.UPLOAD (the user's upload dir)
+NUR_EXTRA = ("d1_extra_02_jobs_unfinished", "d1_extra_03_queue_stale_pilot")   # = inv_nurion.EXTRA_DATA (job trees)
+NUR_SETTLE_S = 900              # an upload modified within 15 min counts as still uploading
+NUR_PARTIAL_RX = re.compile(r"^- \*\*N partial ok\b", re.M | re.I)   # the lead's DECISIONS line: FT may start early
+D0E_MODELS = ("FT_all_s0_al", "FT_all_s1_al", "FT_all_s2_al")        # = ts_geom.D0E_MODELS (D0 supplementary eval)
 HISTORY_SINCE = "2026-11-04T00:00:00"                   # first sacct window for adopting the lead's manual jobs
 HISTORY_MARGIN_S = 900
 PART = dict(C="cpu1,cpu2", C2="cpu2", GA="gpu1,gpu2,gpu3,gpu4,gpu5,gpu6", G24="gpu1,gpu3,gpu4,gpu5", G48="gpu3,gpu4,gpu5")
@@ -109,7 +117,8 @@ Z_TOL = 0.01                    # Z: up to 1 % of the list without a record coun
 A3_RULE = dict(stop_below=0.70, limit_below=0.85, app_core_h=1.0)
 A3_BUDGET = {"A": (0.6, 3.0), "Ap": (0.6, 3.0), "App": (1.0, 3.0)}    # arm: (core-h, GPU-min) per reaction, median
 N_D1 = 9266
-DISK_GB_PER_RXN_DEFAULT = 0.05                          # A-3 before its own measurement
+A_WORKERS, A_CORES = 6, 2                               # mlts_autode A2-workers (before A-3 measures its own)
+DISK_GB_PER_RXN_DEFAULT = 0.002                         # A-3 before its own measurement (A2 test: 0.22 MB / reaction)
 H_DISK_GB_PER_RXN_DEFAULT = 0.02
 APP_DISK_GB_PER_RXN_DEFAULT = 0.01
 DISK_GB_DEFAULT = 0.2                                   # per task, for the free-disk estimate between quota readings
@@ -679,7 +688,8 @@ class Ctx:
     """roots + injectable SLURM / git / clock (tests point every root under $MLT/tmp/pipetest)."""
 
     def __init__(self, mlt=None, res=None, pdir=None, ctl=None, code=None, slurm=None, git=None, clock=None, job=None,
-                 launcher=None, env=None):
+                 launcher=None, env=None, nur_upload=None):
+        self.nur_upload = Path(nur_upload or os.environ.get("MLT_NUR_UPLOAD") or NUR_UPLOAD_DEFAULT)
         self.mlt = Path(mlt) if mlt else Path(M.MLT)
         self.res = Path(res) if res else Path(M.RES)
         self.pdir = Path(pdir) if pdir else self.mlt / "pipeline"
@@ -773,8 +783,34 @@ def fixed_n(P, st, key, compute):
     return int(nm[k])
 
 
+def adopted_n(st, akey):
+    """1 + the largest index i of the units akey[i] that hold an adopted (manual) job of this round, else 0: an array
+    the lead submitted by hand fixes the task count of that array key (its `@I n` slicing)."""
+    n, ep = 0, int(st.get("epoch") or 0)
+    rx = re.compile(re.escape(akey) + r"\[(\d+)\]")
+    for k, us in (st.get("units") or {}).items():
+        m = rx.fullmatch(k)
+        if m and any(j.get("adopted") and int(j.get("epoch") or 0) == ep for j in us.get("jobs", [])):
+            n = max(n, int(m.group(1)) + 1)
+    return n
+
+
 def rep_complete(name):
     return lambda P: (P.rj(name) or {}).get("complete") is True
+
+
+BUDGET_RX = re.compile(r"^BUDGET_CORE_H\s*=\s*([0-9][0-9_.]*)", re.M)
+
+
+def g_budget(P=None):
+    """the G budget cap = gen_dft.BUDGET_CORE_H, read from the file (pipeline.py imports stdlib + mlt_common only);
+    G_BUDGET_DEFAULT when the file or the line is missing (test stubs)."""
+    code = Path(P.c.code if P is not None else HERE) / "gen_dft.py"
+    try:
+        m = BUDGET_RX.search(code.read_text())
+        return float(m.group(1).replace("_", "")) if m else G_BUDGET_DEFAULT
+    except (OSError, ValueError):
+        return G_BUDGET_DEFAULT
 
 
 def lists_info(P):
@@ -952,7 +988,7 @@ def units_gd1(P, S, st):
         for g in ("G1", "G3", "G2"):
             gr = (R.get("groups") or {}).get(g) or {}
             m = int(gr.get("n_missing") or 0)
-            if m <= 0:
+            if m <= 0 or g == "G2":                   # G-2: stopped by the user at 317 / 400 (G-D1-trunc), never again
                 continue
             planned = max(1, int(gr.get("n_planned") or 1))
             n = fixed_n(P, st, g, lambda: n_tasks(m, float(by.get(g) or 0) / planned, 64, 6))
@@ -960,9 +996,36 @@ def units_gd1(P, S, st):
     return u + one("collect", GCMD + ["collect"], env="reactot", part="C", c=4, mem=32, deps=keys(u), sink=True)
 
 
+G_D1_G2_USER_STOP = 317     # user decision 'Nurion' (DECISIONS 11-04 20:4x): D1 G-2 (1061710) cancelled at 317 / 400
+
+
+def gd1_g2_user_stopped(R):
+    """decision 'Nurion' (DECISIONS 11-04 20:4x, decision G-D1-trunc): the user cancelled the D1 G-2 paths (job 1061710)
+    at 317 of 400 units (the Nurion label-run trajectories replace the rest). True when G1 and G3 have nothing missing
+    and G-2 has >= 317 units recorded; the missing G-2 units are never resubmitted."""
+    g = (R or {}).get("groups") or {}
+    ok13 = all(isinstance(g.get(x), dict) and _int(g[x].get("n_missing"), 1) == 0 for x in ("G1", "G3"))
+    return ok13 and _int((g.get("G2") or {}).get("n_units"), 0) >= G_D1_G2_USER_STOP
+
+
 def done_gd1(P):
+    """G_report complete, or complete except the D1 G-2 paths the user stopped at 317 / 400 (decision G-D1-trunc)."""
     R = P.rj("G_report.json") or {}
-    return R.get("complete") is True and R.get("stop_file") is None
+    if R.get("stop_file") is not None:
+        return False
+    return R.get("complete") is True or gd1_g2_user_stopped(R)
+
+
+def decide_gd1(P, S, st):
+    R = P.rj("G_report.json") or {}
+    if R.get("complete") is True:
+        return dict(key="complete", line=f"D1 G 끝: {core_h_of(R):,.0f} core-h (G_report complete).")
+    g2 = (R.get("groups") or {}).get("G2") or {}
+    return dict(key="G2 user stop", numbers=dict(G2={k: g2.get(k) for k in ("n_planned", "n_units", "n_missing")},
+                                                 core_h=core_h_of(R)),
+                line=f"D1 G 끝(사용자 결정 'Nurion'): G1 · G3 빠짐 없음, G-2 경로는 사용자가 {g2.get('n_units')}/"
+                     f"{g2.get('n_planned')}반응에서 멈춤(1061710 취소; Nurion 라벨 실행 궤적이 대신함) → G_report "
+                     f"complete=false이지만 끝난 것으로 보고 G-2를 다시 내지 않는다 ({core_h_of(R):,.0f} core-h).")
 
 
 def guard_dft_stop(report):
@@ -986,9 +1049,11 @@ def prog_gd1(P):
     return count_dir(r / "G1") + count_dir(r / "G3") + count_dir(r / "G2")
 
 
-# D0 extension (gen_dft.py + gen_d0.py, user decision 'D0'): plan_d0 (auto) -> g0_d0 (G-0 on D0; its estimate
-# carries the budget rule n_g2_rule = largest D0 G-2 prefix with D1 + D0 <= 5,000 x 0.9 core-h, exit 3 if even that is
-# over) -> plan_d0 --n-g2 <n_g2_rule> (the recommended refit) -> run D0G1 / D0G3 / run_g2 --d0 -> collect --d0.
+# D0 extension (gen_dft.py + gen_d0.py, user decisions 'D0', 'D0-n3', 'D0-plus', 'D0-gauss'): plan_d0 (auto) -> g0_d0
+# (G-0 on D0: cost fits) -> the budget check of the user's D0 selection (G total <= gen_dft.BUDGET_CORE_H) ->
+# `gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100` (200 D0G2 training paths; 100 evaluation-only reactions
+# that are NOT refined, D0-gauss) -> run D0G1 / D0G3 / run_g2 --d0 (g2_plan_d0.json rxns = the training units only)
+# -> collect --d0.
 def d0_plan(P):
     return P.rj("G_plan_d0.json") or {}
 
@@ -999,7 +1064,18 @@ def d0_est(P):
 
 def d0_plan_n(J):
     b = J.get("budget") or {}
-    return b.get("n_g2_selected", J.get("n_g2"))
+    return J.get("n_g2") if J.get("n_g2") is not None else b.get("n_g2_selected")
+
+
+def d0_plan_h(J):
+    b = J.get("budget") or {}
+    v = J.get("n_holdout") if J.get("n_holdout") is not None else b.get("n_holdout")
+    return _int(v, 0) if v is not None else 0
+
+
+def fp_no_near(fp):
+    """plan fingerprint without n_near (decision D0-nnear: --n-near may change after the G-0 estimate)."""
+    return {k: v for k, v in fp.items() if k != "n_near"} if isinstance(fp, dict) else fp
 
 
 def units_gd0p(P, S, st):
@@ -1026,57 +1102,110 @@ def units_gd0e(P, S, st):
 def done_gd0e(P):
     E = d0_est(P)
     return (E.get("predicted_core_h") or {}).get("total") is not None and \
-        E.get("plan_fingerprint") == d0_plan(P).get("fingerprint")
+        fp_no_near(E.get("plan_fingerprint")) == fp_no_near(d0_plan(P).get("fingerprint"))
+
+
+def d0_cost_basis(P):
+    """(numbers, total) of the G budget check for the user's D0 selection (decision 'G-D0-budget'): D1 = the larger of
+    the measured D1 G core-h (G_report core_h_measured.total) and the plan's budget basis (projection of the full D1
+    plan); D0 G1 + G3 = the plan's prediction at its --n-near (G_plan_d0 budget.d0_g1_g3; else the estimate's by_group);
+    D0G2 = n_train x the mean predicted core-h per D0G2 unit (plan budget rule, else the estimate) + the measured units
+    on disk; + the G-4 reserve (150 core-h, gen_d0)."""
+    E, J = d0_est(P), d0_plan(P)
+    b = J.get("budget") or {}
+    pc = E.get("predicted_core_h") or {}
+    by = pc.get("by_group") or {}
+    meas = core_h_of(P.rj("G_report.json"))
+    cc = b.get("cap_check") or {}
+    n_tr = d0f_param(P, "n_g2", D0_N_G2_TRAIN)
+    if cc.get("total") is not None and _int(cc.get("n_train"), -1) == n_tr:
+        # a gen_d0 D0-plus plan for this selection: its own cap check (D0-cap: D1 basis + D0 G1/G3 + measured D0G2 +
+        # the predicted D0G2 of exactly these training units + the G-4 reserve), with the measured D1 if larger
+        d1b = float(cc.get("d1_total") or 0.0)
+        d1, d1_src = (meas, "D1 실측") if meas > d1b else (d1b, "D1 계획 기준(예상)")
+        d0g13 = float(cc.get("d0_g1_g3") or 0.0)
+        d0g2 = float(cc.get("d0g2_train_pred") or 0.0) + float(cc.get("d0g2_measured_on_disk") or 0.0)
+        res = float(cc.get("g4_reserve") if cc.get("g4_reserve") is not None else G4_RESERVE_CORE_H)
+        total = d1 + d0g13 + d0g2 + res
+        nums = dict(d1_core_h=round(d1, 1), d1_source=d1_src, d1_measured=round(meas, 1), d1_basis=round(d1b, 1),
+                    d0_g1_g3=round(d0g13, 1), d0g2_train=n_tr, d0g2_per_rxn=round(d0g2 / n_tr, 2) if n_tr else 0.0,
+                    d0g2=round(d0g2, 1), g4_reserve=res, total=round(total, 1), budget=g_budget(P),
+                    n_holdout=d0f_param(P, "n_holdout", D0_N_HOLDOUT), source="G_plan_d0 budget.cap_check (D0-cap)",
+                    estimate_stop=E.get("stop"), estimate_budget=pc.get("budget"),
+                    suggested_tasks=E.get("suggested_tasks"))
+        return nums, total
+    basis = float(((b.get("basis") or {}).get("d1_total")) or b.get("d1_total") or pc.get("d1_total") or 0.0)
+    d1, d1_src = (meas, "D1 실측") if meas >= basis else (basis, "D1 계획 기준(예상)")
+    d0g13 = b.get("d0_g1_g3")
+    d0g13 = float(d0g13) if d0g13 is not None else float(by.get("D0G1") or 0.0) + float(by.get("D0G3") or 0.0)
+    per = (((b.get("rule") or {}).get("g2_core_h_per_rxn") or {}).get("mean"))
+    if per is None:
+        n_r, g2p = _int(E.get("n_g2_rule"), 0), float(by.get("D0G2") or 0.0)
+        per = (g2p / n_r) if n_r > 0 and g2p > 0 else 6.0
+    d0g2 = n_tr * float(per) + float(b.get("d0g2_measured_core_h") or 0.0)
+    total = d1 + d0g13 + d0g2 + G4_RESERVE_CORE_H
+    nums = dict(d1_core_h=round(d1, 1), d1_source=d1_src, d1_measured=round(meas, 1), d1_basis=round(basis, 1),
+                d0_g1_g3=round(d0g13, 1), d0g2_train=n_tr, d0g2_per_rxn=round(float(per), 2), d0g2=round(d0g2, 1),
+                g4_reserve=G4_RESERVE_CORE_H, total=round(total, 1), budget=g_budget(P),
+                n_holdout=d0f_param(P, "n_holdout", D0_N_HOLDOUT),
+                source="n_train x mean predicted D0G2 core-h per pool unit (plan budget rule, else the estimate)",
+                estimate_stop=E.get("stop"),
+                estimate_budget=pc.get("budget"), suggested_tasks=E.get("suggested_tasks"))
+    return nums, total
+
+
+def d0f_param(P, k, dflt):
+    v = (P.st("G-D0f").get("params") or {}).get(k)
+    return _int(v, dflt) if v is not None else int(dflt)
 
 
 def decide_gd0e(P, S, st):
-    E = d0_est(P)
-    pc = E.get("predicted_core_h") or {}
-    tot, d1p = float(pc.get("total") or 0.0), float(pc.get("d1_total") or 0.0)
-    d0 = tot - d1p
-    R = P.rj("G_report.json") or {}
-    if R.get("complete"):
-        d1, src = float((R.get("core_h_measured") or {}).get("total") or 0.0), "D1 실측"
-    else:
-        d1, src = d1p, "D1 G-0 예상"
-    tot2 = d1 + d0
-    n = E.get("n_g2_rule")
-    sg = E.get("suggested_tasks") or {}
-    nums = dict(d1_core_h=round(d1, 1), d1_source=src, d0_predicted_core_h=round(d0, 1), total=round(tot2, 1),
-                budget=G_BUDGET, n_g2_plan=d0_plan_n(d0_plan(P)), n_g2_rule=n, estimate_stop=E.get("stop"),
-                suggested_tasks={k: sg.get(k) for k in ("D0G1", "D0G3", "D0G2")})
-    if E.get("stop") or tot2 > G_BUDGET or n is None:
+    """the user's D0 selection (D0-n3: 3 structures per D0 reaction; D0-plus: 200 D0G2 training paths + 100
+    evaluation-only reactions; D0-gauss: the evaluation reactions are not refined) against the G budget cap
+    gen_dft.BUDGET_CORE_H (8,000, user decision). The estimate's own stop flag is not used: it was judged against the
+    cap of its time (5,000 for g0_d0 1061949)."""
+    nums, total = d0_cost_basis(P)
+    bud = g_budget(P)
+    n_tr, n_h = nums["d0g2_train"], nums["n_holdout"]
+    if total > bud:
         return dict(key="over budget", numbers=nums,
-                    halt=f"G 예산: {src} {d1:,.0f} + D0 예상 {d0:,.0f} = {tot2:,.0f} core-h > 5,000 core-h — D0 경로 "
-                         f"반응 수를 예산 규칙으로 줄여도(n_g2_rule {n}) 넘는다(명령서 0-5 STOP, 남은 추천안 없음)",
-                    options=["`param G-D0f.n_g2=<수>` — D0 경로 반응 수를 정해 plan_d0를 다시 하고 D0 본 실행으로 간다",
-                             "`accept` — 예산 초과를 받아들이고 n_g2_rule 그대로 진행",
-                             "`skip` — D0 없이 진행(사용자 D0 결정과 다름)"])
-    P.st("G-D0f").setdefault("params", {})["n_g2"] = int(n)
-    return dict(key=f"go n_g2={n}", numbers=nums,
-                line=f"D0 G-0: {src} {d1:,.0f} + D0 예상 {d0:,.0f} = {tot2:,.0f} core-h ≤ 5,000 → 추천안(gen_d0 예산 규칙, "
-                     f"여유 10 %): D0 경로 반응 수 = n_g2_rule {n} (plan_d0 --n-g2 {n}; 계획 {nums['n_g2_plan']}), 본 실행 "
-                     f"task = D0G1 {sg.get('D0G1')} · D0G3 {sg.get('D0G3')} · D0G2 {sg.get('D0G2')} (64코어, suggested_tasks).")
+                    halt=f"G 예산: {nums['d1_source']} {nums['d1_core_h']:,.0f} + D0 G1·G3 {nums['d0_g1_g3']:,.0f} + D0G2 "
+                         f"{n_tr} × {nums['d0g2_per_rxn']} = {nums['d0g2']:,.0f} + G-4 {G4_RESERVE_CORE_H:.0f} = "
+                         f"{total:,.0f} core-h > {bud:,.0f} (명령서 0-5 STOP; 사용자 상한, 남은 추천안 없음)",
+                    options=["`param G-D0f.n_g2=<수>` — D0 경로 학습 반응 수를 줄여 plan_d0를 다시 하고 D0 본 실행으로 간다",
+                             "`accept` — 예산 초과를 받아들이고 그대로 진행", "`skip` — D0 없이 진행(사용자 D0 결정과 다름)"])
+    P.st("G-D0f").setdefault("params", {}).update(n_g2=int(n_tr), n_holdout=int(n_h))
+    return dict(key=f"go n_g2={n_tr} holdout={n_h}", numbers=nums,
+                line=f"D0 G-0 예산: {nums['d1_source']} {nums['d1_core_h']:,.0f} + D0 G1·G3 {nums['d0_g1_g3']:,.0f} + "
+                     f"D0G2 {n_tr} × {nums['d0g2_per_rxn']} = {nums['d0g2']:,.0f} + G-4 {G4_RESERVE_CORE_H:.0f} = "
+                     f"{total:,.0f} core-h ≤ {bud:,.0f}(gen_dft.BUDGET_CORE_H) → 사용자 결정 D0-plus · D0-gauss대로 "
+                     f"`gen_d0.py plan_d0 --n-near {D0_N_NEAR} --n-g2 {n_tr} --n-holdout {n_h}` (학습용 D0G2 {n_tr}반응, "
+                     f"평가 전용 {n_h}반응은 정제하지 않음). g0_d0의 stop 표시는 그때 상한({nums['estimate_budget']})으로 "
+                     f"판정한 것이라 쓰지 않는다.")
 
 
 def gd0f_n(P):
-    v = (P.st("G-D0f").get("params") or {}).get("n_g2")
-    return int(v) if v is not None else _int(d0_est(P).get("n_g2_rule"), 0)
+    return d0f_param(P, "n_g2", D0_N_G2_TRAIN)
+
+
+def gd0f_h(P):
+    return d0f_param(P, "n_holdout", D0_N_HOLDOUT)
 
 
 def units_gd0f(P, S, st):
-    return one("plan_d0", GCMD + ["plan_d0", "--n-g2", str(gd0f_n(P))], env="reactot", part="C", c=16, mem=32)
+    return one("plan_d0", ["gen_d0.py", "plan_d0", "--n-near", str(D0_N_NEAR), "--n-g2", str(gd0f_n(P)), "--n-holdout",
+                           str(gd0f_h(P))], env="reactot", part="C", c=16, mem=32)
 
 
 def done_gd0f(P):
     J = d0_plan(P)
-    return d0_plan_full(J) and _int(d0_plan_n(J), -1) == gd0f_n(P)
+    return d0_plan_full(J) and _int(d0_plan_n(J), -1) == gd0f_n(P) and d0_plan_h(J) == gd0f_h(P)
 
 
 def units_gd0(P, S, st):
     E = d0_est(P)
     sugg = E.get("suggested_tasks") or {}
-    nr, nf = _int(E.get("n_g2_rule"), 0), gd0f_n(P)
+    nf = gd0f_n(P)
     groups = [("D0G1", GCMD + ["run", "D0G1"], "reactot"), ("D0G3", GCMD + ["run", "D0G3"], "reactot"),
               ("D0G2", GCMD + ["run_g2"], "d1")]
     ep = st.get("epoch", 0)
@@ -1084,17 +1213,20 @@ def units_gd0(P, S, st):
     u = []
     for g, cmd, env in groups:
         base = _int(sugg.get(g), 1)
-        if g == "D0G2":
+        if g == "D0G2":                       # the training units of g2_plan_d0.json (holdout never run, D0-gauss)
             if nf <= 0:
                 continue
-            base = max(1, math.ceil(base * nf / nr)) if nr > 0 else max(1, base)
+            per = d0_cost_basis(P)[0]["d0g2_per_rxn"]
+            base = max(2, n_tasks(nf, per / 8.0, 8, 4))      # 8 OptTS x 8 ranks per 64-core task (gen_dft G2_NPROCS)
         if R is not None and isinstance(R.get("groups"), dict):
             gr = R["groups"].get(g) or {}
             m = _int(gr.get("n_missing"), 0)
             if m <= 0:
                 continue
             base = math.ceil(base * m / max(1, _int(gr.get("n_planned"), m)))
-        n = fixed_n(P, st, g, lambda b=base: max(1, min(8, b)))
+        # round 0: the lead's manual arrays are adopted unit by unit (g_run_d0g1 0-1, g_run_d0g3 0, g_run_d0g2 0-2):
+        # n = their array size, so `@I n` slices and any resubmission match the adopted tasks (decision G-D0-adopt)
+        n = fixed_n(P, st, g, lambda b=base, g_=g: max(1, min(8, max(b, adopted_n(st, g_)))))
         u += arr(g, cmd + ["@I", str(n)] + (["--d0"] if g == "D0G2" else []), n, env=env, part="C2", c=64, mem=240,
                  disk_gb=2.0)
     return u + one("collect", GCMD + ["collect", "--d0"], env="reactot", part="C", c=4, mem=32, deps=keys(u), sink=True,
@@ -1121,6 +1253,154 @@ def done_gd0(P):
 def prog_gd0(P):
     r = P.c.mlt / "dft" / "runs"
     return count_dir(r / "D0G1") + count_dir(r / "D0G3") + count_dir(r / "D0G2")
+
+
+# ---------------------------------------------------------------- N: the Nurion D1 run tars (user decision 'Nurion')
+# inv_nurion.py: per uploaded tar `scan <tar> ::: verify <tar>` (cpu1/cpu2), then `collect` -> $MLT/dft/nurion.extxyz.gz
+# + results/N_report.json. The user deletes the tar copies by hand (decision 'tar 삭제 방식' 11-04 23:1x: inv_nurion
+# release is not used). The FT data stages wait for N_report complete (all 23 result tars) or for the lead's DECISIONS
+# line '- **N partial ok ...' (decision N-gate).
+def nur_short(stem):
+    """= inv_nurion.short: d1_20261010_g01_002 -> g01_002 (its manual job names nur_<short>); extras drop 'd1_'."""
+    m = re.fullmatch(r"d1_\d{8}_(g\d+_\d+)", str(stem))
+    return m.group(1) if m else str(stem).replace("d1_", "")
+
+
+def nur_out(P):
+    return P.c.mlt / "dft" / "nurion"
+
+
+def nur_tars(P):
+    """[{tar, file, state}] — the stdlib mirror of inv_nurion.tar_states (cached per pass). Registry = the result
+    manifests D1_build/nurion/d1_*.manifest.tsv (<stem>.tar) + the NUR_EXTRA bundles (file name from their .sha256).
+    state: released (<out>/<stem>/.done and the upload copy gone: the user deleted it), done (.done, copy still there),
+    uploading (size != index/bundles.tsv bytes, or modified < 15 min ago), pending (uploaded, not scanned), deleted
+    (deleted_tars.tsv without .done), not_uploaded."""
+    if getattr(P, "_nur", None) is not None:
+        return P._nur
+    up = Path(P.c.nur_upload)
+    mani, out = up / "D1_build" / "nurion", nur_out(P)
+    sizes = {}
+    try:
+        lines = (mani / "index" / "bundles.tsv").read_text().splitlines()
+        hdr = lines[0].split("\t")
+        for ln in lines[1:]:
+            r = dict(zip(hdr, ln.split("\t")))
+            sizes[r.get("bundle")] = _int(r.get("bytes"), None)
+    except (OSError, IndexError):
+        pass
+    reg = {m.name[:-len(".manifest.tsv")]: m.name[:-len(".manifest.tsv")] + ".tar"
+           for m in sorted(mani.glob("d1_*.manifest.tsv"))}
+    for s in sorted(mani.glob("*.sha256")):
+        try:
+            t = s.read_text().split()
+        except OSError:
+            continue
+        if len(t) >= 2:
+            fn = t[1].lstrip("*")
+            stem = re.sub(r"\.tar(\.gz|\.xz)?$", "", fn)
+            if stem in NUR_EXTRA:
+                reg.setdefault(stem, fn)
+    dele = set()
+    try:
+        for ln in (out / "deleted_tars.tsv").read_text().splitlines():
+            t = ln.split("\t")
+            if t and t[0] and not t[0].startswith("#"):
+                dele.add(re.sub(r"\.tar(\.gz|\.xz)?$", "", Path(t[0]).name))
+    except OSError:
+        pass
+    rows = []
+    for stem, fn in reg.items():
+        try:
+            s = (up / fn).stat()
+            size, age = s.st_size, P.t - s.st_mtime
+        except OSError:
+            size, age = None, None
+        if (out / stem / ".done").is_file():
+            state = "released" if size is None else "done"
+        elif size is not None:
+            state = "uploading" if ((sizes.get(stem) and size != sizes[stem]) or age < NUR_SETTLE_S) else "pending"
+        else:
+            state = "deleted" if stem in dele else "not_uploaded"
+        rows.append(dict(tar=stem, file=fn, state=state))
+    P._nur = rows
+    return rows
+
+
+def nur_report_ok(P, n_done):
+    """N_report.json written by a collect that saw every processed tar (tars_processed >= n_done, newer than each
+    .done)."""
+    p = P.c.res / "N_report.json"
+    J, t = P.rjp(p) or {}, P.mt(p)
+    if not J or t is None or _int(J.get("tars_processed"), -1) < n_done:
+        return False
+    out = nur_out(P)
+    return all((P.mt(out / r["tar"] / ".done") or 0) <= t for r in nur_tars(P) if r["state"] in ("done", "released"))
+
+
+def units_nscan(P, S, st):
+    """one unit per uploaded, not yet scanned tar: `inv_nurion.py scan <tar> --workers 8 ::: inv_nurion.py verify
+    <tar>` (cpu1/cpu2, 8 cores, 24 GB; done = <out>/<tar>/.done); a collect after them whenever more tars are processed
+    than the last N_report counted. Tars still uploading or not uploaded wait (the stage re-arms, decision N-scan). The
+    user deletes the scanned copies by hand (no release)."""
+    rows = nur_tars(P)
+    u = []
+    for r in rows:
+        if r["state"] == "pending":
+            stem = r["tar"]
+            u += one(f"scan/{nur_short(stem)}", ["inv_nurion.py", "scan", stem, "--workers", "8", ":::", "inv_nurion.py",
+                                                 "verify", stem], env="reactot", part="C", c=8, mem=24, disk_gb=1.0,
+                     done=lambda P_, s=stem: (nur_out(P_) / s / ".done").is_file())
+    nd = sum(r["state"] in ("done", "released") for r in rows)
+    goal = sum(r["state"] in ("pending", "done", "released") for r in rows)      # processed once these scans end
+    st.setdefault("params", {})["cur_tag"] = f"{nd} tars processed"
+    if u or (nd and not nur_report_ok(P, nd)):
+        u += one(f"collect@{goal}", ["inv_nurion.py", "collect"], env="reactot", part="C", c=4, mem=64, deps=keys(u),
+                 sink=True, disk_gb=5.0)
+    return u
+
+
+def done_nscan(P):
+    """N_report complete (inv_nurion: all 23 result tars processed; the optional extras are not required) and up to
+    date with every processed tar."""
+    J = P.rj("N_report.json") or {}
+    nd = sum(r["state"] in ("done", "released") for r in nur_tars(P))
+    return bool(J.get("complete") is True and nd and nur_report_ok(P, nd))
+
+
+def prog_nscan(P):
+    return sum(r["state"] in ("done", "released") for r in nur_tars(P))
+
+
+def n_partial_ok(P):
+    """the lead's recorded decision: a DECISIONS.md line starting '- **N partial ok' (or RESOLVE param
+    N-scan.partial_ok=1) lets the FT data stages start before every Nurion tar is processed."""
+    if (P.st("N-scan").get("params") or {}).get("partial_ok"):
+        return True
+    try:
+        return bool(NUR_PARTIAL_RX.search(P.c.dec_path.read_text()))
+    except OSError:
+        return False
+
+
+def n_ready(P):
+    """decision N-gate: FT data may be built once the Nurion data are final (N-scan done / skipped, or N_report
+    complete) or the lead recorded 'N partial ok'."""
+    return P.st("N-scan").get("status") in ("done", "skipped") or done_nscan(P) or n_partial_ok(P)
+
+
+N_NEED = ("Nurion data final (N_report complete) or the lead's DECISIONS line '- **N partial ok'", n_ready)
+
+
+# ---------------------------------------------------------------- D0 supplementary geometry evaluation (D0-plus)
+def units_d0eval(P, S, st):
+    """`ts_geom.py d0_eval run @I n` (GPU, model-major slices of FT_all_s<i>_al x {label = Coley TS, g2 = G2c xTB TS}
+    x the D0 evaluation reactions) -> `ts_geom.py d0_eval report` -> results/D0_eval_report.json (report only)."""
+    n = fixed_n(P, st, "run", lambda: len(D0E_MODELS))
+    run = arr("run", ["ts_geom.py", "d0_eval", "run", "@I", str(n)], n, env="mlts", part="GA", c=16, mem=64, gpu=1,
+              disk_gb=0.2)
+    return run + one("report", ["ts_geom.py", "d0_eval", "report"], env="mlts", part="C", c=4, mem=16, deps=keys(run),
+                     sink=True)
 
 
 # ---------------------------------------------------------------- Z
@@ -1294,20 +1574,23 @@ def g4_est(P, step):
     return e or {}
 
 
+G4CMD = ["g4_al.py"]                 # G-4 lives in g4_al.py (gen_dft.py belongs to the D0 workflow)
+
+
 def units_g4(P, S, st):
-    u = one("plan", GCMD + ["g4_plan", "--models", models_r1(P)], env="reactot", part="C", c=4, mem=16,
+    u = one("plan", G4CMD + ["g4_plan", "--models", models_r1(P)], env="reactot", part="C", c=4, mem=16,
             done=rep_complete("G4_plan.json"))
     if not (P.rj("G4_plan.json") or {}).get("complete"):
         return u
     eo, er = g4_est(P, "opt"), g4_est(P, "run")
-    no = fixed_n(P, st, "opt", lambda: n_tasks(eo.get("units_total", 1000), eo.get("unit_wall_h", 0.02),
+    no = fixed_n(P, st, "opt", lambda: n_tasks(eo.get("units_total", 1500), eo.get("unit_wall_h", 0.02),
                                                eo.get("workers", 14), 4))
-    nr = fixed_n(P, st, "run", lambda: n_tasks(er.get("units_total", 1000), er.get("unit_wall_h", 0.1),
+    nr = fixed_n(P, st, "run", lambda: n_tasks(er.get("units_total", 1500), er.get("unit_wall_h", 0.1),
                                                er.get("workers", 64), 4))
-    opt = arr("opt", GCMD + ["g4_opt", "@I", str(no), "--models", models_r1(P)], no, env="mlts", part="GA", c=16, mem=64,
-              gpu=1, deps=["plan"])
-    run = arr("run", GCMD + ["run", "G4", "@I", str(nr)], nr, env="reactot", part="C2", c=64, mem=240, deps=keys(opt))
-    return u + opt + run + one("collect", GCMD + ["collect", "--g4"], env="reactot", part="C", c=4, mem=32,
+    opt = arr("opt", G4CMD + ["g4_opt", "@I", str(no), "--models", models_r1(P)], no, env="mlts", part="GA", c=16,
+              mem=64, gpu=1, deps=["plan"])
+    run = arr("run", G4CMD + ["run", "G4", "@I", str(nr)], nr, env="reactot", part="C2", c=64, mem=240, deps=keys(opt))
+    return u + opt + run + one("collect", G4CMD + ["collect", "--g4"], env="reactot", part="C", c=4, mem=32,
                                deps=keys(run), sink=True)
 
 
@@ -1324,28 +1607,31 @@ def core_h_of(J):
 
 def guard_g4(P):
     """$MLT/dft/STOP or G4_report stop_file -> HALT; and, before any G-4 DFT runs, the plan's predicted cost:
-    measured D1 + D0 + predicted G-4 > 5,000 core-h -> HALT (spec 0-5)."""
+    measured D1 + D0 + predicted G-4 > the G cap (gen_dft.BUDGET_CORE_H, user decisions; spec 0-5 5,000) -> HALT."""
     g = guard_dft_stop("G4_report.json")(P)
     if g:
         return g
     J = P.rj("G4_plan.json") or {}
     pred = J.get("predicted_core_h")
     pred = pred.get("total") if isinstance(pred, dict) else pred
+    bud = g_budget(P)
     if J.get("complete") and pred is not None and not (P.rj("G4_report.json") or {}).get("complete"):
         meas = core_h_of(P.rj("G_report.json")) + core_h_of(P.rj("G_report_d0.json"))
-        if meas + float(pred) > G_BUDGET:
+        if meas + float(pred) > bud:
             return (f"G-4 계획 예상: G 실측 {meas:,.0f} + G-4 예상 {float(pred):,.0f} = {meas + float(pred):,.0f} core-h > "
-                    f"5,000 (G-4 DFT 실행 전; 명령서 0-5 STOP)")
+                    f"{bud:,.0f} (gen_dft.BUDGET_CORE_H; G-4 DFT 실행 전; 명령서 0-5 STOP)")
     return None
 
 
 def decide_g4(P, S, st):
     parts = {n: core_h_of(P.rj(n)) for n in ("G_report.json", "G_report_d0.json", "G4_report.json")}
     tot = sum(parts.values())
-    if tot > G_BUDGET:
-        return dict(key="over budget", numbers=dict(parts=parts, total=tot, budget=G_BUDGET),
-                    halt=f"G 전체 실측 {tot:,.0f} core-h > 5,000 (G-4 뒤; 명령서 0-5 STOP)")
-    return dict(key="ok", line=f"G-4 능동학습 끝: G 전체 실측 {tot:,.0f} core-h ≤ 5,000 ({', '.join(f'{k} {v:,.0f}' for k, v in parts.items())}).")
+    bud = g_budget(P)
+    if tot > bud:
+        return dict(key="over budget", numbers=dict(parts=parts, total=tot, budget=bud),
+                    halt=f"G 전체 실측 {tot:,.0f} core-h > {bud:,.0f} (gen_dft.BUDGET_CORE_H; G-4 뒤; 명령서 0-5 STOP)")
+    return dict(key="ok", line=f"G-4 능동학습 끝: G 전체 실측 {tot:,.0f} core-h ≤ {bud:,.0f} "
+                               f"({', '.join(f'{k} {v:,.0f}' for k, v in parts.items())}).")
 
 
 ALL_RUNS = [f"FT_{k}" for k in range(5)] + [f"FT_all_s{i}" for i in range(3)] + [f"FT_LODO_{d}" for d in range(5)]
@@ -1551,15 +1837,32 @@ def a3_per_rxn_disk(P):
     return float(v) if v is not None else DISK_GB_PER_RXN_DEFAULT
 
 
+A_GPU_C, A_GPU_MEM = A_WORKERS * A_CORES + 4, 64          # 6 autodE workers x 2 cores + server / parent
+
+
 def units_a3(P, S, st):
     na = fixed_n(P, st, "A", lambda: 2)
     npp = fixed_n(P, st, "App", lambda: 1)
     A = arr("A", ["mlts_autode.py", "run", "a3", "@I", str(na), "--list", str(P.c.list_path("a3"))], na, env="mlts",
-            part="GA", c=32, mem=96, gpu=1, disk_gb=300 / na * DISK_GB_PER_RXN_DEFAULT)
+            part="GA", c=A_GPU_C, mem=A_GPU_MEM, gpu=1, disk_gb=600 / na * DISK_GB_PER_RXN_DEFAULT)
     App = arr("App", ["mlts_autode.py", "refine_dft", "a3", "@I", str(npp)], npp, env="reactot", part="C2", c=64,
               mem=240, deps=keys(A), disk_gb=300 / npp * 0.01)
     return A + App + one("report", ["mlts_autode.py", "a3_report"], env="reactot", part="C", c=4, mem=16,
                          deps=keys(App), sink=True)
+
+
+def prog_a3(P):
+    """A-3 progress: the published A-2 folders of the three arms ($MLT/a3/<A|Ap|App>/ade/jobs, mlts_autode A3_ROOT)."""
+    return sum(count_dir(P.c.mlt / "a3" / a / "ade" / "jobs") for a in ("A", "Ap", "App"))
+
+
+def prog_a4(P):
+    """A-4 progress: the main-engine A run writes $MLT/ade/jobs, or $MLT/ade_pre/jobs when A'' is the engine (its DFT
+    refine then fills $MLT/ade/jobs)."""
+    n = count_dir(P.c.mlt / "ade" / "jobs")
+    if (P.state.get("params") or {}).get("engine") == "App":
+        n += count_dir(P.c.mlt / "ade_pre" / "jobs")
+    return n
 
 
 ARM_NAME = {"A": "A (autodE-MLTS)", "Ap": "A′ (G2 TS → MLTS OptTS)", "App": "A″ (A → 라벨 수준 OptTS)"}
@@ -1686,10 +1989,10 @@ def units_a4(P, S, st):
     folds = list(range(5)) + ([-1] if (lists_info(P).get("n_fold_minus1") or 0) > 0 else [])
     for k in folds:
         nf = n_list(P, f"f{k}_test") if k >= 0 else int(lists_info(P).get("n_fold_minus1") or 0)
-        n = fixed_n(P, st, f"f{k}", lambda: n_tasks(nf, est.get("unit_wall_h", 0.3), est.get("workers", 32), 6))
+        n = fixed_n(P, st, f"f{k}", lambda: n_tasks(nf, est.get("unit_wall_h", 0.3), est.get("workers", A_WORKERS), 6))
         model = f"FT_{k}_al" if k >= 0 else "FT_0_al"
         r = arr(f"f{k}", ["mlts_autode.py", "run", f"d1:{k}", "@I", str(n), "--model", model, "--engine", eng], n,
-                env="mlts", part="GA", c=32, mem=96, gpu=1, disk_gb=nf / n * per)
+                env="mlts", part="GA", c=A_GPU_C, mem=A_GPU_MEM, gpu=1, disk_gb=nf / n * per)
         u += r
         sink_deps += keys(r)
         if eng == "App":
@@ -1827,21 +2130,65 @@ def decide_h(P, S, st):
 
 
 def decide_cagg(P, S, st):
+    """tests.py all: a failed C-1 .. C-6 check = HALT (C_tests stop; C-2 / C-6 / H-1 are spec 14 STOPs, C-1 / C-3 /
+    C-4 failures are bugs the spec says to report before fixing); C-7 is report only."""
     J = P.rj("C_tests.json") or {}
-    c2 = (J.get("C2") or J.get("C-2") or {}).get("pass")
-    if c2 is False:
-        return dict(key="C-2 fail", numbers=dict(C2=J.get("C2") or J.get("C-2")), halt="C-2 누수 검사 실패 (명령서 14절 STOP)")
-    return dict(key="ok", line=f"Phase C 검사 모음: C-2 통과, C-7 보고({str((J.get('C7') or J.get('C-7') or {}).get('summary', ''))[:120]}).")
+    secs = {k: (J.get(k) or {}) for k in ("C1", "C2", "C3", "C4", "C5", "C6", "C7")}
+    bad = [k for k in ("C1", "C2", "C3", "C4", "C5", "C6") if secs[k].get("pass") is False]
+    if J.get("stop") or bad:
+        return dict(key="C fail " + ",".join(bad), numbers={k: secs[k].get("pass") for k in secs},
+                    halt=f"Phase C 검사 실패 {bad or J.get('stop')} (명령서 8 · 14절: C-2 누수 / C-6 회귀 / C-5 = H-1은 STOP, "
+                         "C-1 · C-3 · C-4 실패는 버그라 고치기 전에 보고)")
+    c7 = secs["C7"]
+    return dict(key="ok", line=f"Phase C 검사 모음: C-1 … C-6 통과, C-7 보고(통과 {c7.get('pass')}: "
+                               f"{str(c7.get('summary') or '')[:120]}).")
 
 
 def done_r(P):
-    f = P.c.res / "PREREG_V2.md"
-    return f.is_file() and P.c.git.tracked(f) and P.c.git.clean(f)
+    """PREREG_V2.md and prereg_v2.json both committed and unchanged, and the json's md_sha256 = sha256(md) (the same
+    rule as `prereg_v2.py check`, computed here with hashlib: K and E read criteria.refs.primary from the json)."""
+    f, j = P.c.res / "PREREG_V2.md", P.c.res / "prereg_v2.json"
+    if not (f.is_file() and j.is_file()):
+        return False
+    J = P.rjp(j) or {}
+    try:
+        sha = hashlib.sha256(f.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return J.get("md_sha256") == sha and all(P.c.git.tracked(p) and P.c.git.clean(p) for p in (f, j))
+
+
+def prereg_refs(P):
+    J = P.rj("prereg_v2.json") or {}
+    return ((J.get("criteria") or {}).get("refs") or {}).get("primary") or "min"
+
+
+def c1_report_ok(P, name, refs):
+    p, tp = P.c.res / name, P.mt(P.c.res / "PREREG_V2.md")
+    J = P.rjp(p) or {}
+    t = P.mt(p)
+    return t is not None and tp is not None and t >= tp and J.get("refs") == refs
 
 
 def done_kc1(P):
-    t, tp = P.mt(P.c.res / "C1_report.json"), P.mt(P.c.res / "PREREG_V2.md")
-    return t is not None and tp is not None and t >= tp
+    """K-C1 (no retraining): C1 predictions on the registered refs mode (prereg primary: C1_report.json) and on the
+    other mode (secondary, descriptive: C1_<mode>_report.json), both written after PREREG_V2.md."""
+    prim = prereg_refs(P)
+    sec = "own" if prim == "min" else "min"
+    return c1_report_ok(P, "C1_report.json", prim) and c1_report_ok(P, f"C1_{sec}_report.json", sec)
+
+
+def units_kc1(P, S, st):
+    prim = prereg_refs(P)
+    sec = "own" if prim == "min" else "min"
+    u = []
+    for tag, refs in (("", prim), (f"_{sec}", sec)):
+        x = ["--refs", refs]
+        u += one(f"atoms{tag}", ["train_k.py", "c1pred", "atoms"] + x, env="reactot", part="GA", c=8, mem=64, gpu=1)
+        u += one(f"xgb{tag}", ["train_k.py", "c1pred", "xgb"] + x, env="reactot", part="C", c=32, mem=64)
+        u += one(f"collect{tag}", ["train_k.py", "c1pred", "collect"] + x, env="reactot", part="C", c=4, mem=32,
+                 deps=[f"atoms{tag}", f"xgb{tag}"], sink=True)
+    return u
 
 
 def units_kc23(P, S, st):
@@ -1950,10 +2297,12 @@ def registry():
                    summary="pipeline.py lists -> $MLT/pipeline/lists/{f<k>_test,dip<d>,a3}.csv"))
     S.append(Stage("G-D1", "G", 10, units_gd1, code=[("gen_dft.py", "run"), ("gen_dft.py", "run_g2"),
                                                        ("gen_dft.py", "collect")],
-                   done=done_gd1, guard=guard_dft_stop("G_report.json"), progress=prog_gd1,
+                   done=done_gd1, decide=decide_gd1, guard=guard_dft_stop("G_report.json"), progress=prog_gd1,
                    adopt=[(r"g_run1", "G1[{i}]"), (r"g_run1rev", "G1rev"), (r"g_run3", "G3[{i}]"), (r"g_run2", "G2[{i}]"),
                           (r"g_collect", "collect")], results=["G_report.json"],
-                   summary="adopt g_run1/1rev/3/2 + g_collect; replan: run G1|G3 / run_g2 for groups with n_missing > 0, collect"))
+                   summary="adopt g_run1/1rev/3/2 + g_collect; done = G_report complete, or G1 / G3 complete with the "
+                           "G-2 paths the user stopped at 317 / 400 (decision Nurion); replan: run G1|G3 for groups "
+                           "with n_missing > 0 (never G-2 again), collect"))
     d0code = ("gen_dft.py", "plan_d0", r"gen_d0")
     S.append(Stage("G-D0p", "G", 11, units_gd0p, code=[d0code, ("gen_d0.py", "")], done=done_gd0p, guard=guard_d0,
                    adopt=[(r"g_plan_?d0", "plan_d0")],
@@ -1961,17 +2310,30 @@ def registry():
     S.append(Stage("G-D0e", "G", 12, units_gd0e, after=["G-D0p"], code=[("gen_dft.py", "g0_d0"), ("gen_d0.py", "")],
                    done=done_gd0e, decide=decide_gd0e, on_exit3="decide", guard=guard_d0, results=["G0_estimate_d0.json"],
                    adopt=[(r"g_g0_?d0", "g0_d0")],
-                   summary="gen_dft g0_d0 -> G0_estimate_d0.json; D1 + D0 <= 5,000 -> refit n_g2 = n_g2_rule, else HALT"))
-    S.append(Stage("G-D0f", "G", 13, units_gd0f, after=["G-D0e"], code=[d0code, ("gen_d0.py", "")], done=done_gd0f,
-                   guard=guard_d0, results=["G_plan_d0.json"],
-                   summary="gen_dft plan_d0 --n-g2 <n_g2_rule> (recommended refit of the D0 G-2 path count)"))
+                   summary="gen_dft g0_d0 -> G0_estimate_d0.json; D1 + D0 G1/G3 + 200 D0G2 + G-4 reserve <= "
+                           "gen_dft.BUDGET_CORE_H -> the user's D0 selection, else HALT"))
+    S.append(Stage("G-D0f", "G", 13, units_gd0f, after=["G-D0e"], code=[("gen_d0.py", "", r"--n-holdout")],
+                   done=done_gd0f, guard=guard_d0, results=["G_plan_d0.json", "d0_holdout.csv"],
+                   adopt=[(r"d0p_plan", "plan_d0")],
+                   summary="gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100 (user decisions D0-n3 / D0-plus / "
+                           "D0-gauss: 200 D0G2 training paths, 100 evaluation-only reactions not refined)"))
     S.append(Stage("G-D0", "G", 14, units_gd0, after=["G-D0f"],
                    code=[("gen_dft.py", "run", r"D0G1"), ("gen_dft.py", "run_g2", r"--d0"),
                          ("gen_dft.py", "collect", r"--d0"), ("gen_d0.py", "")],
                    done=done_gd0, guard=guard_d0, progress=prog_gd0, results=["G_report_d0.json"],
                    adopt=[(r"g_run_?d0g?1", "D0G1[{i}]"), (r"g_run_?d0g?3", "D0G3[{i}]"), (r"g_run_?d0g?2", "D0G2[{i}]"),
                           (r"g_collect_?d0", "collect"), (r"g_\w*d0\w*", None)],
-                   summary="run D0G1|D0G3 @I n, run_g2 @I n --d0 (n = suggested_tasks), collect --d0 -> G_report_d0.json"))
+                   summary="run D0G1|D0G3 @I n (n = suggested_tasks or the adopted manual array), run_g2 @I n --d0 (the "
+                           "200 training units of g2_plan_d0.json), collect --d0 -> G_report_d0.json; helpers "
+                           "g_run_d0g*rev / shuf<K> recognised (block resubmission while live)"))
+    S.append(Stage("N-scan", "I", 15, units_nscan, code=[("inv_nurion.py", "scan"), ("inv_nurion.py", "verify"),
+                                                         ("inv_nurion.py", "collect")],
+                   done=done_nscan, progress=prog_nscan, rearm=True, halt_scope="local", results=["N_report.json"],
+                   adopt=[(r"nur_(?P<x>.+)", lambda m, i: f"scan/{m.group('x')}")],
+                   summary="per uploaded, unscanned Nurion tar: inv_nurion scan <tar> ::: verify <tar> (cpu1/cpu2 8c "
+                           "24G); collect -> results/N_report.json; re-arms until N_report complete (23 result tars); "
+                           "the user deletes the copies by hand; FT data wait: N_report complete or '- **N partial "
+                           "ok' in DECISIONS"))
     S.append(Stage("Z-run", "Z", 20, units_z, code=[("zero_shot.py", "run")],          # Z reads no G output
                    done=lambda P: all(z_done(P, c) for c in Z_CANDS),
                    progress=lambda P: sum(count_dir(P.c.mlt / "z" / c / "geom_label" / "recs") for c in Z_CANDS),
@@ -1987,8 +2349,8 @@ def registry():
                    adopt=[(r"z_report", "report")], results=["Z_report.json", "Z_DECISION.md"],
                    summary="zero_shot report -> top 2 pilots (1 -> pilot it; 0 -> HALT)"))
     S.append(Stage("FT-dp", "FT", 30, units_ftdp, after=["G-D1", "G-D0", "Z-rep"], code=[("finetune.py", "data")],
-                   done=done_ftdp, adopt=[(r"ft_data", "data")], results=["ft/FTpilot_*_data.json"],
-                   summary="finetune data FTpilot_<a>_0 FTpilot_<b>_0 (after D1 + D0 G collect)"))
+                   need=[N_NEED], done=done_ftdp, adopt=[(r"ft_data", "data")], results=["ft/FTpilot_*_data.json"],
+                   summary="finetune data FTpilot_<a>_0 FTpilot_<b>_0 (after D1 + D0 G collect and the Nurion data)"))
     S.append(Stage("FT-p", "FT", 31, units_ftp, after=["FT-dp"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
                    done=done_ftp, progress=prog_train(lambda P: [f"FTpilot_{c}_0" for c in pilots(P)]),
                    adopt=[(r"ft_p_(?P<x>.+)", lambda m, i: FT_ALIAS.get(m.group("x"), m.group("x")))],
@@ -2000,7 +2362,7 @@ def registry():
                    partial=geom_partial(geom_dirs(lambda P: [(f"FTpilot_{c}_0", "f0_test") for c in pilots(P)], ft2root)),
                    progress=lambda P: geom_progress(P, [f"FTpilot_{c}_0" for c in pilots(P)], P.c.mlt / "ft2"),
                    summary="ts_geom run FTpilot_<c>_0 f0_test label|g2 -> base MLIP (FT_0 := FTpilot_<base>_0)"))
-    S.append(Stage("FT-d1", "FT", 33, units_ftd1, after=["FT2-p"], code=[("finetune.py", "data")],
+    S.append(Stage("FT-d1", "FT", 33, units_ftd1, after=["FT2-p"], code=[("finetune.py", "data")], need=[N_NEED],
                    done=lambda P: all(data_ok(P, f"FT_{k}") for k in range(1, 5)), results=["ft/FT_[1-4]_data.json"],
                    summary="finetune data FT_1 FT_2 FT_3 FT_4"))
     S.append(Stage("FT-r1", "FT", 34, units_ftr1, after=["FT-d1"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
@@ -2014,13 +2376,14 @@ def registry():
                    progress=lambda P: geom_progress(P, [r1_run(P, k) or "_" for k in range(5)], P.c.mlt / "ft2"),
                    summary="filler: ts_geom on FT_k (round 1), fold k, both starts (report only)"))
     S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1"],
-                   code=[("gen_dft.py", "g4_plan"), ("gen_dft.py", "g4_opt"), ("gen_dft.py", "run", r"G4"),
-                         ("gen_dft.py", "collect", r"--g4")],
-                   done=done_g4, decide=decide_g4, guard=guard_g4, placeholder=True,
+                   code=[("g4_al.py", "g4_plan"), ("g4_al.py", "g4_opt"), ("g4_al.py", "run", r"G4"),
+                         ("g4_al.py", "collect", r"--g4")],
+                   done=done_g4, decide=decide_g4, guard=guard_g4,
                    results=["G4_plan.json", "G4_report.json"],
-                   summary="gen_dft g4_plan -> g4_opt @I n (GPU) -> run G4 @I n -> collect --g4"))
-    S.append(Stage("FT-d2", "FT", 41, units_ftd2, after=["G4"], code=[("finetune.py", "data")], done=done_ftd2,
-                   results=["ft/*_al_data.json"], summary="finetune data --all --with-al"))
+                   summary="g4_al g4_plan (1,000 D1 + 500 D0 training-side reactions) -> g4_opt @I n (GPU) -> "
+                           "run G4 @I n -> collect --g4"))
+    S.append(Stage("FT-d2", "FT", 41, units_ftd2, after=["G4"], code=[("finetune.py", "data")], need=[N_NEED],
+                   done=done_ftd2, results=["ft/*_al_data.json"], summary="finetune data --all --with-al"))
     S.append(Stage("FT-r2", "FT", 42, units_ftr2, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
                    done=lambda P: all(train_done(P, f"FT_{k}_al") for k in range(5)),
                    progress=prog_train(lambda P: [f"FT_{k}_al" for k in range(5)]),
@@ -2046,8 +2409,15 @@ def registry():
     S.append(Stage("X-rep", "X", 46, lambda P, S_, st: one("x_report", ["ts_geom.py", "x_report"], env=Mm, part="C", c=4,
                                                              mem=16),
                    after=["X-run"], code=[("ts_geom.py", "x_report")], done=rep_complete("X_report.json"),
-                   placeholder=True, halt_scope="local", results=["X_report.json"],
+                   halt_scope="local", results=["X_report.json"],
                    summary="ts_geom x_report -> results/X_report.json (report only)"))
+    S.append(Stage("D0-eval", "X", 47, units_d0eval, after=["FT-fin"], code=[("ts_geom.py", "d0_eval")],
+                   done=rep_complete("D0_eval_report.json"), filler=True, results=["D0_eval_report.json"],
+                   progress=lambda P: sum(count_dir(P.c.mlt / "d0eval" / m / s / "recs") for m in D0E_MODELS
+                                          for s in STARTS),
+                   summary="D0 supplementary geometry evaluation (user decisions D0-plus / D0-gauss, report only): "
+                           "ts_geom d0_eval run @I n (FT_all_s0-2_al x {Coley TS, G2c xTB TS} x the 100 D0 evaluation "
+                           "reactions) -> d0_eval report -> results/D0_eval_report.json"))
     S.append(Stage("C1-ft", "C", 50, lambda P, S_, st: one("c1", ["tests_c1.py", "all", "FT_0_al"], env=Mm, part="G48",
                                                              c=16, mem=64, gpu=1),
                    after=["FT-d2"], need=[("FT_0_al trained", lambda P: train_done(P, "FT_0_al"))],
@@ -2055,24 +2425,26 @@ def registry():
                    summary="tests_c1 all FT_0_al (G48) -> pass_C1 and pass_C4 else HALT"))
     S.append(Stage("A2-smoke", "A", 51, lambda P, S_, st: one("smoke", ["mlts_autode.py", "smoke", "--model", "FT_0_al"],
                                                                env=Mm, part="GA", c=8, mem=32, gpu=1),
-                   after=["C1-ft"], code=[("mlts_autode.py", "smoke")], done=lambda P: "pass" in (P.rj("A2_smoke.json") or {}),
-                   decide=decide_a2, placeholder=True, results=["A2_smoke.json"],
-                   summary="mlts_autode smoke --model FT_0_al -> results/A2_smoke.json pass"))
+                   after=["C1-ft"], code=[("mlts_autode.py", "smoke")],
+                   done=lambda P: (P.rj("A2_smoke.json") or {}).get("complete") is True, on_exit3="decide",
+                   decide=decide_a2, results=["A2_smoke.json"],
+                   summary="mlts_autode smoke --model FT_0_al -> results/A2_smoke.json {complete, pass}"))
     S.append(Stage("A3", "A", 52, units_a3, after=["FT2-r2", "A2-smoke", "lists"],
                    code=[("mlts_autode.py", "run"), ("mlts_autode.py", "refine_dft"), ("mlts_autode.py", "a3_report")],
-                   done=rep_complete("A3_report.json"), decide=decide_a3, placeholder=True, results=["A3_report.json"],
-                   progress=lambda P: count_dir(P.c.mlt / "ade" / "a3"),
-                   summary="mlts_autode run a3 @I n (A) -> refine_dft a3 @I n (A'') -> a3_report; engine rule"))
+                   done=rep_complete("A3_report.json"), decide=decide_a3, results=["A3_report.json", "A3_status.csv"],
+                   progress=prog_a3,
+                   summary="mlts_autode run a3 @I n (A + A', GPU 16c) -> refine_dft a3 @I n (A'') -> a3_report; "
+                           "engine rule on the allocated cost per reaction"))
     S.append(Stage("A4_disk", "A", 53, None, after=["A3"], gate=gate_a4,
                    summary="disk gate: quota fresh and free - (A-3 disk/rxn + H [+ A'' arm]) x 9,266 >= 30 GB"))
     S.append(Stage("A4", "A", 54, units_a4, after=["A4_disk"],
                    code=[("mlts_autode.py", "run"), ("mlts_autode.py", "refine_dft"), ("mlts_autode.py", "status")],
-                   done=rep_complete("A4_report.json"), placeholder=True, on_start=start_a4, results=["A4_report.json"],
-                   progress=lambda P: count_dir(P.c.mlt / "ade" / "jobs"),
+                   done=rep_complete("A4_report.json"), on_start=start_a4, results=["A4_report.json"],
+                   progress=prog_a4,
                    summary="per fold k: mlts_autode run d1:<k> @I n --model FT_<k>_al --engine <e>; status -> A4_report"))
     S.append(Stage("A4-App", "A", 55, units_a4app, after=["A4"], active=extra_app,
                    code=[("mlts_autode.py", "refine_dft", r"--root"), ("mlts_autode.py", "status")],
-                   done=done_a4app, placeholder=True, progress=lambda P: count_dir(app_root(P) / "ade" / "jobs"),
+                   done=done_a4app, progress=lambda P: count_dir(app_root(P) / "ade" / "jobs"),
                    summary="only if A-3 set extra_arm_App: refine_dft d1:<k> @I n --root $MLT/app (A'' for all 9,266); "
                            "status --root $MLT/app -> $MLT/app/reports/A4_report.json"))
     S.append(Stage("H-early", "H", 59, units_hearly, after=["A4_disk"],
@@ -2096,31 +2468,30 @@ def registry():
                            "H-2 > 2 % drops the arm (recorded)"))
     S.append(Stage("C-agg", "C", 70, lambda P, S_, st: one("all", ["tests.py", "all"], env=Mm, part="GA", c=16, mem=64, gpu=1),
                    after=["FT-r2", "A4", "H"], code=[("tests.py", "all")], done=rep_complete("C_tests.json"),
-                   decide=decide_cagg, placeholder=True, results=["C_tests.json"], summary="tests all -> C_tests.json"))
+                   on_exit3="decide", decide=decide_cagg, results=["C_tests.json"],
+                   summary="tests all -> C_tests.json; a failed C-1..C-6 = HALT, C-7 report only"))
     S.append(Stage("R", "R", 71, lambda P, S_, st: one("write", ["prereg_v2.py", "write"], env=R, part="C", c=2, mem=8),
                    after=["FT2-r2", "A3", "H", "H-App", "C-agg"], code=[("prereg_v2.py", "write")], done=done_r,
-                   commit_gate=True,
-                   placeholder=True, results=["PREREG_V2.md"],
-                   summary="prereg_v2 write -> PREREG_V2.md, committed by the launcher before K"))
-    S.append(Stage("K-C1", "K", 72, lambda P, S_, st: (one("atoms", ["predict_c1.py", "atoms", "mlts"], env=R, part="GA", c=8,
-                                                            mem=64, gpu=1) +
-                                                        one("xgb", ["predict_c1.py", "xgb", "mlts"], env=R, part="C", c=32,
-                                                            mem=64) +
-                                                        one("collect", ["predict_c1.py", "collect"], env=R, part="C", c=4,
-                                                            mem=32, deps=["atoms", "xgb"], sink=True)),
-                   after=["R"], code=[("predict_c1.py", "atoms"), ("predict_c1.py", "xgb"), ("predict_c1.py", "collect")],
-                   done=done_kc1, results=["C1_report.json"], summary="predict_c1 atoms|xgb mlts -> collect"))
+                   commit_gate=True, results=["PREREG_V2.md", "prereg_v2.json"],
+                   summary="prereg_v2 write -> PREREG_V2.md + prereg_v2.json, committed by the launcher before K "
+                           "(done = both tracked, unchanged, json md_sha256 = sha256(md))"))
+    S.append(Stage("K-C1", "K", 72, units_kc1, after=["R"], code=[("train_k.py", "c1pred")],
+                   done=done_kc1, results=["C1_report.json", "C1_*_report.json"],
+                   summary="train_k c1pred atoms|xgb|collect --refs <prereg primary> (-> C1_predictions) and --refs "
+                           "<other> (descriptive): predict_c1 on the registered refs table"))
     S.append(Stage("K-C2C3", "K", 73, units_kc23, after=["R"],
-                   code=[("train_k.py", "plan"), ("train_k.py", "c2"), ("train_k.py", "c3"), ("train_k.py", "select")],
-                   done=done_kc23, decide=decide_kc23, placeholder=True, results=["K_plan.json", "K_report.json"],
-                   summary="train_k plan -> c2|c3 <unit> @I n -> select (primary by inner validation oi + cpcm)"))
+                   code=[("train_k.py", "plan"), ("train_k.py", "c2"), ("train_k.py", "c3"), ("train_k.py", "c1v"),
+                         ("train_k.py", "select")],
+                   done=done_kc23, decide=decide_kc23, results=["K_plan.json", "K_report.json", "K_val.csv"],
+                   summary="train_k plan -> c2|c3|c1v <unit> @I 1 -> select (primary by inner validation oi + cpcm)"))
     S.append(Stage("C2-K", "C", 74, lambda P, S_, st: one("c2k", ["tests.py", "c2_k"], env=R, part="C", c=4, mem=32),
-                   after=["K-C2C3"], code=[("tests.py", "c2_k")], done=done_c2k, decide=decide_c2k, placeholder=True,
+                   after=["K-C2C3"], code=[("tests.py", "c2_k")], done=done_c2k, decide=decide_c2k, on_exit3="decide",
                    results=["C2K_report.json"],
                    summary="tests c2_k -> C2K_report.json: K channel units' f{k} training pairs ∩ fold k = ∅, else HALT"))
     S.append(Stage("E", "E", 75, lambda P, S_, st: one("run", ["eval_v2.py", "run"], env=R, part="C", c=16, mem=64),
                    after=["K-C1", "K-C2C3", "C2-K"], code=[("eval_v2.py", "run")], done=rep_complete("E_report.json"),
-                   decide=decide_e, placeholder=True, results=["E_*"], summary="eval_v2 run -> E_report.json"))
+                   decide=decide_e, results=["E_*"], summary="eval_v2 run -> E_report.json + E_metrics / E_metrics_pos / "
+                                                             "E_bends / E_bend_rates / E_compare / figures"))
     S.append(Stage("W", "W", 75, lambda P, S_, st: (one("channel", ["final_w.py", "channel"], env=Mm, part="GA", c=8, mem=64,
                                                          gpu=1) +
                                                      arr("committee", ["final_w.py", "committee", "@I", "3"], 3, env=Mm,
@@ -2130,8 +2501,9 @@ def registry():
                                                          sink=True)),
                    after=["FT-fin", "K-C2C3", "E"],
                    code=[("final_w.py", "channel"), ("final_w.py", "committee"), ("final_w.py", "report")],
-                   done=rep_complete("W_report.json"), placeholder=True, results=["W_*"],
-                   summary="final_w channel; committee @I 3; report -> W_report.json"))
+                   done=rep_complete("W_report.json"), results=["W_*"],
+                   summary="final_w channel (C1 / C2 / C3 final model); committee @I 3 (FT_all_s<i>_al); report -> "
+                           "W_report.json"))
     S.append(Stage("P", "P", 76, lambda P, S_, st: (one("selfcheck", ["predict_v2.py", "selfcheck"], env=Mm, part="GA", c=16,
                                                          mem=64, gpu=1) +
                                                      arr("cert", ["predict_v2.py", "cert", "@I", "1"], 1, env=R, part="C2",
@@ -2139,11 +2511,11 @@ def registry():
                                                      one("report", ["predict_v2.py", "report"], env=R, part="C", c=4,
                                                          mem=16, deps=["selfcheck", "cert[0]"], sink=True)),
                    after=["W"], code=[("predict_v2.py", "selfcheck"), ("predict_v2.py", "cert"), ("predict_v2.py", "report")],
-                   done=rep_complete("P_report.json"), decide=decide_p, on_start=start_p, placeholder=True,
+                   done=rep_complete("P_report.json"), decide=decide_p, on_start=start_p,
                    results=["P_report.json"], summary="predict_v2 selfcheck + cert @I 1 (P-3) -> report"))
     S.append(Stage("S", "S", 77, lambda P, S_, st: one("write", ["summary_v2.py", "write"], env=R, part="C", c=2, mem=8),
-                   after=["X-rep", "P"], code=[("summary_v2.py", "write")],
-                   done=lambda P: (P.c.res / "SUMMARY_V2.md").is_file(), decide=decide_s, placeholder=True,
+                   after=["X-rep", "D0-eval", "P"], code=[("summary_v2.py", "write")],
+                   done=lambda P: (P.c.res / "SUMMARY_V2.md").is_file(), decide=decide_s,
                    results=["SUMMARY_V2.md", "STOP_S.md"], summary="summary_v2 write -> SUMMARY_V2.md, STOP_S.md, stop"))
     del D
     return S
@@ -2613,6 +2985,8 @@ class Pass:
         if cm and cm[0] in self.by:
             ks = spec_keys(cm[1], jid)
             return cm[0], (ks[0] if len(ks) == 1 else None)
+        if cm and cm[0] == "nur" and "N-scan" in self.by:     # inv_nurion pending's manual line mltp:nur:<tar>:manual
+            return "N-scan", f"scan/{nur_short(cm[1])}"
         idx = str(jid).split("_", 1)[1] if "_" in str(jid) else "0"
         for S in self.reg:
             for rx, key in S.adopt:

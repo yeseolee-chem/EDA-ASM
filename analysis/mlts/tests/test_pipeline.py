@@ -22,7 +22,12 @@ Scenarios (review defect in brackets):
   p1 reconcile with sacct down / without accounting comments [a];  p2 manual job between passes adopted [b]
   p4 LOST only when accounting answers [f];  p5 G_plan_d0 --limit never done [p];  p6 Z coverage [m/o]
   p7 unreadable state [t];  p8 filler HALT is local [i];  p9 ts_geom partial coverage [k];  p11 G-4 budget before
-  running [h];  p12 old index.lock -> ATTENTION [e];  p13 git ls-remote origin from a compute node (informational)"""
+  running, cap read from gen_dft.py [h];  p12 old index.lock -> ATTENTION [e];  p13 git ls-remote (informational)
+  Integrate step (DEPLOY-V2 remaining stages): s8 rewritten for the D0 user decisions (8,000 cap, 200 + 100, RESOLVE
+  retry of the 5,000-era HALT); n1 A-3 / A-4 progress folders + GPU job size; n2 R commit gate (md + json, sha);
+  n3 K-C1 c1pred refs + C-agg decision; n4 A2-smoke completeness / decision HALT; n5 D1 G-2 user stop at 317 / 400
+  (decision Nurion); n6 the lead's D0 jobs adopted (d0p_plan, D0G1 / D0G3 / D0G2 arrays, helpers, @I 3 retry);
+  n7 N-scan per uploaded Nurion tar + collect + re-arm, FT-dp gate ('N partial ok'); n8 D0-eval (after FT-fin, S waits)"""
 from __future__ import annotations
 
 import json
@@ -98,14 +103,16 @@ class MirrorGit(PL.FakeGit):
     """tracked / clean from the REAL repository (read-only git), commits / pushes faked; names in `assume` count as
     committed (pipeline.py itself: the lead commits it before the first launch)."""
 
-    def __init__(self, assume=()):
+    def __init__(self, assume=(), edited=()):
         super().__init__()
-        self.real, self.assume = PL.Git(MLTS, readonly=True), set(assume)
+        self.real, self.assume, self.edited = PL.Git(MLTS, readonly=True), set(assume), set(edited)
 
     def tracked(self, path):
         return Path(path).name in self.assume or Path(path).name in self.committed or self.real.tracked(path)
 
     def clean(self, path):
+        if Path(path).name in self.edited:              # the 2026-11-04 15:3x working tree of the snapshot
+            return False
         return Path(path).name in self.assume or self.real.clean(path)
 
 
@@ -131,7 +138,7 @@ class Env:
 
     def ctx(self, launcher=False, job="900"):
         return PL.Ctx(mlt=self.mlt, res=self.res, pdir=self.mlt / "pipeline", ctl=self.mlt, code=self.code, slurm=self.sl,
-                      git=self.git, clock=self.clock, job=job, launcher=launcher)
+                      git=self.git, clock=self.clock, job=job, launcher=launcher, nur_upload=self.d / "nur")
 
     def run(self, dry=False, **kw):
         if self.quota is not None:
@@ -267,7 +274,8 @@ def _geom(E, root, run, start, n, dd, cov=None):
 @scenario
 def s1_fresh_real():
     E = Env("s1_fresh_real", real_code=True)
-    E.git = MirrorGit(assume={"pipeline.py"})            # the real working tree: gen_dft.py / finetune.py being edited
+    # the real code tree, with the 15:3x state of the snapshot: gen_dft.py / gen_d0.py / finetune.py being edited
+    E.git = MirrorGit(assume={"pipeline.py"}, edited={"gen_dft.py", "gen_d0.py", "finetune.py"})
     _real_snapshot(E)
     E.run()
     S = E.state()
@@ -523,58 +531,90 @@ def s7_code_appears():
 
 @scenario
 def s8_spec_stop_recommended():
-    """D0: plan_d0 (auto) -> g0_d0 -> recommended refit plan_d0 --n-g2 <n_g2_rule> -> D0 runs; and the over-budget
-    exit 3 of g0_d0 -> decision rule -> HALT -> RESOLVE param G-D0f.n_g2=30 -> continue."""
-    def est(total, n, stop):
-        return dict(plan_fingerprint="fp1", predicted_core_h=dict(total=total, d1_total=2969.0,
-                                                                  by_group=dict(D0G1=900.0, D0G3=300.0, D0G2=total - 4169.0)),
-                    n_g2_rule=n, stop=stop, suggested_tasks=dict(D0G1=2, D0G3=1, D0G2=1))
+    """D0 (user decisions D0-n3 / D0-plus / D0-gauss, cap gen_dft.BUDGET_CORE_H = 8,000): plan_d0 (auto) -> g0_d0 ->
+    the budget check of the user's selection (its 5,000-era stop flag ignored) -> gen_d0.py plan_d0 --n-near 2 --n-g2
+    200 --n-holdout 100 -> D0 runs; over the cap -> HALT -> RESOLVE param G-D0f.n_g2=30 -> continue."""
+    def est(total, n, stop, d1=2969.0, fp="fp1"):
+        return dict(plan_fingerprint=dict(id=fp, n_near=1), predicted_core_h=dict(
+                    total=total, d1_total=d1, budget=5000.0,
+                    by_group=dict(D0G1=900.0, D0G3=300.0, D0G2=max(0.0, total - d1 - 1200.0))),
+                    n_g2_rule=n, stop=stop, suggested_tasks=dict(D0G1=2, D0G3=1, D0G2=0))
     E = Env("s8_g0d0")
     E.preset(done=["lists", "G-D1"])
     E.run()
     c = E.calls("gen_dft.py plan_d0")
     check(len(c) == 1 and "--n-g2" not in c[0], f"plan_d0 (auto) first ({c})")
     E.finish(E.job_of("G-D0p", "plan_d0"))
-    E.wj("G_plan_d0.json", dict(fingerprint="fp1", limit=None, budget=dict(n_g2_selected=200, n_g2_source="d1_g0_fit")))
+    E.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), limit=None,
+                                budget=dict(n_g2_selected=0, d0_g1_g3=2185.6, basis=dict(d1_total=3411.3),
+                                            rule=dict(g2_core_h_per_rxn=dict(mean=5.9)))))
     E.run()
     check(E.stage("G-D0p")["status"] == "done" and len(E.calls("gen_dft.py g0_d0")) == 1, "plan done -> g0_d0 submitted")
-    E.finish(E.job_of("G-D0e", "g0_d0"))
-    E.wj("G0_estimate_d0.json", est(4400.0, 120, False))
+    E.wj("G0_estimate_d0.json", est(5071.0, 0, True, d1=3416.0))      # the real 1061949 numbers: stop vs 5,000
+    E.finish(E.job_of("G-D0e", "g0_d0"), "FAILED", 3)
     E.run()
     S = E.state()
-    check(S["stages"]["G-D0e"]["status"] == "done" and S["stages"]["G-D0f"]["params"].get("n_g2") == 120,
-          "estimate within 5,000 -> recommended refit n_g2 = n_g2_rule")
-    check("n_g2_rule 120" in E.dec() and "추천안" in E.dec(), "recommended option recorded in DECISIONS")
-    c = E.calls("gen_dft.py plan_d0")
-    check(len(c) == 2 and c[1].endswith("--n-g2 120"), f"plan_d0 --n-g2 120 submitted in the same pass ({c[-1:]})")
+    p = S["stages"]["G-D0f"]["params"]
+    check(S["stages"]["G-D0e"]["status"] == "done" and p.get("n_g2") == 200 and p.get("n_holdout") == 100,
+          f"exit 3 against the old 5,000 cap; under 8,000 with 200 D0G2 + G-4 reserve -> user selection ({p})")
+    nums = (S["stages"]["G-D0e"].get("decision") or {}).get("numbers") or {}
+    check(abs(nums.get("total", 0) - (3411.3 + 2185.6 + 200 * 5.9 + 150)) < 0.2 and nums.get("budget") == 8000.0,
+          f"budget basis: plan d1 basis + plan D0 G1/G3 + 200 x 5.9 + 150 vs 8,000 ({nums.get('total')})")
+    check("D0-plus" in E.dec() and "--n-holdout 100" in E.dec(), "the decision line names the user decisions")
+    c = E.calls("gen_d0.py plan_d0")
+    check(len(c) == 1 and c[0].endswith("--n-near 2 --n-g2 200 --n-holdout 100"),
+          f"gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100 in the same pass ({c[-1:]})")
     E.finish(E.job_of("G-D0f", "plan_d0"))
-    E.wj("G_plan_d0.json", dict(fingerprint="fp1", budget=dict(n_g2_selected=120, n_g2_source="explicit:120")))
+    E.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), n_g2=200, n_holdout=99,
+                                budget=dict(n_g2_selected=200, d0_g1_g3=2185.6, rule=dict(g2_core_h_per_rxn=dict(mean=5.9)))))
     E.run()
-    c1, c2 = E.calls("run D0G1"), E.calls("run_g2 @I 1 --d0")
+    check(E.stage("G-D0f")["status"] != "done" and len(E.calls("gen_d0.py plan_d0")) == 2,
+          "a plan with 99 holdout reactions is not the requested one -> plan_d0 again")
+    E.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), n_g2=200, n_holdout=100,
+                                budget=dict(n_g2_selected=200, d0_g1_g3=2185.6, rule=dict(g2_core_h_per_rxn=dict(mean=5.9)))))
+    E.finish(E.job_of("G-D0f", "plan_d0"))
+    E.run()
+    c1, c2 = E.calls("run D0G1"), E.calls("run_g2 @I 2 --d0")
     check(E.stage("G-D0f")["status"] == "done" and len(c1) == 1 and "--array=0,1" in c1[0] and "-p cpu2" in c1[0],
           f"D0G1 array of suggested_tasks = 2 on cpu2 ({c1})")
-    check(len(c2) == 1 and "MLTENV=d1" in c2[0], f"D0 G-2 path in the d1 env ({c2})")
+    check(len(c2) == 1 and "MLTENV=d1" in c2[0] and "--array=0,1" in c2[0],
+          f"D0G2 (the 200 training units) in the d1 env, 2 tasks ({c2 or E.calls('run_g2')})")
     check(len(E.calls("run D0G3")) == 1 and not E.calls("collect --d0"), "D0G3 queued; collect waits for running runs")
     E2 = Env("s8b_g0d0_halt")
     E2.preset(done=["lists", "G-D1"])
     E2.run()
     E2.finish(E2.job_of("G-D0p", "plan_d0"))
-    E2.wj("G_plan_d0.json", dict(fingerprint="fp1", budget=dict(n_g2_selected=200, n_g2_source="d1_g0_fit")))
+    E2.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), budget=dict(n_g2_selected=0, d0_g1_g3=2185.6,
+                                                                         rule=dict(g2_core_h_per_rxn=dict(mean=5.9)))))
     E2.run()
-    E2.wj("G0_estimate_d0.json", est(5600.0, 0, True))
+    E2.wj("G0_estimate_d0.json", est(9000.0, 0, True, d1=5600.0))
     E2.finish(E2.job_of("G-D0e", "g0_d0"), "FAILED", 3)
     E2.run()
     S = E2.state()
     check(S["stages"]["G-D0e"]["status"] == "halted" and (E2.res / "STOP_G-D0e.md").is_file(),
-          "g0_d0 exit 3 -> its estimate read by the decision rule -> over budget with the rule -> HALT")
+          "5,600 + 2,186 + 1,180 + 150 > 8,000 -> HALT")
     check(S["stages"]["G-D0f"]["status"] == "blocked" and len(E2.calls("plan_d0")) == 1, "refit / D0 runs not started")
     txt = (E2.res / "STOP_G-D0e.md").read_text()
     (E2.res / "STOP_G-D0e.md").write_text("RESOLVE: param G-D0f.n_g2=30\n" + txt)
     E2.run()
     S = E2.state()
     c = E2.calls("plan_d0")
-    check(S["stages"]["G-D0e"]["status"] == "done" and len(c) == 2 and c[-1].endswith("--n-g2 30"),
+    check(S["stages"]["G-D0e"]["status"] == "done" and len(c) == 2 and c[-1].endswith("--n-g2 30 --n-holdout 100"),
           f"RESOLVE param G-D0f.n_g2=30: G-D0e passed, plan_d0 --n-g2 30 submitted ({c[-1:]})")
+    E3 = Env("s8c_retry_real_stop")              # the real state: G-D0e halted on 1061949 (5,000 era), lead RESOLVE retry
+    E3.preset(done=["lists", "G-D1", "G-D0p"])
+    E3.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), budget=dict(n_g2_selected=0, d0_g1_g3=2185.6,
+                                                                         rule=dict(g2_core_h_per_rxn=dict(mean=5.9)))))
+    E3.wj("G0_estimate_d0.json", est(5071.0, 0, True, d1=3416.0))
+    S = E3.state()
+    S["stages"]["G-D0e"] = dict(PL.new_stage_state(), status="halted", halt_kind="decision", why="g0: exit 3")
+    S["halted"] = ["G-D0e"]
+    E3.wj(E3.res / "PIPELINE_STATE.json", S)
+    (E3.res / "STOP_G-D0e.md").write_text("RESOLVE: retry\n# STOP: G-D0e\n")
+    E3.run()
+    check(E3.stage("G-D0e")["status"] == "done" and not E3.calls("g0_d0") and len(E3.calls("gen_d0.py plan_d0")) == 1,
+          "RESOLVE retry: estimate fingerprint = plan fingerprint without n_near -> decided again, no g0_d0 rerun, "
+          "plan_d0 --n-g2 200 --n-holdout 100 submitted")
 
 
 @scenario
@@ -769,7 +809,8 @@ def s12_contract_units():
                 if d not in {x.key for x in us}:
                     bad.append(f"{S.name}/{u.key}: dep {d} not a unit")
     check(not bad, f"all registry units well formed ({bad[:5]})")
-    check(len(PL.registry()) == 40, f"registry has every spec stage + A4-App / H-App / C2-K ({len(PL.registry())})")
+    check(len(PL.registry()) == 42, f"registry has every spec stage + A4-App / H-App / C2-K / N-scan / D0-eval "
+                                    f"({len(PL.registry())})")
 
 
 @scenario
@@ -1327,15 +1368,372 @@ def p9_geom_partial():
 
 @scenario
 def p11_g4_budget():
-    """[h] G-4: the plan's predicted cost is checked before any G-4 DFT run."""
+    """[h] G-4: the plan's predicted cost is checked before any G-4 DFT run, against gen_dft.BUDGET_CORE_H."""
     E = Env("p11_g4")
     E.preset(done=ALL[:ALL.index("G4")], params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0"))
-    E.wj("G_report.json", dict(complete=True, core_h_measured=dict(total=2900.0)))
-    E.wj("G_report_d0.json", dict(complete=True, core_h_measured=dict(total=1900.0)))
-    E.wj("G4_plan.json", dict(complete=True, predicted_core_h=300.0, est={}))
+    E.wj("G_report.json", dict(complete=True, core_h_measured=dict(total=3300.0)))
+    E.wj("G_report_d0.json", dict(complete=True, core_h_measured=dict(total=3300.0)))
+    E.wj("G4_plan.json", dict(complete=True, predicted_core_h=dict(total=300.0), est={}))
     E.run()
-    check(E.stage("G4")["status"] == "halted" and not E.calls("run G4") and not E.calls("g4_opt"),
-          "measured 4,800 + predicted 300 > 5,000 -> HALT before g4_opt / run G4")
+    check(E.stage("G4")["status"] != "halted" and len(E.calls("g4_al.py g4_opt")) == 1,
+          f"measured 6,600 + 300 <= 8,000 (the user's cap, not 5,000) -> g4_al.py g4_opt submitted "
+          f"({E.stage('G4')['why'][:100]})")
+    E2 = Env("p11b_g4_over")
+    E2.preset(done=ALL[:ALL.index("G4")], params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0"))
+    E2.wj("G_report.json", dict(complete=True, core_h_measured=dict(total=5900.0)))
+    E2.wj("G_report_d0.json", dict(complete=True, core_h_measured=dict(total=1900.0)))
+    E2.wj("G4_plan.json", dict(complete=True, predicted_core_h=dict(total=300.0), est={}))
+    E2.run()
+    check(E2.stage("G4")["status"] == "halted" and not E2.calls("run G4") and not E2.calls("g4_opt"),
+          "measured 7,800 + predicted 300 > 8,000 -> HALT before g4_opt / run G4")
+    (E2.code / "gen_dft.py").write_text((E2.code / "gen_dft.py").read_text() + "BUDGET_CORE_H = 9000.0\n")
+    check(PL.g_budget(PL.Pass(E2.ctx(), dry=True)) == 9000.0, "the cap is read from gen_dft.py (BUDGET_CORE_H line)")
+
+
+@scenario
+def n1_a_progress():
+    """[A_G4X 3] A-3 / A-4 progress counts the folders mlts_autode writes ($MLT/a3/<arm>/ade/jobs; with A'' as engine
+    also $MLT/ade_pre/jobs), so exit-2 rounds that publish folders never trip the no-progress HALT; GPU job 16 cores."""
+    E = Env("n1_aprog")
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = PL.new_state()
+    for a, n in (("A", 3), ("Ap", 2), ("App", 1)):
+        for i in range(n):
+            (E.mlt / "a3" / a / "ade" / "jobs" / f"T{i:05d}").mkdir(parents=True, exist_ok=True)
+    check(PL.prog_a3(P) == 6, f"A-3 progress = folders of the three arms ({PL.prog_a3(P)})")
+    (E.mlt / "ade_pre" / "jobs" / "T00001").mkdir(parents=True)
+    (E.mlt / "ade" / "jobs" / "T00002").mkdir(parents=True)
+    P.state["params"]["engine"] = "A"
+    a = PL.prog_a4(P)
+    P.state["params"]["engine"] = "App"
+    b = PL.prog_a4(P)
+    check(a == 1 and b == 2, f"A-4 progress: ade/jobs, + ade_pre/jobs when the engine is A'' ({a}, {b})")
+    E2 = Env("n1b_a3_rounds")
+    E2.preset(done=ALL[:ALL.index("A3")], params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0"))
+    E2.lists(4)
+    E2.run()
+    c = E2.calls("mlts_autode.py run a3")
+    check(len(c) == 1 and "--cpus-per-task=16" in c[0] and "--mem=64G" in c[0] and "--gres=gpu:1" in c[0],
+          f"A-3 GPU job: 16 cores / 64 GB (6 workers x 2 cores + server) ({c[0][:160] if c else c})")
+    for r in range(3):
+        for k in ("A[0]", "A[1]"):
+            (E2.mlt / "a3" / "A" / "ade" / "jobs" / f"T{r}{k[2]}").mkdir(parents=True, exist_ok=True)
+            E2.finish(E2.job_of("A3", k), "FAILED", 2)
+        E2.run()
+    check(E2.stage("A3")["status"] != "halted" and len(E2.calls("mlts_autode.py run a3")) == 4,
+          f"3 exit-2 rounds with new A-2 folders -> resubmitted, no HALT ({E2.stage('A3')['status']})")
+
+
+@scenario
+def n2_prereg_commit():
+    """[CRK 5] R: done only when PREREG_V2.md AND prereg_v2.json are committed, unchanged and json md_sha256 =
+    sha256(md); the launcher's commit carries both files; K then starts."""
+    import hashlib
+    E = Env("n2_prereg")
+    E.preset(done=ALL[:ALL.index("R")])
+    names = [p.name for p in E.code.iterdir()] + ["PIPELINE_STATE.json", "PIPELINE_LOG.md", "DECISIONS.md"]
+    E.git = PL.FakeGit(tracked=names)
+    E.run()
+    check(len(E.calls("prereg_v2.py write")) == 1, "prereg_v2.py write submitted")
+    md = "# PREREG\n"
+    (E.res / "PREREG_V2.md").write_text(md)
+    E.wj("prereg_v2.json", dict(md_sha256="0" * 64, criteria=dict(refs=dict(primary="min"))))
+    E.finish(E.job_of("R", "write"))
+    E.run()
+    check(E.stage("R")["status"] != "done", "md_sha256 mismatch -> R never done")
+    E.wj("prereg_v2.json", dict(md_sha256=hashlib.sha256(md.encode()).hexdigest(), criteria=dict(refs=dict(primary="min"))))
+    E.run()
+    paths = [p for cm in E.git.commits for p in cm["paths"]]
+    check(any(p.endswith("PREREG_V2.md") for p in paths) and any(p.endswith("prereg_v2.json") for p in paths),
+          "commit gate: PREREG_V2.md and prereg_v2.json committed together")
+    E.run()
+    check(E.stage("R")["status"] == "done" and E.calls("train_k.py c1pred atoms --refs min")
+          and E.calls("train_k.py plan"), f"R done after the commit -> K-C1 / K-C2C3 start ({E.stage('R')['why']})")
+
+
+@scenario
+def n3_kc1_cagg():
+    """[CRK 4 / CR registry] K-C1 = train_k c1pred for the registered refs (-> C1_report) and the other mode
+    (C1_own_report), done only when both reports carry their refs; C-agg: a failed C-1..C-6 = HALT, C-7 alone not."""
+    E = Env("n3_kc1")
+    E.preset(done=ALL[:ALL.index("K-C1")])
+    (E.res / "PREREG_V2.md").write_text("# PREREG\n")
+    E.wj("prereg_v2.json", dict(criteria=dict(refs=dict(primary="min"))), mtime=E.clock() - 10)
+    E.run()
+    a = E.calls("train_k.py c1pred atoms --refs min")
+    check(len(a) == 1 and "--gres=gpu:1" in a[0] and len(E.calls("train_k.py c1pred xgb --refs own")) == 1,
+          "K-C1: c1pred atoms (GPU) / xgb for the registered min and the descriptive own")
+    for k in ("atoms", "xgb", "atoms_own", "xgb_own"):
+        E.finish(E.job_of("K-C1", k))
+    E.run()
+    check(len(E.calls("train_k.py c1pred collect --refs min")) == 1, "collect after atoms + xgb")
+    E.wj("C1_report.json", dict(refs="own"))
+    E.wj("C1_own_report.json", dict(refs="own"))
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    check(not PL.done_kc1(P), "C1_report.json on refs own while min is registered -> not done")
+    E.wj("C1_report.json", dict(refs="min"))
+    for k in ("collect", "collect_own"):
+        E.finish(E.job_of("K-C1", k))
+    E.run()
+    check(E.stage("K-C1")["status"] == "done", f"both reports with their refs -> K-C1 done ({E.stage('K-C1')['why']})")
+    for name, secs, rc, halt in (("n3b_cagg_fail", dict(C3=False), 3, True), ("n3c_cagg_c7", dict(C7=False), 0, False)):
+        E2 = Env(name)
+        E2.preset(done=ALL[:ALL.index("C-agg")])
+        E2.run()
+        J = dict(complete=True, **{k: {"pass": secs.get(k, True), "ready": True}
+                                   for k in ("C1", "C2", "C3", "C4", "C5", "C6", "C7")})
+        J["stop"] = "Phase C check failed: ['C3']" if halt else None
+        E2.wj("C_tests.json", J)
+        E2.finish(E2.job_of("C-agg", "all"), "FAILED" if rc else "COMPLETED", rc)
+        E2.run()
+        st = E2.stage("C-agg")["status"]
+        check((st == "halted") == halt and (st == "done") == (not halt),
+              f"{name}: {'C-3 failed -> HALT' if halt else 'only C-7 false (report only) -> done'} ({st})")
+
+
+@scenario
+def n4_a2_smoke():
+    """A2-smoke: not done while A2_smoke.json is incomplete (resubmitted); exit 3 with a complete report (C-3 wording
+    failed) -> the decision rule -> HALT."""
+    E = Env("n4_smoke")
+    E.preset(done=ALL[:ALL.index("A2-smoke")])
+    E.run()
+    check(len(E.calls("mlts_autode.py smoke --model FT_0_al")) == 1, "smoke submitted")
+    E.wj("A2_smoke.json", {"pass": False, "complete": False})
+    E.finish(E.job_of("A2-smoke", "smoke"), "FAILED", 2)
+    E.run()
+    check(E.stage("A2-smoke")["status"] != "halted" and len(E.calls("mlts_autode.py smoke")) == 2,
+          "incomplete smoke (exit 2) -> resubmitted, no HALT")
+    E.wj("A2_smoke.json", {"pass": False, "complete": True, "inp_checks": {"n_bad": 3}})
+    E.finish(E.job_of("A2-smoke", "smoke"), "FAILED", 3)
+    E.run()
+    check(E.stage("A2-smoke")["status"] == "halted" and "A-2 smoke" in (E.res / "STOP_A2-smoke.md").read_text(),
+          "complete smoke with failed C-3 wording -> decision HALT")
+
+
+@scenario
+def n5_gd1_user_stop():
+    """[state b, decision Nurion] the user cancelled D1 G-2 (1061710) at 317 / 400: the cancelled G2 units + the collect
+    exit 2 -> G-D1 done with a decision line, no STOP_G-D1.md, G-2 never resubmitted; a G-2 short of 317 (not the
+    user's stop) still stops and asks."""
+    for name, n_units, done in (("n5_gd1_stop", 317, True), ("n5b_gd1_short", 200, False)):
+        E = Env(name)
+        for l in REAL_SQ:
+            if "|g_" in l:
+                E.sl.add_line(l)
+        E.run()
+        E.clock.adv(3600)
+        for j in ("1061708", "1061709", "1061779"):
+            E.finish(j)
+        E.finish("1061710", "CANCELLED")
+        E.finish("1061711", "FAILED", 2)
+        E.wj("G_report.json", dict(complete=False, stop_file=None, core_h_measured=dict(total=3292.4),
+                                   groups=dict(G1=dict(n_missing=0, n_planned=27798), G3=dict(n_missing=0, n_planned=21424),
+                                               G2=dict(n_missing=400 - n_units, n_planned=400, n_units=n_units))))
+        E.run()
+        g = E.stage("G-D1")
+        if done:
+            check(g["status"] == "done" and not (E.res / "STOP_G-D1.md").exists(),
+                  f"{name}: G1 / G3 complete + G-2 stopped by the user at 317 / 400 -> done ({g['status']}: {g['why']})")
+            check("Nurion" in E.dec() and "317/400" in E.dec(), f"{name}: the user truncation recorded in DECISIONS")
+            check(E.git.commits and any(p.endswith("G_report.json") for p in E.git.commits[-1]["paths"]),
+                  f"{name}: G_report.json committed with the stage")
+        else:
+            check(g["status"] == "cancelled" and (E.res / "STOP_G-D1.md").is_file(),
+                  f"{name}: G-2 at {n_units} < 317 -> the lead-cancel STOP, not done ({g['status']})")
+        check(not E.calls("run_g2") and not E.calls("gen_dft.py run G"), f"{name}: G-2 (and nothing else) resubmitted")
+
+
+@scenario
+def n6_d0_manual_adopt():
+    """[state a] the lead's D0 jobs are adopted, not resubmitted: d0p_plan by G-D0f; g_run_d0g1 0-1 / g_run_d0g3 0 /
+    g_run_d0g2 0-2 / g_collect_d0 unit by unit; the rev / shuf helpers block G-D0 submissions while live; D0G2 keeps the
+    manual 3-task slicing (@I 3) on a retry; G_report_d0 complete -> done."""
+    E = Env("n6_d0adopt")
+    E.preset(done=["lists", "G-D1", "G-D0p", "G-D0e", "Z-run", "Z-speed", "Z-rep", "N-scan"])
+    S = E.state()
+    S["stages"]["G-D0f"] = dict(PL.new_stage_state(), params=dict(n_g2=200, n_holdout=100))
+    E.wj(E.res / "PIPELINE_STATE.json", S)
+    E.wj("G0_estimate_d0.json", dict(plan_fingerprint=dict(id="fp1"), predicted_core_h=dict(total=5071.0, d1_total=3416.0),
+                                     n_g2_rule=0, stop=True, suggested_tasks=dict(D0G1=2, D0G3=1, D0G2=0)))
+    E.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), budget=dict(n_g2_selected=0, d0_g1_g3=2185.6)))
+    E.sl.add("1062233", "d0p_plan", "PENDING", cpus=16, reason="Priority")
+    for jid, nm, stt in (("1062165_0", "g_run_d0g1", "RUNNING"), ("1062165_1", "g_run_d0g1", "RUNNING"),
+                         ("1062166_0", "g_run_d0g3", "RUNNING"), ("1062198", "g_run_d0g1rev", "RUNNING"),
+                         ("1062205", "g_run_d0g1shuf1", "RUNNING"), ("1062234_0", "g_run_d0g2", "PENDING"),
+                         ("1062234_1", "g_run_d0g2", "PENDING"), ("1062234_2", "g_run_d0g2", "PENDING")):
+        E.sl.add(jid, nm, stt, cpus=64, reason="None" if stt == "RUNNING" else "Priority")
+    E.sl.add("1062235", "g_collect_d0", "PENDING", cpus=4, reason="Dependency")
+    E.run()
+    check(E.job_of("G-D0f", "plan_d0") == "1062233" and not E.calls("plan_d0"),
+          f"d0p_plan adopted by G-D0f, no second plan_d0 ({E.stage('G-D0f').get('why')})")
+    keys = ("D0G1[0]", "D0G1[1]", "D0G3[0]", "D0G2[0]", "D0G2[1]", "D0G2[2]", "collect")
+    check(all(E.job_of("G-D0", k) for k in keys), f"G-D0 units adopted ({[k for k in keys if not E.job_of('G-D0', k)]})")
+    E.finish("1062233")
+    E.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), budget=dict(
+        n_g2_selected=200, n_holdout=100, d0_g1_g3=2185.6, cap_check=dict(total=7020.0, n_train=200, d1_total=3448.0,
+                                                                         d0_g1_g3=2194.0, d0g2_train_pred=1224.0,
+                                                                         d0g2_measured_on_disk=0.0, g4_reserve=150.0))))
+    E.run()
+    st = E.stage("G-D0")
+    nn = (st.get("params") or {}).get("n") or {}
+    check(E.stage("G-D0f")["status"] == "done" and not E.calls("gen_d"), f"plan written -> G-D0f done, nothing "
+                                                                         f"submitted ({E.calls('gen_d')[:2]})")
+    check(nn.get("D0G2@0") == 3 and nn.get("D0G1@0") == 2 and nn.get("D0G3@0") == 1,
+          f"task counts = the adopted arrays (D0G1 2, D0G3 1, D0G2 3) ({nn})")
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    nums, tot = PL.d0_cost_basis(P)
+    check("cap_check" in nums["source"] and abs(tot - (3448.0 + 2194.0 + 1224.0 + 150.0)) < 1e-6,
+          f"the D0-plus plan's own cap check is the budget basis ({nums['source']}: {tot})")
+    check("foreign" in st.get("why", ""), f"rev / shuf helpers recognised: G-D0 submits nothing while they run ({st['why']})")
+    for j in ("1062198", "1062205", "1062165", "1062166", "1062234_0", "1062234_2"):
+        E.finish(j)
+    E.finish("1062234_1", "FAILED", 1)
+    E.run()
+    c = E.calls("run_g2")
+    check(len(c) == 1 and "run_g2 @I 3 --d0" in c[0] and "--array=1" in c[0] and "MLTENV=d1" in c[0],
+          f"D0G2[1] infra retry keeps the manual @I 3 slicing ({c})")
+    E.finish(E.job_of("G-D0", "D0G2[1]"))
+    E.finish("1062235")
+    E.wj("G_report_d0.json", dict(complete=True, stop_file=None, core_h_measured=dict(total=3500.0)))
+    E.run()
+    check(E.stage("G-D0")["status"] == "done" and len(E.calls("run D0G")) == 0,
+          f"G_report_d0 complete -> G-D0 done, no D0G1 / D0G3 resubmission ({E.stage('G-D0')['status']})")
+
+
+def _nur_env(name):
+    E = Env(name)
+    up = E.d / "nur"
+    mani = up / "D1_build" / "nurion"
+    (mani / "index").mkdir(parents=True)
+    stems = ["d1_20261006_g00_001", "d1_20261010_g01_002", "d1_20261010_g01_003"]
+    for s in stems:
+        (mani / f"{s}.manifest.tsv").write_text("job\n")
+    (mani / "d1_extra_02_jobs_unfinished.sha256").write_text("ab  d1_extra_02_jobs_unfinished.tar.gz\n")
+    (mani / "d1_extra_01_code_logs.sha256").write_text("ab  d1_extra_01_code_logs.tar.gz\n")    # no job tree: ignored
+    (mani / "index" / "bundles.tsv").write_text("bundle\tn_rows\tbytes\n" + "".join(f"{s}\t1\t10\n" for s in stems))
+    old = E.clock() - 3600
+    for s, size in ((stems[0], 10), (stems[1], 4)):                     # g01_002: still uploading (size)
+        p = up / f"{s}.tar"
+        p.write_bytes(b"x" * size)
+        os.utime(p, (old, old))
+    (up / "d1_extra_01_code_logs.tar.gz").write_bytes(b"x")
+    os.utime(up / "d1_extra_01_code_logs.tar.gz", (old, old))
+    E.preset(done=["lists", "G-D1", "G-D0p", "G-D0e", "G-D0f", "G-D0", "Z-run", "Z-speed", "Z-rep"],
+             params=dict(pilots=["MACE-OMOL-0"]))
+    return E, up, stems
+
+
+@scenario
+def n7_nscan():
+    """[state c, decision N-gate] N-scan: a unit per uploaded, unscanned tar (scan ::: verify, cpu1/cpu2 8c 24G; the
+    user deletes copies by hand), none for a tar still uploading / not uploaded / outside the job-tree bundles / already
+    scanned; a manual nur_<tar> job adopted; collect after the scans; re-arms until N_report complete; FT-dp waits for
+    N_report complete or '- **N partial ok'."""
+    E, up, stems = _nur_env("n7_nscan")
+    E.run()
+    c = E.calls("inv_nurion.py scan")
+    check(len(c) == 1 and f"inv_nurion.py scan {stems[0]} --workers 8 ::: inv_nurion.py verify {stems[0]}" in c[0]
+          and "-p cpu1,cpu2" in c[0] and "--cpus-per-task=8" in c[0] and "--mem=24G" in c[0] and "MLTENV=reactot" in c[0]
+          and "release" not in c[0], f"one scan ::: verify for the uploaded tar only ({c})")
+    ft = E.stage("FT-dp")
+    check(ft["status"] == "blocked" and "N partial ok" in ft["why"] and not E.calls("finetune.py data"),
+          f"FT-dp waits for the Nurion data ({ft['status']}: {ft['why'][:120]})")
+    p3 = up / f"{stems[2]}.tar"                                         # uploaded + scanned by hand (inv_nurion pending)
+    p3.write_bytes(b"x" * 10)
+    os.utime(p3, (E.clock() - 3600, E.clock() - 3600))
+    E.sl.add("3100001", "nur_g01_003", "RUNNING", cpus=8, comment=f"mltp:nur:{stems[2]}:manual")
+    out = E.mlt / "dft" / "nurion"
+    (out / stems[0]).mkdir(parents=True)
+    (out / stems[0] / ".done").write_text("{}")                         # scanned; the copy stays until the user deletes it
+    E.finish(E.job_of("N-scan", "scan/g00_001"))
+    E.run()
+    check(E.job_of("N-scan", "scan/g01_003") == "3100001" and len(E.calls("inv_nurion.py scan")) == 1,
+          f"manual nur_g01_003 adopted as scan/g01_003, not resubmitted ({E.calls('inv_nurion.py scan')[1:]})")
+    col = E.calls("inv_nurion.py collect")
+    check(len(col) == 1 and "--dependency=afterany:3100001" in col[0], f"collect queued after the running scan ({col})")
+    (out / stems[2]).mkdir(parents=True)
+    (out / stems[2] / ".done").write_text("{}")
+    p3.unlink()
+    E.finish("3100001")
+    E.finish(E.job_of("N-scan", "collect@2"))
+    E.wj("N_report.json", dict(complete=False, complete_all=False, tars_processed=2))
+    E.run()
+    st = E.stage("N-scan")
+    check(st["status"] == "idle" and E.stage("FT-dp")["status"] == "blocked" and len(E.calls("inv_nurion.py scan")) == 1,
+          f"uploaded tars processed (g00_001 copy not deleted yet: no rescan), more expected -> N-scan re-armed "
+          f"(idle), FT-dp still waits ({st['status']})")
+    (E.res / "DECISIONS.md").write_text(E.dec() + "- **N partial ok (11-05 09:00)**: FT starts with the tars so far.\n")
+    E.run()
+    check(len(E.calls("finetune.py data FTpilot_MACE-OMOL-0_0")) == 1,
+          f"the lead's 'N partial ok' line -> FT-dp submitted ({E.stage('FT-dp')['why'][:120]})")
+    E2, up2, stems2 = _nur_env("n7b_nscan_final")
+    for s in stems2:
+        (E2.mlt / "dft" / "nurion" / s).mkdir(parents=True)
+        (E2.mlt / "dft" / "nurion" / s / ".done").write_text("{}")
+    for p in up2.glob("d1_2026*.tar"):
+        p.unlink()
+    E2.wj("N_report.json", dict(complete=True, complete_all=False, tars_processed=3))
+    E2.run()
+    check(E2.stage("N-scan")["status"] == "done" and len(E2.calls("finetune.py data")) == 1,
+          f"every result tar processed (complete; the extras optional) -> N-scan done, FT-dp starts "
+          f"({E2.stage('N-scan')['status']})")
+
+
+@scenario
+def n9_nscan_halt_d0f_retry():
+    """N-scan HALT is local (a scan / verify exit 3 stops N-scan and FT data, not the other stages); the adopted
+    d0p_plan ending exit 2 is resubmitted by G-D0f with exactly --n-near 2 --n-g2 200 --n-holdout 100."""
+    E, up, stems = _nur_env("n9_nscan_halt")
+    E.run()
+    E.finish(E.job_of("N-scan", "scan/g00_001"), "FAILED", 3)
+    E.run()
+    st = E.stage("N-scan")
+    check(st["status"] == "halted" and (E.res / "STOP_N-scan.md").is_file(), f"scan exit 3 -> N-scan HALT ({st['status']})")
+    S = E.state()
+    S["stages"]["lists"]["status"] = ""                                 # a stage not started yet during the HALT
+    E.wj(E.res / "PIPELINE_STATE.json", S)
+    E.run()
+    check(len(E.calls("pipeline.py lists")) == 1 and E.stage("FT-dp")["status"] == "blocked",
+          f"local HALT: lists still submitted, FT-dp still waits for the Nurion data ({E.calls('pipeline.py lists')[:1]})")
+    E2 = Env("n9b_d0f_retry")
+    E2.preset(done=["lists", "G-D1", "G-D0p", "G-D0e", "Z-run", "Z-speed", "Z-rep", "N-scan"])
+    S = E2.state()
+    S["stages"]["G-D0f"] = dict(PL.new_stage_state(), params=dict(n_g2=200, n_holdout=100))
+    E2.wj(E2.res / "PIPELINE_STATE.json", S)
+    E2.wj("G_plan_d0.json", dict(fingerprint=dict(id="fp1"), budget=dict(n_g2_selected=0)))
+    E2.sl.add("1062233", "d0p_plan", "RUNNING", cpus=16)
+    E2.run()
+    E2.finish("1062233", "FAILED", 2)
+    E2.run()
+    c = E2.calls("gen_d0.py plan_d0")
+    check(len(c) == 1 and c[0].endswith("gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100"),
+          f"adopted d0p_plan exit 2 -> resubmitted with the user's options ({c})")
+
+
+@scenario
+def n8_d0eval():
+    """[state e] D0-eval (D0-plus / D0-gauss, report only): after FT-fin, ts_geom d0_eval run @I 3 (GPU) -> d0_eval
+    report; done on a complete D0_eval_report.json; S waits for it."""
+    E = Env("n8_d0eval")
+    E.preset(done=[n for n in ALL if n not in ("D0-eval", "S")])
+    E.run()
+    c = E.calls("ts_geom.py d0_eval run")
+    check(len(c) == 1 and "--array=0,1,2" in c[0] and "d0_eval run @I 3" in c[0] and "--gres=gpu:1" in c[0]
+          and "MLTENV=mlts" in c[0], f"d0_eval run array of 3 on a GPU ({c})")
+    check(not E.calls("summary_v2.py"), "S waits for D0-eval")
+    for i in range(3):
+        E.finish(E.job_of("D0-eval", f"run[{i}]"))
+    E.run()
+    r = E.calls("ts_geom.py d0_eval report")
+    check(len(r) == 1 and "MLTENV=mlts" in r[0], f"d0_eval report after the runs ({r})")
+    E.wj("D0_eval_report.json", dict(complete=True, n_units=100))
+    E.finish(E.job_of("D0-eval", "report"))
+    E.run()
+    check(E.stage("D0-eval")["status"] == "done" and len(E.calls("summary_v2.py write")) == 1,
+          f"D0-eval done -> S starts ({E.stage('D0-eval')['status']})")
 
 
 @scenario

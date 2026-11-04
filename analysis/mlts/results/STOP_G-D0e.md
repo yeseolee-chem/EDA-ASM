@@ -1,3 +1,7 @@
+RESOLVE: retry
+<!-- Integrate step 11-04 22:xx: the cap was raised by user decision (5,000 -> 5,500 D0-n3 -> 8,000 D0-plus,
+gen_dft.BUDGET_CORE_H). 1061949 judged its estimate against 5,000. On retry G0_estimate_d0.json (same plan fingerprint
+without n_near) marks G-D0e done without a new job and decide_gd0e re-judges it against 8,000 (no g0_d0 rerun). -->
 # STOP: G-D0e (2026-11-04T20:34:40, pipeline.py)
 
 - **조건 / condition**: g0: job 1061949 exit 3 (STOP) — log /gpfs/tmp_cpu2/yeseo1ee/mlts/logs/mltp_G-D0e_*1061949*
