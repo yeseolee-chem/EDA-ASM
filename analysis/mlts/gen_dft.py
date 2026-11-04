@@ -155,7 +155,8 @@ IMAG_CAND_CM = 300.0              # fallback candidates for the reaction mode
 HESS_TOL_A = 1e-4                 # .hess $atoms vs the structure (after removing a common shift)
 N_G2 = 400
 G0_N_RAND, G0_N_LABEL, G0_N_G2 = 50, 10, 2
-BUDGET_CORE_H = 5000.0            # spec 0-5: G total; above = STOP
+BUDGET_CORE_H = 5500.0            # spec 0-5: G total 5,000 core-h; above = STOP. Raised to 5,500 by the user's D0 decision
+                                  # (2026-11-04 'D0도 반응당 3구조': D1 ~3,280 + D0 G1/G3 ~1,960 + G-4 ~100; DECISIONS 'D0-n3')
 PARITY_EXPECT = 5e-4              # Eh/bohr, max |gradient| at the label TS (stationary at this level)
 PARITY_STOP = 1e-3                # median above this = level mismatch (added guard)
 G2_NPROCS = 8                     # g3l / Part B %pal (opt.PARTB_NPROCS, checked)
