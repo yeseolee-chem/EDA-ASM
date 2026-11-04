@@ -79,3 +79,15 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
 - **질문 답 기록**: D1 경로(G-2)를 다시 계산하는 이유 = D1 라벨 최적화의 단계별 출력은 Nurion tar와 함께 지워져 최종 TS만 남았고, 원래 궤적은 autodE의 DFT 추측에서 출발해 배포 때 MLTS가 지나가는 xTB TS → DFT TS 구간과 다르다.
 - **auto G-D0e (11-04 20:34, pipeline)**: **HALT** — g0: job 1061949 exit 3 (STOP) — log /gpfs/tmp_cpu2/yeseo1ee/mlts/logs/mltp_G-D0e_*1061949*. `results/STOP_G-D0e.md`에 조건 · 수치 · 선택지를 적었다. 정해진 추천안이 없어 이 단계와 이에 의존하는 단계는 RESOLVE까지 멈추고, HALT 동안 새 단계도 시작하지 않는다. <!-- mltp:ef2c9e0dfa -->
 - **auto Z-rep (11-04 20:34, pipeline)**: Phase Z 순위 MACE-OMOL-0, AIMNet2, MACE-MH-1 → FT 시범(fold 0) = MACE-OMOL-0, AIMNet2 (finetune.py 이름). <!-- mltp:91316327db -->
+- **사용자 지시 Nurion (11-04 20:4x, "tar를 차차 업로드할건데 tar에서 뽑아낼 정보들은 지금까지 했던 파일들이나 지금 진행중인 잡은 취소")**: 사용자가 Nurion tar(D1 라벨 실행의 반응별 archive.tgz: autodE TS 단계 전체 · 반응물 정제 · EDA SP)를 저장소 루트로 차례로 올린다(첫 5개: g00_001, g01_002–005). tar에서 얻을 수 있는 정보를 계산하던 job을 취소했다: **D1 G2(1061710, 3 task)를 317/400에서 취소**(사용자 허가). D1 G1(27,808)과 G3(21,424)는 이미 끝났다. D0 계산(D0G1 · D0G3)은 Nurion에 없는 자료라 계속한다. 끝난 결과 파일은 지우지 않고 그대로 둔다(삭제는 사용자 결정). collect 1061711(afterany)이 지금까지 끝난 D1 G를 모은다(G2 317반응).
+- **D0 보조 task**: 빈 칸에 g_run_d0g1rev 1062198 · g_run_d0g3rev 1062199(작은 구조부터 거꾸로, G-helper와 같은 방식)를 넣었다.
+- **사용자 지시 tar 삭제 (11-04 20:5x, "처리가 끝난 tar 사본은 완전 삭제. 백업 가지고 있음")**: 업로드된 Nurion tar 사본은 (1) sha256이 D1_build/nurion/<tar>.sha256과 같고 (2) inv_nurion scan이 끝나 완료 표시 · 보고서 · extxyz가 확인되면 지운다(삭제 목록을 $MLT/dft/nurion/deleted_tars.tsv에 남김). "D1 G1 · G3도 tar 안에 있으면 삭제" → G1(라벨 TS의 xTB 정규 모드 무작위 변위)과 G3(TS 조각 SVP · 반응물 변위)의 구조는 tar 안에 없다(tar에는 최적화 궤적과 TZVP SP만 있음) → 조건에 해당하지 않아 지우지 않는다. 같은 구조가 겹치면 학습 자료를 모을 때 중복 제거.
+- **G-shuffle (11-04 20:5x, 사용자 "d0에 대해서 계산을 더 병렬로")**: gen_dft.py run에 `--shuffle K`(시드 고정 무작위 단위 순서)를 더해, 크기순 slice · --rev 보조와 겹치지 않게 보조 task를 늘렸다(끝난 기록은 건너뜀, 진행 중 충돌은 드묾). D0G1 3개(1062205–07) · D0G3 1개(1062208) 추가 → D0G1 6 task, D0G3 3 task(CPU 576/640). 규칙 기록(나): 4개 제출을 login에서 한 줄 for 루프(sbatch만, 즉시 반환)로 냈다.
+- **D0-plus 코드 (workflow wf_3a327837: 구현 → 반대 검증 2 → 수정; gen_d0.py · finetune.py · gen_dft.py)**:
+  - **D0-plus**: `gen_d0.py plan_d0 --n-near 2 --n-g2 200 --n-holdout 100`. 학습용 D0G2 = 기존 D0-G2 순위의 앞 200(분류별로 대략 비례). **D0-pin**: 명시한 K는 고정, 다른 K로 다시 계획하면 exit 3.
+  - **D0-gauss 반영**: 평가 전용 100반응은 정제하지 않음, 기준 TS = Coley G16 TS(0.009 Å 바닥값을 d0_holdout_ref.json에 적음), `run_g2 --d0`는 학습용 200만.
+  - **D0-hold / D0-sib**(추천안): D0 분류가 14개라(nitrile oxide 풀 15반응 등) "dipole당 20"은 불가 → 분류마다 균등 배분, 분류 상한 = 그 분류 반응물 쌍의 절반. 평가 반응은 반응물 쌍마다 1개, 같은 쌍의 다른 반응(형제 169)도 학습에서 뺀다 → 학습에서 빠지는 D0 = 269반응(5.1 %). 학습용 unit · d1_validation 반응과 쌍을 공유하면 평가 대상에서 제외.
+  - **D0-hold-fix**: 목록은 내용 sha로 고정(5153e652…); 파일이 없거나 바뀌면 plan · collect · finetune 모두 exit 3; 바꾸려면 `--replace-holdout`(FT 자료가 생긴 뒤에는 거부). 파일 형식에 role 열(eval / sibling) 추가.
+  - **FT-d0hold**: finetune.py(CODE_VERSION mlts-ft-3)가 d0_id(info 또는 struct id에서 다시 읽음)로 평가 · 형제 반응의 TS 관련 행을 모든 분할에서 뺀다(반응물 분자는 남김); 누수 검사에서 독립 재계산, 위반 시 exit 3; G-4 행은 D1 대상 행이거나 d0_id가 있어야 함.
+  - 예산: 7,015 core-h(D1 예상 3,448 · D0 G1/G3 2,194 · D0G2 1,224 · G-4 150) ≤ 8,000.
+  - 규칙 기록(agent): login에서 for 루프 2번(회차마다 sbx.sh만), `> /dev/null` 1번.

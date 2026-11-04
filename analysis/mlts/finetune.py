@@ -22,6 +22,13 @@ and dipoles = their D0 class (FT_LODO_d drops class d); Phase I D0 rows get thei
 of the 15 D1-design d1_validation groups (D1-NNNN-rK, no D1 target) are tagged with every T1 fold and every D1 dipole
 (FT_all only; DECISIONS FT-d1val). The C-2 check also asserts d0_class within dipoles (STOP otherwise). TS-near (FT-1)
 includes the D0 kinds (DECISIONS FT-ts-near). Evaluation stays on the D1 T1 folds.
+D0 holdout (user decisions 'D0-plus' + 'D0-gauss', DECISIONS FT-d0hold): every structure whose D0 reaction (info d0_id,
+or the Phase I group 'D0-<rid>') is in $MLT/dft/plan/d0_holdout.csv (evaluation reactions + their reactant-pair
+siblings) is dropped from EVERY run (all splits, with or without AL) except the reactant molecules (d0_react_ref /
+d0_react_disp); the C-2 check also derives the D0 reaction from the struct id (d0g1_<rid>_*, d0g3_<rid>_f*,
+d0g2_<rid>_s*), independent of the info, STOPs on a holdout TS-derived row, on a D0 TS kind without any D0 reaction and
+on a G4 row that is neither a D1-target row nor d0_id-tagged; the holdout file must match every recorded sha256
+(plan, results copy, data jsons; missing / changed = STOP); its sha256 enters the split fingerprint and every data json.
 
 CLI (submit from analysis/mlts; exit 0 = done / up to date, 2 = not ready / incomplete (resubmit), 3 = STOP)
   data <run ...> | --all  [--with-al] [--fmax-cap 10] [--valid-frac 0.10] [--force] [--dry]
@@ -81,7 +88,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 
-CODE_VERSION = "mlts-ft-2"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
+CODE_VERSION = "mlts-ft-3"          # -2: FT-d1val overlay, D0 class check, AIMNet2 charges (review); splits rebuilt
+                                    # -3: D0-plus / D0-gauss holdout drop (+ siblings) + independent C-2 holdout / G4
+                                    #     checks (FT-d0hold); splits rebuilt (no production data built with -3 yet)
 T_START = time.time()
 
 # ---------------------------------------------------------------- paths
@@ -99,6 +108,13 @@ G_REPORT = M.RES / "G_report.json"
 G_REPORT_D0 = M.RES / "G_report_d0.json"
 PLAN_D0 = DFT / "plan" / "plan_d0.parquet"           # exists = the D0 data are required (user decision 'D0')
 D0_CLASS = DFT / "plan" / "d0_class.csv"            # gen_dft plan_d0: D0 rxn_id -> dipole class (Phase I D0 overlay)
+D0_HOLDOUT = DFT / "plan" / "d0_holdout.csv"        # gen_d0 plan_d0 --n-holdout (D0-plus): evaluation-only D0 reactions
+D0_HOLDOUT_RES = M.RES / "d0_holdout.csv"           # its results/ copy (a record of its sha256)
+G2_PLAN_D0 = DFT / "plan" / "g2_plan_d0.json"       # its 'holdout' record (n, sha256) must match the file
+PLAN_D0_META = DFT / "plan" / "plan_d0_meta.json"   # holdout_sha256 must match the file
+D0_HOLD_KEEP_KINDS = ("d0_react_ref", "d0_react_disp")   # reactant molecules carry no TS geometry: kept (D0-plus)
+D0_HOLD_TS_KINDS = ("d0_ts_near", "d0_ts_imag", "d0_ts_label", "d0_frag", "d0_g2_path", "d0_ts_final_g2")
+SID_D0 = re.compile(r"d0g1_(\d+)_(?:n\d+|i|lab)|d0g3_(\d+)_f\d+|d0g2_(\d+)_s\d+")   # gen_d0 struct ids of TS rows
 SITE = Path(M.CONDA) / "envs" / "mlts" / "lib" / "python3.10" / "site-packages"
 HOME_MACE_CACHE = Path.home() / ".cache" / "mace"
 
@@ -210,6 +226,20 @@ DECISIONS = {
                 "nitrone/C, fold 2): no reliable core / fold assignment exists, so folds += 0..4 and dipoles += all 5 "
                 "D1 dipoles -> dropped from every FT_k and FT_LODO_d, kept in FT_all (train). Applied whether or not D0 "
                 "data exist (it fixes the D1-only splits too; CODE_VERSION mlts-ft-2 rebuilds them).",
+    "FT-d0hold": "D0 holdout (user decisions 'D0-plus' + 'D0-gauss', gen_d0 D0-hold / D0-sib): the reactions of "
+                 "$MLT/dft/plan/d0_holdout.csv (role eval = evaluation-only, role sibling = same reactant pair, not "
+                 "evaluated) never train. Every structure whose D0 reaction id (extxyz info d0_id; Phase I rows: group "
+                 "'D0-<rid>'; any input incl. G4) is listed is dropped from the pool before any split (so from FT_k, "
+                 "FT_all_s*, FT_LODO_*, FTpilot_*, BENCH_*, with or without AL), by d0_id and independent of the "
+                 "leakage tags; exception: d0_react_ref / d0_react_disp (reactant molecules; their d0_id is only the "
+                 "representative reaction). Exact duplicates among the base inputs inherit the drop; a G4 duplicate of "
+                 "a base row marks it for the *_al splits only (a base split never depends on G4). C-2 (every kept "
+                 "train + valid row): the D0 reaction is re-derived from the info AND, independently, from the struct "
+                 "id (d0g1_<rid>_*, d0g3_<rid>_f*, d0g2_<rid>_s*); a listed TS-derived row, a D0 TS kind with neither, "
+                 "or a G4 row that is neither a D1-target row (rxn_ids all D1 targets) nor d0_id-tagged with a dipoles "
+                 "tag = STOP (exit 3). The file must match every recorded sha256 (g2_plan_d0.json, plan_d0_meta.json, "
+                 "results/d0_holdout.csv, every data json / split meta; a missing file with a record = STOP); its sha256 "
+                 "enters the split fingerprint (inputs 'D0holdout') and every data json (d0_holdout).",
     "FT-relE": "within-reaction relative energy: structures of one reaction (single rxn_id) and one composition, "
                "E - mean(E) of the group (groups of >= 2), MAE over structures; primary on TS-near structures, also "
                "on all single-reaction structures. MACE uses interaction_energy (no float32 E0 quantisation).",
@@ -365,6 +395,66 @@ def d0_state(st):
                           d0_groups_with_data=need)
 
 
+def d0_holdout_records():
+    """decision FT-d0hold: {record: sha256} of every place that recorded the holdout file (non-empty only)."""
+    rec = {"g2_plan_d0.json": ((_rj(G2_PLAN_D0) or {}).get("holdout") or {}).get("sha256"),
+           "plan_d0_meta.json": (_rj(PLAN_D0_META) or {}).get("holdout_sha256"),
+           "results/d0_holdout.csv": M.sha256(D0_HOLDOUT_RES) if D0_HOLDOUT_RES.is_file() else None}
+    for p in sorted(RES_FT.glob("*_data.json")) + sorted(FT_DATA.glob("*/meta.json")):
+        j = _rj(p) or {}
+        rec[str(p)] = (j.get("d0_holdout_sha256") or (j.get("d0_holdout") or {}).get("sha256")
+                       or ((j.get("pool") or {}).get("d0_holdout") or {}).get("sha256"))
+    return {k: v for k, v in rec.items() if v}
+
+
+def d0_holdout():
+    """decision FT-d0hold: (set of listed d0_ids (eval + sibling), meta). STOP when any record (plan, results copy,
+    data json) has a holdout sha256 and the file is missing or has another sha256; no file and no record = no holdout."""
+    rec = d0_holdout_records()
+    base = dict(rule=DECISIONS["FT-d0hold"], file=str(D0_HOLDOUT), records={k: v[:16] for k, v in rec.items()})
+    if not D0_HOLDOUT.is_file():
+        if rec:
+            M.stop(f"{D0_HOLDOUT} is missing but a D0 holdout is recorded in {sorted(rec)[:4]} (FT-d0hold)")
+        return set(), dict(base, present=False, sha256=None, n_reactions=0)
+    sha = M.sha256(D0_HOLDOUT)
+    bad = {k: v[:12] for k, v in rec.items() if v != sha}
+    if bad:
+        M.stop(f"{D0_HOLDOUT} sha256 {sha[:12]} differs from {len(bad)} record(s) {dict(list(bad.items())[:4])} "
+               f"(FT-d0hold)")
+    import pandas as pd
+    H = pd.read_csv(D0_HOLDOUT, keep_default_na=False)
+    if "d0_id" not in H.columns:
+        M.stop(f"{D0_HOLDOUT}: no d0_id column (FT-d0hold)")
+    ids = {int(x) for x in H.d0_id}
+    if len(ids) != len(H):
+        M.stop(f"{D0_HOLDOUT}: duplicate d0_id (FT-d0hold)")
+    by = dict(Counter(H.d0_class.astype(str))) if "d0_class" in H.columns else {}
+    roles = dict(Counter(H.role.astype(str))) if "role" in H.columns else {}
+    return ids, dict(base, present=True, sha256=sha, n_reactions=len(ids), by_class=by, by_role=roles)
+
+
+def d0id_from_sid(sid):
+    """D0 reaction of a gen_d0 TS-derived struct id (d0g1_<rid>_*, d0g3_<rid>_f*, d0g2_<rid>_s*), else -1; independent of
+    the structure info (FT-d0hold C-2)."""
+    m = SID_D0.fullmatch(str(sid))
+    return int(next(g for g in m.groups() if g is not None)) if m else -1
+
+
+def d0id_of(a, inp):
+    """D0 reaction id of a structure (decision FT-d0hold): info d0_id (D0G1-3, any other input carrying it), else the
+    Phase I group 'D0-<rid>'; -1 = none."""
+    v = a.info.get("d0_id")
+    if v is not None and str(v).strip() not in ("", "None"):
+        try:
+            x = int(v)
+            if x >= 0:
+                return x
+        except (TypeError, ValueError):
+            pass
+    m = re.fullmatch(r"D0-(\d+)", str(a.info.get("group", ""))) if inp == "I" else None
+    return int(m.group(1)) if m else -1
+
+
 def inputs_state(with_al):
     st = {}
     for name, p in input_files(with_al):
@@ -374,6 +464,9 @@ def inputs_state(with_al):
             st[name] = dict(path=str(p), present=False)
     if D0_CLASS.is_file():                               # Phase I D0 class overlay: part of the split fingerprint
         st["D0class"] = dict(path=str(D0_CLASS), present=True, sha256=M.sha256(D0_CLASS), bytes=D0_CLASS.stat().st_size)
+    if D0_HOLDOUT.is_file():                             # D0-plus holdout list: part of the split fingerprint
+        st["D0holdout"] = dict(path=str(D0_HOLDOUT), present=True, sha256=M.sha256(D0_HOLDOUT),
+                               bytes=D0_HOLDOUT.stat().st_size)
     g = _rj(G_REPORT) or {}
     base = [n for n, _ in INPUTS] + (["G4"] if with_al else [])
     d0_req, d0_ok, d0_meta = d0_state(st)
@@ -399,6 +492,7 @@ class Pool:
         self.rdip = Ti.dipole.to_dict()
         self.rcore = Ti.fold_core.to_dict()
         self.rpairs = Ti.formed_pairs_ts.to_dict()
+        self.hold_ids, self.hold_meta = d0_holdout()     # decision FT-d0hold
         self.atoms, rows = [], []
         self.read_info = {}
         for name, p in input_files(with_al):
@@ -417,7 +511,9 @@ class Pool:
         self._d0_overlay(rows)
         self._d1design_overlay(rows)
         self._fill_dform(rows)
+        self._mark_holdout(rows)
         rows = self._dedupe(rows)
+        rows = self._drop_holdout(rows)
         P = pd.DataFrame(rows)
         P = self._filters(P, fmax_cap)
         self._tag_check(P)
@@ -452,7 +548,33 @@ class Pool:
                     e_ref_check=float(a.info["REF_energy"]) - e_eh * M.EH2EV,
                     charge=int(a.info.get("charge", 0) or 0), nelec=int(np.asarray(a.numbers).sum()),
                     dform=float(dform) if dform is not None else float("nan"),
-                    finite=bool(np.isfinite(f).all() and np.isfinite(e_eh)))
+                    finite=bool(np.isfinite(f).all() and np.isfinite(e_eh)), d0id=d0id_of(a, inp), hold=False,
+                    hold_al=False)
+
+    def _mark_holdout(self, rows):
+        """decision FT-d0hold: hold = the row's D0 reaction is listed and it is not a reactant molecule; hold_al =
+        hold, or (after dedupe) a G4 duplicate of the row is held (drops the row from the *_al splits only)."""
+        H = self.hold_ids
+        for r in rows:
+            r["hold"] = bool(H) and r["d0id"] in H and r["kind"] not in D0_HOLD_KEEP_KINDS
+            r["hold_al"] = r["hold"]
+
+    def _drop_holdout(self, rows):
+        H = self.hold_ids
+        drop = [r for r in rows if r["hold"]]
+        kept_mol = [r for r in rows if not r["hold"] and r["d0id"] in H]
+        self.stats["d0_holdout"] = dict(
+            self.hold_meta, n_dropped=len(drop), by_kind=dict(Counter(r["kind"] for r in drop)),
+            by_input=dict(Counter(r["input"] for r in drop)),
+            n_reactions_with_dropped_rows=len({r["d0id"] for r in drop}),
+            holdout_reactions_without_rows=sorted(H - {r["d0id"] for r in drop})[:100],
+            n_kept_molecule_rows_with_holdout_d0_id=len(kept_mol),
+            kept_molecule_rows_by_kind=dict(Counter(r["kind"] for r in kept_mol)),
+            n_base_rows_held_for_al_only=sum(1 for r in rows if r["hold_al"] and not r["hold"]))
+        if drop:
+            print(f"[data] D0 holdout: dropped {len(drop)} structures of {len({r['d0id'] for r in drop})} holdout "
+                  f"reactions ({dict(Counter(r['kind'] for r in drop))})", flush=True)
+        return [r for r in rows if not r["hold"]]
 
     def _d0_overlay(self, rows):
         """decision FT-d0: Phase I D0 rows (input I, kind d0_*, group 'D0-<rid>') get their D0 dipole class added to the
@@ -542,6 +664,9 @@ class Pool:
                 continue
             j = first[k]
             ndrop += 1
+            if r["input"] != "G4" or j["input"] == "G4":     # FT-d0hold: a duplicate of a held row is dropped too
+                j["hold"] = bool(j["hold"] or r["hold"])
+            j["hold_al"] = bool(j["hold_al"] or r["hold"] or r["hold_al"])   # G4 -> base: *_al splits only
             pairs[f"{j['kind']}<-{r['kind']}"] += 1
             de.append(abs(j["e_eh"] - r["e_eh"]) * M.EH2KCAL)
             dfm.append(float(np.abs(self.atoms[j["i"]].arrays["REF_forces"]
@@ -631,6 +756,8 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
     P, T = pool.P, pool.T
     if not R["al"]:
         P = P[P.input != "G4"]
+    else:
+        P = P[~P.hold_al.astype(bool)]                  # FT-d0hold: base rows whose G4 duplicate is held (AL only)
     mode, val = R["mode"], R["val"]
     if mode == "fold":
         held = set(T.rxn_id[T.fold_T1 == val].astype(int))
@@ -674,16 +801,43 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
     else:
         bad_t, bad_tag = set(), 0
     bad_d0 = int(keep.d0cls.map(lambda s: M.DIPOLES[val] in s).sum()) if mode == "lodo" else 0
+    # D0 holdout (FT-d0hold): the list is re-read; the D0 reaction of every kept structure is re-derived from its info
+    # and, independently, from its struct id; G4 rows must be D1-target rows or d0_id-tagged (with a dipoles tag)
+    H2, hmeta = d0_holdout()
+    bad_h, mol_h, unid, bad_g4, n_sid = [], 0, [], [], 0
+    for r in keep.itertuples():
+        x = d0id_of(pool.atoms[int(r.i)], r.input)
+        y = d0id_from_sid(r.struct_id)
+        n_sid += y >= 0
+        if x in H2 or y in H2:
+            if r.kind in D0_HOLD_KEEP_KINDS and y < 0:
+                mol_h += 1
+            else:
+                bad_h.append(r.struct_id)
+        if r.kind in D0_HOLD_TS_KINDS and x < 0 and y < 0:
+            unid.append(r.struct_id)
+        if r.input == "G4":
+            d1row = bool(r.rxn) and all(t in pool.rfold for t in r.rxn)
+            if (x < 0 and not d1row) or (x >= 0 and not r.dipoles):
+                bad_g4.append(r.struct_id)
     leak = dict(rule="FT_k: drop iff k in folds(tag); FT_LODO_d: drop iff d in dipoles(tag); OR targets() of rxn_ids; "
-                     "FT_LODO_d: no kept row of D0 class d (FT-d0)",
+                     "FT_LODO_d: no kept row of D0 class d (FT-d0); every run: no kept TS-derived row of a D0 holdout "
+                     "reaction (FT-d0hold)",
                 n_heldout_rxns=len(held), n_used_rxns=len(used), used_cap_heldout=len(used & held),
                 used_with_heldout_fold_or_dipole=len(bad_t), kept_with_heldout_tag=bad_tag,
                 kept_with_heldout_d0_class=bad_d0,
                 dropped_by_tag=int(tag_hit.sum()), dropped_by_targets=int(rx_hit.sum()),
                 tag_vs_targets_disagree=int((tag_hit != rx_hit).sum()),
-                n_kept_d1design=int(keep.struct_id.isin(pool.d1design_ids).sum()))
+                n_kept_d1design=int(keep.struct_id.isin(pool.d1design_ids).sum()),
+                d0_holdout_sha256=hmeta.get("sha256"), d0_holdout_n=hmeta.get("n_reactions"),
+                d0_holdout_sha_matches_pool=hmeta.get("sha256") == pool.hold_meta.get("sha256"),
+                kept_holdout_ts_rows=len(bad_h), kept_holdout_ts_first=bad_h[:5], kept_holdout_molecule_rows=mol_h,
+                kept_rows_with_d0_struct_id=int(n_sid), kept_d0_ts_rows_without_d0_reaction=len(unid),
+                kept_d0_ts_rows_without_d0_reaction_first=unid[:5], kept_g4_rows_unidentified=len(bad_g4),
+                kept_g4_rows_unidentified_first=bad_g4[:5])
     leak["pass_"] = leak["used_cap_heldout"] == 0 and len(bad_t) == 0 and bad_tag == 0 and bad_d0 == 0 and \
-        (mode == "all" or leak["n_kept_d1design"] == 0)
+        (mode == "all" or leak["n_kept_d1design"] == 0) and not bad_h and leak["d0_holdout_sha_matches_pool"] and \
+        not unid and not bad_g4
     if not leak["pass_"]:
         M.stop(f"C-2 leakage in split {split_name}: {leak}")
 
@@ -709,8 +863,9 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
                 pool=dict(read=pool.read_info, n_read=pool.n_read, **pool.stats), atom_ref_eh=ATOM_REF_EH,
                 energy_keys=dict(REF_energy="eV absolute label level", E_fit="eV, REF_energy - sum ATOM_REF_EH x EH2EV "
                                  "(training key)", REF_forces="eV/A"),
+                d0_holdout=pool.stats.get("d0_holdout"),
                 decisions={k: DECISIONS[k] for k in ("FT-split", "FT-dedupe", "FT-fcap", "FT-frame", "FT-ts-near", "FT-d0",
-                                                     "FT-d1val")},
+                                                     "FT-d1val", "FT-d0hold")},
                 written=_now(), **_jobtag())
     if write:
         M.write_json(sd / "meta.json", meta)
@@ -762,6 +917,7 @@ def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False):
                                   for k, v in m["counts"].items()}, leakage_C2=m["leakage_C2"])
         print(json.dumps(dict(dry=True, inputs_complete=complete, g_report=gmeta,
                               inputs={k: dict(present=v["present"], bytes=v.get("bytes")) for k, v in st.items()},
+                              d0_holdout={k: v for k, v in (pool.stats.get("d0_holdout") or {}).items() if k != "rule"},
                               read=pool.read_info, tag_check=pool.stats.get("tag_check"),
                               d0_class_overlay=pool.stats.get("d0_class_overlay"),
                               d1design_overlay={k: v for k, v in (pool.stats.get("d1design_overlay") or {}).items()
@@ -789,7 +945,10 @@ def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False):
                    counts=meta["counts"], valid=meta["valid"], leakage_C2=meta["leakage_C2"],
                    inputs={k: dict(present=v["present"], sha256=v.get("sha256")) for k, v in meta["inputs"].items()},
                    filters=meta["pool"].get("filters"), dedupe=meta["pool"].get("dedupe"),
-                   tag_check=meta["pool"].get("tag_check"), written=_now(), **_jobtag())
+                   tag_check=meta["pool"].get("tag_check"),
+                   d0_holdout={k: v for k, v in (meta["pool"].get("d0_holdout") or {}).items() if k != "rule"},
+                   d0_holdout_sha256=(meta["pool"].get("d0_holdout") or {}).get("sha256"),
+                   written=_now(), **_jobtag())
         M.write_json(RES_FT / f"{R['run']}_data.json", out)
     print(json.dumps(dict(inputs_complete=complete, runs={R["run"]: dict(split=R["split"], built=R["split"] in metas)
                                                            for R in Rs})), flush=True)

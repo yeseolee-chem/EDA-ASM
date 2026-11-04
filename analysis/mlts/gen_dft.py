@@ -155,8 +155,13 @@ IMAG_CAND_CM = 300.0              # fallback candidates for the reaction mode
 HESS_TOL_A = 1e-4                 # .hess $atoms vs the structure (after removing a common shift)
 N_G2 = 400
 G0_N_RAND, G0_N_LABEL, G0_N_G2 = 50, 10, 2
-BUDGET_CORE_H = 5500.0            # spec 0-5: G total 5,000 core-h; above = STOP. Raised to 5,500 by the user's D0 decision
-                                  # (2026-11-04 'D0도 반응당 3구조': D1 ~3,280 + D0 G1/G3 ~1,960 + G-4 ~100; DECISIONS 'D0-n3')
+BUDGET_CORE_H = 8000.0            # spec 0-5: G total 5,000 core-h; above = STOP. Raised to 5,500 by the user's D0 decision
+                                  # (2026-11-04 'D0도 반응당 3구조': D1 ~3,280 + D0 G1/G3 ~1,960 + G-4 ~100; DECISIONS 'D0-n3'),
+                                  # then to 8,000 for D0-plus (DECISIONS 'D0-plus': user choice of 200 D0G2 OptTS paths + 100
+                                  # evaluation-only D0 reactions + D0 in G-4, cap 7,000 at the 4.7 core-h/rxn guess; the measured
+                                  # D0G2 cost (G0_estimate_d0) gives ~7,500-7,700 -> 8,000, DECISIONS 'D0 계획 · 실행 (20:1x)';
+                                  # D0-gauss: the 100 are not refined, predicted total ~7,000 under the same 8,000 cap)
+SEED_SHUFFLE = M.SEED + 7         # --shuffle K helper order (decision G-shuffle)
 PARITY_EXPECT = 5e-4              # Eh/bohr, max |gradient| at the label TS (stationary at this level)
 PARITY_STOP = 1e-3                # median above this = level mismatch (added guard)
 G2_NPROCS = 8                     # g3l / Part B %pal (opt.PARTB_NPROCS, checked)
@@ -1210,8 +1215,10 @@ def dry_report(name, units, n):
     return 0
 
 
-def cmd_run(group, i, n, only=None, dry=False, rev=False):
-    """rev (--rev, decision G-helper): the same slice in reverse order (smallest first). A helper task
+def cmd_run(group, i, n, only=None, dry=False, rev=False, shuffle=None):
+    """shuffle (--shuffle K, decision G-shuffle): the slice in a seeded random unit order, for extra helper tasks next to
+    the largest-first slices and the --rev helper (in-flight collisions stay rare; finished records are skipped).
+    rev (--rev, decision G-helper): the same slice in reverse order (smallest first). A helper task
     `run <group> 0 1 --rev` walks the whole group from the small end while the n-slice tasks walk theirs from the
     large end; run_struct skips structures whose record exists when it claims them, so the two meet without
     redoing finished work (only the structures in flight at the meeting point can run twice).
@@ -1243,8 +1250,12 @@ def cmd_run(group, i, n, only=None, dry=False, rev=False):
         rows = [x for v in mine for x in v]
         if rev:
             rows = [x for v in mine[::-1] for x in v]                 # unit order reversed, a molecule's rows together
+        if shuffle is not None:                                       # decision G-shuffle: random unit order (seeded)
+            perm = np.random.default_rng(SEED_SHUFFLE + int(shuffle)).permutation(len(mine))
+            rows = [x for j in perm for x in mine[j]]
     todo = [r for r in rows if not rec_path(group, r["struct_id"]).is_file()]
-    print(f"[run {group} {i}/{n}{' rev' if rev else ''}] {len(rows)} structures, {len(todo)} to do, {_cpus()} workers, job {_jobtag()} on "
+    tag = (" rev" if rev else "") + (f" shuffle{shuffle}" if shuffle is not None else "")
+    print(f"[run {group} {i}/{n}{tag}] {len(rows)} structures, {len(todo)} to do, {_cpus()} workers, job {_jobtag()} on "
           f"{socket.gethostname()}, {time_left_h():.1f} h left", flush=True)
     ctx = Ctx("g")
     t0 = time.time()
@@ -1256,7 +1267,8 @@ def cmd_run(group, i, n, only=None, dry=False, rev=False):
                 load_this=loads[i] if loads else None, load_all=loads, slurm_job=_jobtag(), host=socket.gethostname(),
                 finished=_now(), code=CODE_VERSION)
     if not only:
-        M.write_json(STEPS / f"run_{group}{'_rev' if rev else ''}_{i:02d}of{n:02d}.json", summ)
+        sfx = ("_rev" if rev else "") + (f"_shuf{shuffle}" if shuffle is not None else "")
+        M.write_json(STEPS / f"run_{group}{sfx}_{i:02d}of{n:02d}.json", summ)
     print(json.dumps({k: summ[k] for k in ("stats", "core_h", "n_left", "halt", "timed_out")}), flush=True)
     if ctx.halt:
         return 3
@@ -1918,6 +1930,7 @@ def main(argv=None):
     a.add_argument("--only", default=None)
     a.add_argument("--dry", action="store_true")
     a.add_argument("--rev", action="store_true")
+    a.add_argument("--shuffle", type=int, default=None)
     a = sub.add_parser("run_g2")
     a.add_argument("i")
     a.add_argument("n", type=int)
@@ -1952,7 +1965,7 @@ def main(argv=None):
         return cmd_g0(x.n_rand, x.n_label, x.n_g2, _ints(x.label_rxns))
     if x.cmd == "run":
         only = {s for s in str(x.only).split(",") if s} if x.only else None
-        return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.rev)
+        return cmd_run(x.group, M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.rev, x.shuffle)
     if x.cmd == "run_g2":
         only = _ints(x.only)
         return cmd_run_g2(M.array_task(x.i) if not (only or x.dry) else 0, x.n, only, x.dry, x.d0)
