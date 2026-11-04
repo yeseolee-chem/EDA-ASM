@@ -1,0 +1,1462 @@
+{
+ "spec": "docs/specs/DEPLOY_MODEL.md 14-3 I-3 (chain smoke)",
+ "code": "analysis/deploy/i3_chain.py",
+ "code_sha256": "047fd8158aacdae3d24c7d9c8fc79314b8ceb4e27e06fa098496ee60c1a22af4",
+ "git": "17f52d7e",
+ "root": "/gpfs/tmp_cpu2/yeseo1ee/deploy/i3_dev",
+ "mode": "dry_run",
+ "written": "2026-11-04 09:14:13",
+ "steps": {
+  "prep": {
+   "status": "ok",
+   "rc": 0,
+   "started": "2026-11-04 09:05:29",
+   "wall_s": 1.0,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "g2_deploy i3-prep",
+     0,
+     0.8
+    ]
+   ],
+   "subset_exceptions": [],
+   "notes": []
+  },
+  "fake-g2": {
+   "status": "ok",
+   "rc": 0,
+   "started": "2026-11-04 09:05:47",
+   "wall_s": 14.2,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "fake g2 stage",
+     0,
+     14.1
+    ]
+   ],
+   "subset_exceptions": [],
+   "notes": []
+  },
+  "lm": {
+   "status": "ok_subset",
+   "rc": 0,
+   "started": "2026-11-04 09:10:26",
+   "wall_s": 1.7,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "finalize_lf report --jobs",
+     0,
+     0.4
+    ],
+    [
+     "i3 _meta",
+     0,
+     1.1
+    ]
+   ],
+   "subset_exceptions": [
+    {
+     "gate": "M:source_dir",
+     "why": "g2_deploy.py finalises from the node-local work folder ($TMPDIR, removed after keep_small): result.json source_dir is gone, meta_lf.build would STOP; the keep_small copy <root>/jobs/<job_id> is read instead with every recorded input sha256 checked (DEPLOY finding: the deployment path cannot run meta_lf.py unchanged)",
+     "detail": {
+      "n": 10
+     }
+    }
+   ],
+   "notes": []
+  },
+  "ft": {
+   "status": "ok_subset",
+   "rc": 0,
+   "started": "2026-11-04 09:12:40",
+   "wall_s": 6.2,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "tokens_lf atoms",
+     0,
+     2.0
+    ],
+    [
+     "tokens_lf gate",
+     0,
+     2.1
+    ],
+    [
+     "tokens_lf tokens",
+     3,
+     2.1
+    ]
+   ],
+   "subset_exceptions": [
+    {
+     "gate": "T:elements",
+     "why": "T_report elements == all 9 model elements (and tokens_lf's d_in computed from them) cannot hold for 10 reactions without each of F / Si / S / Cl / Br: accepted as elements subset of the 9 (= predict_tf input check; the model one-hot has the 9, d_in 29); bin / num / glob columns, ext, token version, T-a must pass",
+     "detail": {
+      "relaxed": [
+       "elements",
+       "d_in"
+      ],
+      "elements": [
+       1,
+       6,
+       7,
+       8,
+       35
+      ],
+      "d_in_tokens_lf": 25,
+      "checks": {
+       "elements": false,
+       "bin_cols": true,
+       "num_cols": true,
+       "ext_used": true,
+       "d_in": false,
+       "glob_cols": true,
+       "token_version": true,
+       "x182_sha256": true,
+       "gate_Ta": true
+      }
+     }
+    }
+   ],
+   "notes": []
+  },
+  "predict": {
+   "status": "ok",
+   "rc": 0,
+   "started": "2026-11-04 09:12:47",
+   "wall_s": 3.0,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "predict_tf run --model final (I-3 inputs)",
+     0,
+     1.5
+    ],
+    [
+     "predict_tf run --model final (production lf inputs, same pairs)",
+     0,
+     1.5
+    ]
+   ],
+   "subset_exceptions": [],
+   "notes": []
+  },
+  "g2": {
+   "status": "ok",
+   "rc": 0,
+   "started": "2026-11-04 09:06:21",
+   "wall_s": 3.9,
+   "slurm_job": "1059761",
+   "commands": [
+    [
+     "g2_deploy pool",
+     0,
+     3.7
+    ]
+   ],
+   "subset_exceptions": [],
+   "notes": []
+  }
+ },
+ "selection": [
+  {
+   "pair_id": "P00617",
+   "dipole": "azide",
+   "a_job": "T03627",
+   "a_rxn": 1003627,
+   "b_job": "T00714",
+   "b_rxn": 1000714,
+   "ref_kind": "reference",
+   "pos": "p",
+   "Xb": "CN",
+   "core": "azide/B",
+   "skeleton": "B",
+   "fold_T1": "1"
+  },
+  {
+   "pair_id": "P00991",
+   "dipole": "azomethine ylide",
+   "a_job": "T04121",
+   "a_rxn": 1004121,
+   "b_job": "T01228",
+   "b_rxn": 1001228,
+   "ref_kind": "reference",
+   "pos": "p",
+   "Xb": "Br",
+   "core": "azomethine ylide/AppZ",
+   "skeleton": "AppZ",
+   "fold_T1": "2"
+  },
+  {
+   "pair_id": "P01800",
+   "dipole": "carbonyl ylide",
+   "a_job": "T05477",
+   "a_rxn": 1005477,
+   "b_job": "T02590",
+   "b_rxn": 1002590,
+   "ref_kind": "reference",
+   "pos": "p",
+   "Xb": "Ph",
+   "core": "carbonyl ylide/B",
+   "skeleton": "B",
+   "fold_T1": "4"
+  },
+  {
+   "pair_id": "P00305",
+   "dipole": "nitrile oxide",
+   "a_job": "T03272",
+   "a_rxn": 1003272,
+   "b_job": "T00326",
+   "b_rxn": 1000326,
+   "ref_kind": "reference",
+   "pos": "p",
+   "Xb": "Ph",
+   "core": "nitrile oxide/C",
+   "skeleton": "C",
+   "fold_T1": "3"
+  },
+  {
+   "pair_id": "P01390",
+   "dipole": "nitrone",
+   "a_job": "T04848",
+   "a_rxn": 1004848,
+   "b_job": "T01995",
+   "b_rxn": 1001995,
+   "ref_kind": "reference",
+   "pos": "p",
+   "Xb": "Br",
+   "core": "nitrone/B",
+   "skeleton": "B",
+   "fold_T1": "0"
+  }
+ ],
+ "cost_estimate": {
+  "source": "/gpfs/home1/yeseo1ee/projects/eda-asm-prediction-deploy/analysis/d1_g2/results/G_status.csv",
+  "source_sha256": "7685cd0612e6842407183c5e2dfbb93421cd26579f06cfced9be561c45c889ec",
+  "n": 10,
+  "d1g2_core_h_sum": 1.718358907964494,
+  "d1g2_core_h_by_stage": {
+   "core_h_ts": 0.5802709772851729,
+   "core_h_stereo": 0.0045963581403092,
+   "core_h_ref": 1.116462536917792,
+   "core_h_freq": 0.0170290356212188
+  },
+  "d1g2_wall_h": {
+   "max": 0.08461431827810074,
+   "sum": 0.4295897269911235,
+   "median": 0.03515537507004206
+  },
+  "d1g2_all_ok_core_h": {
+   "n": 8616,
+   "median": 0.2507555133766598,
+   "p90": 0.6561399310164981,
+   "max": 2.429650150140126
+  },
+  "per_reaction": [
+   {
+    "job_id": "T00326",
+    "rxn_id": 1000326,
+    "n_atoms": 18,
+    "dipole": "nitrile oxide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.0894286460346645,
+    "core_h_ts": 0.0441684982511732,
+    "core_h_stereo": 0.0004306258095635,
+    "core_h_ref": 0.0439017441537645,
+    "core_h_freq": 0.0009277778201633,
+    "wall_h": 0.022357161508666124
+   },
+   {
+    "job_id": "T00714",
+    "rxn_id": 1000714,
+    "n_atoms": 31,
+    "dipole": "azide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.097433562013838,
+    "core_h_ts": 0.0495967857042948,
+    "core_h_stereo": 0.0005883783764309,
+    "core_h_ref": 0.0448731724421183,
+    "core_h_freq": 0.0023752254909939,
+    "wall_h": 0.0243583905034595
+   },
+   {
+    "job_id": "T01228",
+    "rxn_id": 1001228,
+    "n_atoms": 33,
+    "dipole": "azomethine ylide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.2721513062053256,
+    "core_h_ts": 0.0583298847410413,
+    "core_h_stereo": 0.0004848403400844,
+    "core_h_ref": 0.211883917649587,
+    "core_h_freq": 0.0014526634746127,
+    "wall_h": 0.0680378265513314
+   },
+   {
+    "job_id": "T01995",
+    "rxn_id": 1001995,
+    "n_atoms": 36,
+    "dipole": "nitrone",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.0914771021736992,
+    "core_h_ts": 0.0611169089211358,
+    "core_h_stereo": 0.0004167546166314,
+    "core_h_ref": 0.0282165903515285,
+    "core_h_freq": 0.0017268482844034,
+    "wall_h": 0.0228692755434248
+   },
+   {
+    "job_id": "T02590",
+    "rxn_id": 1002590,
+    "n_atoms": 34,
+    "dipole": "carbonyl ylide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.1613757419586181,
+    "core_h_ts": 0.050659720632765,
+    "core_h_stereo": 0.0004549299346076,
+    "core_h_ref": 0.1088040738635593,
+    "core_h_freq": 0.0014570175276862,
+    "wall_h": 0.04034393548965452
+   },
+   {
+    "job_id": "T03272",
+    "rxn_id": 1003272,
+    "n_atoms": 28,
+    "dipole": "nitrile oxide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.1886680807007683,
+    "core_h_ts": 0.0462603810098436,
+    "core_h_stereo": 0.0004792822731865,
+    "core_h_ref": 0.1405025564299689,
+    "core_h_freq": 0.0014258609877692,
+    "wall_h": 0.04716702017519207
+   },
+   {
+    "job_id": "T03627",
+    "rxn_id": 1003627,
+    "n_atoms": 32,
+    "dipole": "azide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.1198672586017184,
+    "core_h_ts": 0.0527595202128092,
+    "core_h_stereo": 0.0004643978012932,
+    "core_h_ref": 0.0647421974605984,
+    "core_h_freq": 0.0019011431270175,
+    "wall_h": 0.0299668146504296
+   },
+   {
+    "job_id": "T04121",
+    "rxn_id": 1004121,
+    "n_atoms": 33,
+    "dipole": "azomethine ylide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.2668170926305983,
+    "core_h_ts": 0.0595563877953423,
+    "core_h_stereo": 0.0004510349697536,
+    "core_h_ref": 0.205389662583669,
+    "core_h_freq": 0.0014200072818332,
+    "wall_h": 0.06670427315764957
+   },
+   {
+    "job_id": "T04848",
+    "rxn_id": 1004848,
+    "n_atoms": 36,
+    "dipole": "nitrone",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.0926828445328606,
+    "core_h_ts": 0.0615650659137302,
+    "core_h_stereo": 0.0004032818476359,
+    "core_h_ref": 0.0288701327641805,
+    "core_h_freq": 0.001844364007314,
+    "wall_h": 0.02317071113321515
+   },
+   {
+    "job_id": "T05477",
+    "rxn_id": 1005477,
+    "n_atoms": 44,
+    "dipole": "carbonyl ylide",
+    "status": "ok",
+    "cores": 4,
+    "core_h_total": 0.338457273112403,
+    "core_h_ts": 0.0962578241030375,
+    "core_h_stereo": 0.0004228321711222,
+    "core_h_ref": 0.2392784892188178,
+    "core_h_freq": 0.0024981276194254,
+    "wall_h": 0.08461431827810074
+   }
+  ],
+  "i3": {
+   "n_par": 10,
+   "cores": 4,
+   "alloc_cpus": 40,
+   "waves": 1,
+   "wall_h_expected": 0.08461431827810074,
+   "alloc_core_h_expected": 3.3845727311240297,
+   "used_core_h_expected": 1.718358907964494,
+   "note": "autodE is not deterministic: a new run can take another path (other conformers / template misses); the D1-G2 cost of the same reactions is the expectation, not a bound. finalize_lf freq is included in core_h_total (core_h_freq); F / T / predict add < 0.01 core-h per reaction."
+  }
+ },
+ "aborted_attempts": {
+  "predict.abort.json": {
+   "status": "stop",
+   "ended": "2026-11-04 09:10:28",
+   "python": "/gpfs/tmp_cpu2/yeseo1ee/d1/home01/d1_env/venv/bin/python"
+  }
+ },
+ "cost_actual": {
+  "step": "fake-g2",
+  "job_wall_h": 0.003944444444444444,
+  "n_par": null,
+  "cores": 4,
+  "alloc_core_h": null,
+  "used_core_h_sum": 0.014736953576405844,
+  "used_core_h_by_stage": {
+   "ts": 0.0,
+   "stereo": 0.0,
+   "ref": 0.0,
+   "finalize": 0.014736953576405844
+  },
+  "per_reaction": {
+   "T00326": {
+    "core_h": {
+     "finalize": 0.0008891646067301432
+    },
+    "marker": ".done"
+   },
+   "T00714": {
+    "core_h": {
+     "finalize": 0.001285331514146593
+    },
+    "marker": ".done"
+   },
+   "T01228": {
+    "core_h": {
+     "finalize": 0.001318402820163303
+    },
+    "marker": ".done"
+   },
+   "T01995": {
+    "core_h": {
+     "finalize": 0.0016087741321987577
+    },
+    "marker": ".done"
+   },
+   "T02590": {
+    "core_h": {
+     "finalize": 0.0014762287669711643
+    },
+    "marker": ".done"
+   },
+   "T03272": {
+    "core_h": {
+     "finalize": 0.0011252538363138835
+    },
+    "marker": ".done"
+   },
+   "T03627": {
+    "core_h": {
+     "finalize": 0.001360892719692654
+    },
+    "marker": ".done"
+   },
+   "T04121": {
+    "core_h": {
+     "finalize": 0.001429810259077284
+    },
+    "marker": ".done"
+   },
+   "T04848": {
+    "core_h": {
+     "finalize": 0.0017607752482096354
+    },
+    "marker": ".done"
+   },
+   "T05477": {
+    "core_h": {
+     "finalize": 0.002482319672902425
+    },
+    "marker": ".done"
+   }
+  },
+  "note": "deploy_times.json core_h = stage wall x cores (g2_deploy.cmd_one); the dry run's fake-g2 has finalize only"
+ },
+ "counts": {
+  "reactions": 10,
+  "pairs": 5,
+  "g2_markers": {
+   ".done": 10
+  },
+  "L": {
+   "complete": true,
+   "all_pass": true,
+   "markers": {
+    ".done": 10
+   },
+   "L1": true,
+   "L2": true,
+   "L4": true,
+   "L4_d_imag_cm": {
+    "n": 10,
+    "mean": 5.535724767469219e-09,
+    "p50": 2.0867219063802622e-10,
+    "p90": 9.11084043764275e-09,
+    "p99": 4.0006773929235357e-08,
+    "max": 4.3439655428301194e-08
+   }
+  },
+  "M": {
+   "n_records": 10,
+   "all_pass": true,
+   "path": "i3_chain.py _meta (meta_lf.cmd_run with the I-3 L condition + source fallback)",
+   "n_source_fallback": 10
+  },
+  "F": {
+   "n_done": 10,
+   "n_feat": 10,
+   "F1": true,
+   "F2_n": 0,
+   "F3_n": 0,
+   "not_ok": {},
+   "stop_reasons": [],
+   "core_s_per_rxn": 2.511513042449951
+  },
+  "Q": {
+   "n_target": 10,
+   "n_ok": 10,
+   "n_qa_fail": 0,
+   "n_qb_fail": 0,
+   "n_use": 10,
+   "ext_used": true,
+   "stop": false
+  },
+  "T": {
+   "n_reactions": 10,
+   "elements": [
+    1,
+    6,
+    7,
+    8,
+    35
+   ],
+   "num_cols": [
+    "bond_dist",
+    "q_rel",
+    "q_frag",
+    "q_TS",
+    "dq_dist",
+    "dq_int",
+    "v_rel",
+    "v_frag",
+    "v_TS",
+    "dv_dist",
+    "dv_int",
+    "mu_abs",
+    "f_plus",
+    "f_minus"
+   ],
+   "checks": {
+    "elements": false,
+    "bin_cols": true,
+    "num_cols": true,
+    "ext_used": true,
+    "d_in": false,
+    "glob_cols": true,
+    "token_version": true,
+    "x182_sha256": true,
+    "gate_Ta": true
+   },
+   "gate_Ta": {
+    "tokens_eq_atoms": true,
+    "all_finite": true,
+    "two_formed_edges": true,
+    "q_excluded_absent": true
+   }
+  },
+  "predict": {
+   "pairs": {
+    "path": "/gpfs/tmp_cpu2/yeseo1ee/deploy/i3_dev/i3_pairs.csv",
+    "sha256": "0e05b99fdaf466efab19784bfa23c58ea2235a6b48b3f5364fae459fce3ca784",
+    "n": 5,
+    "n_predicted": 5,
+    "n_excluded": 0
+   },
+   "n_reactions": {
+    "requested": 10,
+    "ok": 10,
+    "excluded": 0
+   },
+   "excluded": {}
+  }
+ },
+ "formats": {
+  "g2_jobs": {
+   "ok": true,
+   "missing": {}
+  },
+  "g2lf_final": {
+   "ok": true,
+   "markers": {
+    ".done": 10
+   },
+   "done_problems": []
+  },
+  "labels_lf": {
+   "ok": true,
+   "n": 10,
+   "n_done": 10
+  },
+  "input_meta_lf": {
+   "ok": true,
+   "n": 10
+  },
+  "X182_lf": {
+   "ok": true,
+   "n": 10,
+   "columns_equal_X182_d1_g2": true
+  },
+  "tokens": {
+   "ok": true,
+   "n": 10,
+   "problems": {}
+  },
+  "predictions": {
+   "ok": true,
+   "checks": {
+    "columns": true,
+    "targets": true,
+    "rows": true,
+    "yhat_finite": true,
+    "yhat_sd_ok": true,
+    "out_of_range_bool": true,
+    "ids_int": true,
+    "excluded_columns": true,
+    "n_models_5": true,
+    "counts": true
+   },
+   "n_pairs": 5,
+   "n_rows": 50,
+   "n_excluded": 0,
+   "excluded": []
+  }
+ },
+ "ladder_comparison": {
+  "rule": "identical = L-2 (ts, rel1, rel2 atom permutations of $G2/g2_final within 1e-06 A); re-found TS = identical or (same element order as $G2/jobs/<T>/ts.xyz, same formed pairs, same A_idx, heavy-atom Kabsch RMSD <= 0.05 A); $G2/jobs/<T> = $G2/g2_final up to the permutation (checked per reaction)",
+  "n_done": 10,
+  "n_identical": 10,
+  "n_refound_ts": 10,
+  "n_refs_same": 10,
+  "ladder_jobs_eq_g2_final": true,
+  "reactions": [
+   {
+    "job_id": "T00326",
+    "rxn_id": 1000326,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 1.1016673257055421e-15,
+    "ts_rmsd_heavy_A": 8.308148362110449e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 6.160616923867485e-16,
+    "rel1_rmsd_heavy_A": 5.524297656859631e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 1.6111986134674879e-15,
+    "rel2_rmsd_heavy_A": 0.0,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -321.0969711639857,
+    "ladder_imag1_cm": -321.0969711639857,
+    "d_imag1_cm": 0.0,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T00714",
+    "rxn_id": 1000714,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 3.341967639919589e-15,
+    "ts_rmsd_heavy_A": 5.082118088007015e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 7.455644649913537e-16,
+    "rel1_rmsd_heavy_A": 5.133843714892315e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 1.055162912469249e-15,
+    "rel2_rmsd_heavy_A": 6.066446233895763e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -294.4646225837291,
+    "ladder_imag1_cm": -294.4646225837291,
+    "d_imag1_cm": 0.0,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T01228",
+    "rxn_id": 1001228,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 3.8160093197940644e-16,
+    "ts_rmsd_heavy_A": 9.950998739965387e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 4.149964657357227e-15,
+    "rel1_rmsd_heavy_A": 4.904625009914894e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 6.181251260361656e-16,
+    "rel2_rmsd_heavy_A": 9.337007099534474e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -276.66298313364445,
+    "ladder_imag1_cm": -276.66298313362734,
+    "d_imag1_cm": -1.7109869077103212e-11,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T01995",
+    "rxn_id": 1001995,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 7.242349900019064e-16,
+    "ts_rmsd_heavy_A": 1.2220655955315384e-15,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 7.580880525408319e-16,
+    "rel1_rmsd_heavy_A": 4.095279468925845e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 1.943926835115743e-15,
+    "rel2_rmsd_heavy_A": 1.0825170602797482e-15,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -387.4254174288624,
+    "ladder_imag1_cm": -387.4254174292626,
+    "d_imag1_cm": 4.0023451219894923e-10,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": false,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T02590",
+    "rxn_id": 1002590,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 6.30702190133056e-16,
+    "ts_rmsd_heavy_A": 6.610667916523555e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 1.3995656624247921e-15,
+    "rel1_rmsd_heavy_A": 1.017118144093304e-15,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 4.456918937327388e-16,
+    "rel2_rmsd_heavy_A": 2.8115061368354885e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -137.89371608744733,
+    "ladder_imag1_cm": -137.89371609274386,
+    "d_imag1_cm": 5.296527660902939e-09,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T03272",
+    "rxn_id": 1003272,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 5.750975552209625e-16,
+    "ts_rmsd_heavy_A": 3.481833216846265e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 1.070628281301324e-15,
+    "rel1_rmsd_heavy_A": 3.203385042735147e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 3.2374247822790667e-16,
+    "rel2_rmsd_heavy_A": 1.1123977693156401e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -318.92625833697025,
+    "ladder_imag1_cm": -318.92625833697025,
+    "d_imag1_cm": 0.0,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T03627",
+    "rxn_id": 1003627,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 1.1450455070344456e-14,
+    "ts_rmsd_heavy_A": 6.041405402790485e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 1.3678325775130067e-15,
+    "rel1_rmsd_heavy_A": 3.296489171153074e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 9.705139776161138e-16,
+    "rel2_rmsd_heavy_A": 1.0205339812740608e-15,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -284.3050998017809,
+    "ladder_imag1_cm": -284.30509979836484,
+    "d_imag1_cm": -3.4160620998591185e-09,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T04121",
+    "rxn_id": 1004121,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 4.3925940466463266e-15,
+    "ts_rmsd_heavy_A": 1.0968808939707858e-15,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 5.904994635317707e-16,
+    "rel1_rmsd_heavy_A": 3.2568186424786753e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 6.181251260361656e-16,
+    "rel2_rmsd_heavy_A": 9.337007099534474e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -301.66198789780697,
+    "ladder_imag1_cm": -301.6619878950193,
+    "d_imag1_cm": -2.787658104352886e-09,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": false,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T04848",
+    "rxn_id": 1004848,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 7.793647867907642e-16,
+    "ts_rmsd_heavy_A": 9.193445252430333e-16,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 3.8487064313218634e-16,
+    "rel1_rmsd_heavy_A": 3.992314481923165e-16,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 4.098916880008387e-16,
+    "rel2_rmsd_heavy_A": 2.3667397808188793e-15,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -368.58989594926027,
+    "ladder_imag1_cm": -368.58989594926027,
+    "d_imag1_cm": 0.0,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": true,
+     "work/ts.inp": true
+    }
+   },
+   {
+    "job_id": "T05477",
+    "rxn_id": 1005477,
+    "lf_marker": ".done",
+    "lf_status": "ok",
+    "ladder_marker": ".done",
+    "production_lf_marker": ".done",
+    "l2_ts": "ok",
+    "l2_ts_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_ts": "ok",
+    "ts_same_element_order": true,
+    "ts_rmsd_all_A": 1.1261084517519823e-15,
+    "ts_rmsd_heavy_A": 1.804415520729339e-15,
+    "ts_max_abs_dx_A": 0.0,
+    "l2_rel1": "ok",
+    "l2_rel1_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel1": "ok",
+    "rel1_same_element_order": true,
+    "rel1_rmsd_all_A": 3.526622517302824e-16,
+    "rel1_rmsd_heavy_A": 4.493117943140718e-15,
+    "rel1_max_abs_dx_A": 0.0,
+    "l2_rel2": "ok",
+    "l2_rel2_dev_A": 0.0,
+    "ladder_jobs_vs_g2_final_rel2": "ok",
+    "rel2_same_element_order": true,
+    "rel2_rmsd_all_A": 5.01702691386343e-16,
+    "rel2_rmsd_heavy_A": 1.8139980364956825e-16,
+    "rel2_max_abs_dx_A": 0.0,
+    "same_formed_pairs": true,
+    "same_A_idx": true,
+    "imag1_cm": -139.34409241606008,
+    "ladder_imag1_cm": -139.34409245949973,
+    "d_imag1_cm": 4.3439655428301194e-08,
+    "d_e_ts_kcal": 0.0,
+    "identical_L2": true,
+    "refound_ts": true,
+    "refs_same": true,
+    "production_lf_same_bytes": {
+     "ts.xyz": true,
+     "rel1.xyz": true,
+     "rel2.xyz": true,
+     "work/ts.hess": false,
+     "work/ts.inp": true
+    }
+   }
+  ]
+ },
+ "value_parity_production_lf": {
+  "note": "re-found TSs only: R X182 / tokens vs the production lf inputs of the same reaction ($DEP/X182_lf.parquet, $DEP/fu2_lf/tokens); for a TS found again by a new autodE run small differences are expected",
+  "reactions": {
+   "1000326": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1000714": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1001228": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1001995": {
+    "x182_max_abs": 8.066081136348657e-11,
+    "x182_max_col": "nu_imag",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 8.066081136348657e-11,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1002590": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1003272": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1003627": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1004121": {
+    "x182_max_abs": 3.1093350116861984e-10,
+    "x182_max_col": "nu_imag",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 3.1093350116861984e-10,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1004848": {
+    "x182_max_abs": 0.0,
+    "x182_max_col": "dist_R_dip_ab",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 0.0,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   },
+   "1005477": {
+    "x182_max_abs": 7.390781320282258e-09,
+    "x182_max_col": "nu_imag",
+    "x182_n_cols_gt_1e6": 0,
+    "token_num_max_abs": 0.0,
+    "token_pos_max_abs": 0.0,
+    "token_glob_max_abs": 7.390781320282258e-09,
+    "token_bin_max_abs": 0.0,
+    "token_edges_equal": true
+   }
+  },
+  "labels_record_equal": {
+   "1000326": true,
+   "1000714": true,
+   "1001228": true,
+   "1001995": true,
+   "1002590": true,
+   "1003272": true,
+   "1003627": true,
+   "1004121": true,
+   "1004848": true,
+   "1005477": true
+  },
+  "meta_A_idx_equal": {
+   "1000326": true,
+   "1000714": true,
+   "1001228": true,
+   "1001995": true,
+   "1002590": true,
+   "1003272": true,
+   "1003627": true,
+   "1004121": true,
+   "1004848": true,
+   "1005477": true
+  }
+ },
+ "pairs": [
+  {
+   "pair_id": "P00305",
+   "a_rxn": 1003272,
+   "b_rxn": 1000326,
+   "both_refound": true,
+   "yhat": {
+    "d1": -0.04338033093139768,
+    "d2": 0.009714955488390454,
+    "elst": -0.01151943557352556,
+    "pauli": 0.04520595105122118,
+    "oi": -0.020582040829592977,
+    "disp": -0.03038530734964346,
+    "cpcm": 0.03211269620697043,
+    "cds": -0.0007462261606524733,
+    "c_ghost": -0.0015687099411188573,
+    "barrier": -0.02199204444766658
+   },
+   "yhat_sd": {
+    "d1": 0.056302631799087705,
+    "d2": 0.014074299208744267,
+    "elst": 0.09711666377473493,
+    "pauli": 0.18376778456482515,
+    "oi": 0.0917975304492627,
+    "disp": 0.023583075000287168,
+    "cpcm": 0.049095397011334904,
+    "cds": 0.0030118041235691674,
+    "c_ghost": 0.003173351986128844,
+    "barrier": 0.03899546070689648
+   },
+   "n_out_of_range": 0,
+   "max_abs_dyhat_vs_production_lf": 0.0
+  },
+  {
+   "pair_id": "P00617",
+   "a_rxn": 1003627,
+   "b_rxn": 1000714,
+   "both_refound": true,
+   "yhat": {
+    "d1": -0.17331732451308984,
+    "d2": -0.3476524080688472,
+    "elst": 1.6559764705963058,
+    "pauli": -3.5289688172574847,
+    "oi": 1.0868732510538934,
+    "disp": 0.1800476299198683,
+    "cpcm": 0.07405071199059284,
+    "cds": 0.049994007279384536,
+    "c_ghost": 0.02410653816721941,
+    "barrier": -0.9779146604542579
+   },
+   "yhat_sd": {
+    "d1": 0.06521763637950372,
+    "d2": 0.03621939067152391,
+    "elst": 0.2480821212294342,
+    "pauli": 0.48650580370317115,
+    "oi": 0.2043716506057177,
+    "disp": 0.06725265753394952,
+    "cpcm": 0.05396465826013569,
+    "cds": 0.009862023775785937,
+    "c_ghost": 0.014888352603803853,
+    "barrier": 0.14349365883620172
+   },
+   "n_out_of_range": 0,
+   "max_abs_dyhat_vs_production_lf": 0.0
+  },
+  {
+   "pair_id": "P00991",
+   "a_rxn": 1004121,
+   "b_rxn": 1001228,
+   "both_refound": true,
+   "yhat": {
+    "d1": 0.367252504371325,
+    "d2": 0.09121377145975341,
+    "elst": -0.6734848691771735,
+    "pauli": 1.1281170519683807,
+    "oi": -0.5632024241077059,
+    "disp": -0.0697604997935298,
+    "cpcm": -0.08707326962266398,
+    "cds": -0.009216999606666141,
+    "c_ghost": -0.04680933123936508,
+    "barrier": 0.13522046808706772
+   },
+   "yhat_sd": {
+    "d1": 0.10148202073827747,
+    "d2": 0.03328111561591997,
+    "elst": 0.25689194518741865,
+    "pauli": 0.3973372260641834,
+    "oi": 0.19075104285596184,
+    "disp": 0.02993135089064662,
+    "cpcm": 0.043438967110414915,
+    "cds": 0.007066196134181704,
+    "c_ghost": 0.015999982028183472,
+    "barrier": 0.061982223398354776
+   },
+   "n_out_of_range": 0,
+   "max_abs_dyhat_vs_production_lf": 0.0
+  },
+  {
+   "pair_id": "P01390",
+   "a_rxn": 1004848,
+   "b_rxn": 1001995,
+   "both_refound": true,
+   "yhat": {
+    "d1": -0.2595817357520242,
+    "d2": 0.004457977372062702,
+    "elst": -0.6377682949061672,
+    "pauli": 0.9703520772854249,
+    "oi": -0.36284319164392576,
+    "disp": -0.03790057316217488,
+    "cpcm": 0.10435775593329426,
+    "cds": 0.0011003599995786772,
+    "c_ghost": 0.01934559566581315,
+    "barrier": -0.2003443440245171
+   },
+   "yhat_sd": {
+    "d1": 0.05585888154690247,
+    "d2": 0.06943976638731807,
+    "elst": 0.298068453354667,
+    "pauli": 0.46117187653475333,
+    "oi": 0.2759244995792029,
+    "disp": 0.06163057555335434,
+    "cpcm": 0.11442542534358524,
+    "cds": 0.00820805093785427,
+    "c_ghost": 0.01649393782739131,
+    "barrier": 0.0797540117355153
+   },
+   "n_out_of_range": 0,
+   "max_abs_dyhat_vs_production_lf": 0.0
+  },
+  {
+   "pair_id": "P01800",
+   "a_rxn": 1005477,
+   "b_rxn": 1002590,
+   "both_refound": true,
+   "yhat": {
+    "d1": 0.05774347466234588,
+    "d2": 0.035930461741654006,
+    "elst": -0.311027128037896,
+    "pauli": 0.5712168476099018,
+    "oi": -0.25518631949921183,
+    "disp": -0.10340552440006023,
+    "cpcm": -0.001225397862955057,
+    "cds": -0.008075039731058067,
+    "c_ghost": -0.005321297770740136,
+    "barrier": -0.021507558870597993
+   },
+   "yhat_sd": {
+    "d1": 0.044297049527787694,
+    "d2": 0.01847008976205564,
+    "elst": 0.06527675319889942,
+    "pauli": 0.20782555010301101,
+    "oi": 0.11817351328307936,
+    "disp": 0.030090682835285192,
+    "cpcm": 0.06082267798020679,
+    "cds": 0.002579434729186294,
+    "c_ghost": 0.013780830487347219,
+    "barrier": 0.09461158430547703
+   },
+   "n_out_of_range": 0,
+   "max_abs_dyhat_vs_production_lf": 1.2590113673827119e-08
+  }
+ ],
+ "dry_run_production_lf_bytes_differ": [
+  1001995,
+  1004121,
+  1005477
+ ],
+ "subset_exceptions": [
+  {
+   "step": "lm",
+   "gate": "M:source_dir",
+   "why": "g2_deploy.py finalises from the node-local work folder ($TMPDIR, removed after keep_small): result.json source_dir is gone, meta_lf.build would STOP; the keep_small copy <root>/jobs/<job_id> is read instead with every recorded input sha256 checked (DEPLOY finding: the deployment path cannot run meta_lf.py unchanged)",
+   "detail": {
+    "n": 10
+   }
+  },
+  {
+   "step": "ft",
+   "gate": "T:elements",
+   "why": "T_report elements == all 9 model elements (and tokens_lf's d_in computed from them) cannot hold for 10 reactions without each of F / Si / S / Cl / Br: accepted as elements subset of the 9 (= predict_tf input check; the model one-hot has the 9, d_in 29); bin / num / glob columns, ext, token version, T-a must pass",
+   "detail": {
+    "relaxed": [
+     "elements",
+     "d_in"
+    ],
+    "elements": [
+     1,
+     6,
+     7,
+     8,
+     35
+    ],
+    "d_in_tokens_lf": 25,
+    "checks": {
+     "elements": false,
+     "bin_cols": true,
+     "num_cols": true,
+     "ext_used": true,
+     "d_in": false,
+     "glob_cols": true,
+     "token_version": true,
+     "x182_sha256": true,
+     "gate_Ta": true
+    }
+   }
+  }
+ ],
+ "i3_pass": true,
+ "i3_fail_reasons": [],
+ "all_5_pairs_predicted": true,
+ "decisions": [
+  "selection = g2_deploy.py i3-prep unchanged (seed 20261019), file names i3_manifest / i3_list / i3_pairs.csv",
+  "g2: pool 10 x 4 cores in one job (D1-G2: 4 cores per reaction); TS templates = g2_deploy default copy",
+  "subset gates: L-1/L-2/L-4 (real run), F-3, Q-a rate, T elements as in the module docstring; others STOP",
+  "M: i3 override when result.json source_dir is gone (g2_deploy node-local work folder) - keep_small copy + sha256",
+  "re-found TS rule: heavy-atom Kabsch RMSD <= 0.05 A + same formed pairs + same A_idx",
+  "predict: env_d1fu2 on CPU; reference prediction on the production lf inputs for the same pairs"
+ ]
+}
