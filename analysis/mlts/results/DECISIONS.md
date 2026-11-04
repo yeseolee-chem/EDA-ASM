@@ -20,3 +20,11 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
   - 명령서 2절의 "`_trj.xyz`와 단계 수 일치"는 G3 · V 출력에 `_trj.xyz`가 없어 "파싱된 단계 수 = 최적화 cycle 수"로 바꿨다(`_trj.xyz`가 있는 D0 파일은 둘 다 확인).
   - agent가 `mlt_common.write_extxyz`의 버그(빈 문자열 표지가 ase에서 다음 키와 합쳐짐)를 고쳤다: 표지 3개를 JSON 목록으로 쓰고 `read_extxyz`로 되돌린다.
   - 규칙 기록: agent가 login에서 읽기 전용 for 루프 약 5번, `ls -R | wc -l` 1번, `find -maxdepth` 2번, `mmlsquota` 1번.
+- **Phase G 설계 (gen_dft.py, agent; 모든 판단은 G_plan.json · G_report.json의 DECISIONS에도 기록)**:
+  - 정규 모드: 라벨 TS의 DFT Hessian이 남아 있지 않아(D1 tar 삭제) 명령서의 대체 규칙대로 `$LAD/dft_final/<rxn>/work/ts.hess`(라벨 TS에서 XTB2 ALPB(water) Freq)를 쓴다. 분자는 같은 머리줄의 ORCA xTB Freq를 run 단계에서 계산해 `$MLT/dft/hess/`에 둔다.
+  - G-1(반응당 3): 50 cm⁻¹ 이상 실수 모드의 무작위 조합 2개(조화 에너지 U[0.5, 3] kcal/mol, 원자 이동 > 0.3 Å면 다시 뽑음; 전체 계획에서 0번) + 허수 모드 방향 1개(형성 결합 평균 변화 ±U[0.05, 0.15] Å). 허수 모드가 형성 결합 계수 < 0.2이거나 없으면 형성 결합에 가장 가까운 300 cm⁻¹ 이하 모드를 쓴다(59반응).
+  - G-3: 분자 중복 제거는 LADDER Q 키(labels_d1_cr2 `cr.key1/key2`, 거울상 합침) → 고유 분자 964개(분자당 3구조), 기하는 그 키에서 원래 e_frag_rel이 가장 낮은 것(cr2 기준값 출처와 3,176/3,176 일치). TS 조각은 D1 `eda.inp`의 (1)/(2) 표지로 자른다(앞 n_f1개 원자가 조각 1인 반응은 40/9,266뿐).
+  - G-2: G2 ok 중 G3L · Part B 60반응을 뺀 곳에서 dipole × same_ts_g1으로 비례 층화 400반응. 입력은 `g3l.g3l_text`(D1G3_SCRATCH는 `$MLT` 아래로 돌려 `$G3`에 쓰지 않음); 20개 G3L 입력과 바이트 단위로 같음. 편차 하나: g2_final Hessian 464개가 ts.xyz의 순수 평행 이동(≤ 4.4e-8 Å 차)이라 g3l 규칙으로는 빠지는데, 빠지는 쪽이 'different' 형태에 몰려 있어 받아들인다(ORCA가 Hessian 파일의 좌표를 쓰지 않음을 g2_probe에서 확인: 1 bohr 이동한 사본과 OptTS 3 cycle이 비트 단위로 같음). 400개 중 25개가 해당.
+  - 계획: G1 27,798 + G3 21,424 = EnGrad 49,222 + G-2 400반응. 시험: 라벨 TS(1000001) 기울기 1.1e-5 Eh/bohr(수준 일치), 15원자 TS EnGrad 0.0092 core-h.
+  - G-0: 크기 5분위마다 10개 = 50 EnGrad + 변위 없는 라벨 TS 10개(수준 일치 확인) + 'different' 형태 G-2 시범 2개. 예상 > 5,000 core-h이면 STOP. 추가로 라벨 TS 기울기 중앙값 > 1e-3 Eh/bohr이면 STOP(agent가 넣은 수준 불일치 보호 장치).
+  - 제출: plan 1061632 → g0 1061633(afterok).
