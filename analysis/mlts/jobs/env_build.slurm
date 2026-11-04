@@ -51,6 +51,14 @@ if [[ ! -f $ENV/.mlts_env_v2 ]]; then
   $PY -c "import torch, numpy; assert torch.__version__.startswith('2.8.0'), torch.__version__; assert numpy.__version__ == '1.26.4', numpy.__version__; print('torch', torch.__version__, 'cuda', torch.version.cuda, torch.cuda.is_available(), 'numpy', numpy.__version__)" || exit 3
   touch $ENV/.mlts_env_v2
 fi
+# Stage 3 (stamp .mlts_env_v3; done by hand on 11-04 inside the GPU sandbox with `jobs/sbx.sh mlts -m pip ...`, recorded here
+#   so a rebuild repeats it): the cloned torchvision 0.17.1 / torchaudio 2.2.1 broke `import mace` under torch 2.8.
+if [[ ! -f $ENV/.mlts_env_v3 ]]; then
+  CONS2=$ENV/.mlts_constraints_v2.txt
+  inst tv torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+  inst cueq -c $CONS2 cuequivariance-torch cuequivariance-ops-torch-cu12 "nvidia-cuda-nvcc-cu12==12.8.*" "nvidia-cuda-runtime-cu12==12.8.*"
+  touch $ENV/.mlts_env_v3
+fi
 cd ${SLURM_SUBMIT_DIR:-.}
 $PY env_check.py
 rc=$?
