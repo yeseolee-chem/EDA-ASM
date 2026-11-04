@@ -907,7 +907,20 @@ def base_cand(P):
 
 
 def r1_run(P, k):
-    return P.state.get("params", {}).get("base_run") if k == 0 else f"FT_{k}"
+    """first-round model of fold k: FT_0 = the base pilot; FT_1-4 = FTpilot_<base>_<k> when that speculative run
+    (decision FT-spec: both pilots' folds 1-4 trained during the pilot) is trained, else FT_<k>."""
+    if k == 0:
+        return P.state.get("params", {}).get("base_run")
+    b = P.state.get("params", {}).get("base")
+    if b and train_done(P, f"FTpilot_{b}_{k}"):
+        return f"FTpilot_{b}_{k}"
+    return f"FT_{k}"
+
+
+def spec_live(P, cand, k):
+    """a manual speculative run of fold k (job name ft_spec_<cand>_<k>, decision FT-spec) is queued or running."""
+    name = f"ft_spec_{cand}_{k}"
+    return any(j.get("name") == name for j in (getattr(P, "sq", None) or []))
 
 
 def z_wall_h(P, cand):
@@ -1547,6 +1560,8 @@ def units_ftr1(P, S, st):
     b = base_cand(P)
     out = []
     for k in range(1, 5):
+        if r1_run(P, k) != f"FT_{k}" or spec_live(P, b, k):   # reuse / wait for the speculative run (FT-spec)
+            continue
         out += train_unit(f"FT_{k}", f"FT_{k}", b)
     return out
 
@@ -2368,8 +2383,8 @@ def registry():
                    done=lambda P: all(data_ok(P, f"FT_{k}") for k in range(1, 5)), results=["ft/FT_[1-4]_data.json"],
                    summary="finetune data FT_1 FT_2 FT_3 FT_4"))
     S.append(Stage("FT-r1", "FT", 34, units_ftr1, after=["FT-d1"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
-                   done=lambda P: all(train_done(P, f"FT_{k}") for k in range(1, 5)),
-                   progress=prog_train(lambda P: [f"FT_{k}" for k in range(1, 5)]),
+                   done=lambda P: all(train_done(P, r1_run(P, k)) for k in range(1, 5)),
+                   progress=prog_train(lambda P: [r1_run(P, k) for k in range(1, 5)]),
                    results=["ft/FT_[1-4]_train.json", "ft/FT_[1-4]_ft1.json"],
                    summary="train FT_<k> <base> ::: ft1 FT_<k>, k = 1..4"))
     S.append(Stage("FT2-r1", "FT", 35, units_ft2r1, after=["FT2-p", "lists"], code=[("ts_geom.py", "run")],
