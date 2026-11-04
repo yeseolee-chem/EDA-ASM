@@ -1,0 +1,3643 @@
+#!/usr/bin/env python3
+r"""pipeline.py — DEPLOY-V2 (MLTS) automatic stage launcher (docs/specs/DEPLOY_V2_MLTS.md order 0 -> I -> G -> Z -> FT
+-> A -> H -> C -> R -> K -> E -> X -> W -> P -> S; operator notes PIPELINE.md). Compute nodes only: `once` runs inside
+jobs/pipeline.slurm (a 1-CPU cpu1/cpu2 job that queues its successor with --begin=now+10minutes and
+--dependency=singleton: CLAUDE.md option 2); `dry` / `status` through jobs/sbx.sh; `lists` as a small CPU job.
+Standard library + mlt_common only at import (pandas / numpy only inside `lists`), so MLTENV=reactot starts in < 1 s.
+
+CLI (from analysis/mlts)
+  once     one pass: lock $MLT/pipeline/lock -> snapshot (squeue -r, sacct) -> RESOLVE lines of results/STOP_*.md ->
+           reconcile intents -> adopt manual jobs -> stage status / unit retries -> decisions and STOPs -> git commit +
+           push of analysis/mlts/results only -> submit ready work within the slot policy -> results/PIPELINE_STATE.json,
+           results/PIPELINE_LOG.md, $MLT/PIPELINE_ATTENTION; exit 0
+  dry      the same pass read-only (squeue / sacct / git reads only): prints statuses, decisions and the sbatch lines it
+           would run; never sbatch, never git writes, never state / log / DECISIONS / STOP writes
+  status   one line per stage from results/PIPELINE_STATE.json + the live squeue count per stage
+  lists    (CPU job, MLTENV=reactot) $MLT/pipeline/lists/{f<k>_test,dip<d>,a3}.csv + lists.json from mlt_common.targets()
+  guard <file ...>   (first segment of every launcher job, any env) exit 0 when every file is tracked and equal to
+           HEAD, else exit 4: a job never runs code that was changed after it was submitted (it is resubmitted once the
+           code is committed; exit 4 never uses a retry)
+
+Policy (user 2026-11-04, results/DECISIONS.md): take the recommended option at every branch and at spec STOPs, record it
+in DECISIONS.md, continue; a STOP without a recommended option = HALT (results/STOP_<stage>.md, cleared by a first line
+`RESOLVE: retry | accept | skip | param [<stage>.]<k>=<v>`). The launcher never deletes data and never cancels jobs.
+Slots (this cluster schedules first-come-first-served: PriorityType=priority/basic, so --nice is not used):
+  queue: every task of the user (launchers, sandbox, manual work counted) + the successor launcher <= 20 - 1 spare;
+  eligible pending (not Dependency / BeginTime / held, launchers excluded) <= free running slots (10 - running) + 2 for
+  critical work, <= free running slots for filler (filler never waits in the queue ahead of critical work);
+  CPUs <= 640, GPUs <= 12 (pending counted); no submissions without a fresh $MLT/QUOTA_FREE_GB (DECISIONS 0-8).
+
+Job contract (every stage; placeholders = code not written yet, see PIPELINE.md 'contracts'):
+  python <script> <sub> [args] [<i|@I> <n>] through jobs/mlt.slurm from analysis/mlts (the launcher prepends the
+  `pipeline.py guard <files> :::` segment); exit 0 done, 2 incomplete / not ready (resubmit the same command), 3 STOP;
+  units atomic + skipped when present; a task stops claiming when 2 h of the 48 h wall remain (MLT_JOB_T0); report
+  JSON: complete (bool), n_todo, stop (null | text), est {units_total, unit_wall_h, workers}, + the metrics the stage
+  decision reads.
+A script counts as ready only when it and every analysis/mlts module it imports (transitively, + mlt_common.py) are
+tracked by git and equal to HEAD, and the sub-command token (add_parser("sub") / == "sub" / in (.., "sub", ..) /
+"sub": ( / == ["sub"]) is present: code still being written is never run ('waiting: code ...'), and starts on its own
+once the lead commits it. The same file set is checked again at job start (guard).
+Every job: -J mltp_<stage> --comment=mltp:<stage>:<unit spec>:<intent id>; manual jobs are adopted by the names in
+the registry (adopt) or by a comment mltp:<stage>:<unit>:manual."""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import re
+import secrets
+import shlex
+import socket
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import mlt_common as M  # noqa: E402            (stdlib only at import)
+
+CODE_VERSION = "mltp-2"
+LAUNCH = "mltp_launch"
+
+# ---------------------------------------------------------------- policy constants
+SUBMIT_CAP = 20                 # MaxSubmit: every task (array element) of the user, running + pending
+SPARE = 1                       # one queue place always left for the lead (a manual job / a new sandbox)
+MAX_RUN = 10                    # MaxJobs (running tasks; SLURM enforces it)
+PEND_BUF = 2                    # eligible pending tasks beyond the free running slots, critical work only
+CPU_CAP, GPU_CAP = 640, 12
+MAX_TASKS_PER_PASS = SUBMIT_CAP
+INELIGIBLE = ("Dependency", "BeginTime", "JobHeld", "DependencyNeverSatisfied")   # pending reasons that do not compete
+QUOTA_MIN_GB, QUOTA_STALE_H = 30.0, 24.0
+INTENT_VOID_S = 120
+LOST_AFTER_S, LOST_ALONE_S = 3600, 12 * 3600
+LOCK_STALE_S = 720              # a pass lasts <= 600 s (timeout in jobs/pipeline.slurm)
+RETRY = dict(cont=4, infra=1, oom=1, noprog=2, code=6, sbatch=3)
+EXIT_GUARD = 4                  # `pipeline.py guard`: code changed after submission
+WALL_TARGET_H = 20.0
+G_BUDGET = 5000.0
+HISTORY_SINCE = "2026-11-04T00:00:00"                   # first sacct window for adopting the lead's manual jobs
+HISTORY_MARGIN_S = 900
+PART = dict(C="cpu1,cpu2", C2="cpu2", GA="gpu1,gpu2,gpu3,gpu4,gpu5,gpu6", G24="gpu1,gpu3,gpu4,gpu5", G48="gpu3,gpu4,gpu5")
+SQ_FMT = "%i|%j|%T|%C|%b|%P|%r|%k"
+SA_FMT = "JobID,JobName,State,ExitCode,Elapsed,Start,End,Submit,Comment"
+TRAILER = "Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
+GIT_ID = ("-c", "user.name=yeseo1ee", "-c", "user.email=yeseolele@gmail.com")
+LIVE_STATES = ("PENDING", "RUNNING", "REQUEUED", "SUSPENDED", "CONFIGURING", "COMPLETING", "RESIZING", "STAGE_OUT")
+TRANSIENT_RX = re.compile(r"Socket timed out|Unable to contact slurm controller|Transient|try again|Connection refused|"
+                          r"Communication connection failure|Zero Bytes|timed out|TimeoutExpired|Resource temporarily "
+                          r"unavailable|slurm_persist|Error connecting|Slurm backup controller|in standby mode",
+                          re.I)
+MAXSUBMIT_RX = re.compile(r"MaxSubmit|AssocMaxSubmit|QOSMaxSubmit")
+DEPENDENCY_RX = re.compile(r"[Dd]ependency")
+
+Z_CANDS = ("MACE-OMOL-0", "MACE-MH-1", "AIMNet2", "MACE-OFF24", "xtb")
+Z2FT = {"MACE-MH-1": "MACE-MH-1-omol"}                 # zero_shot name -> finetune.py candidate name
+FT2Z = {v: k for k, v in Z2FT.items()}
+FT_ALIAS = {"omol": "MACE-OMOL-0", "aim": "AIMNet2", "aimnet2": "AIMNet2", "mh1": "MACE-MH-1-omol"}
+SPEED_DEFAULT_TAG = {"MACE-OMOL-0": "MACE-OMOL-0|float64|", "MACE-MH-1": "MACE-MH-1|float64|", "AIMNet2": "AIMNet2||",
+                     "MACE-OFF24": "MACE-OFF24|float64|"}               # = zero_shot.SPEED_DEFAULT_TAG
+STARTS = ("label", "g2")
+FT2_A = dict(dd_median_A=0.010, dd_p90_A=0.030, rmsd_median_A=0.02, same_ts_frac=0.90)   # spec 5 FT-2 (a)
+NIMAG1_MIN = 0.95
+TIE_SAME, TIE_DD = 0.025, 0.002
+GEOM_PARTIAL = 0.995            # coverage accepted after 2 rounds without progress (records missing = pipeline errors)
+Z_TOL = 0.01                    # Z: up to 1 % of the list without a record counts as finished
+A3_RULE = dict(stop_below=0.70, limit_below=0.85, app_core_h=1.0)
+A3_BUDGET = {"A": (0.6, 3.0), "Ap": (0.6, 3.0), "App": (1.0, 3.0)}    # arm: (core-h, GPU-min) per reaction, median
+N_D1 = 9266
+DISK_GB_PER_RXN_DEFAULT = 0.05                          # A-3 before its own measurement
+H_DISK_GB_PER_RXN_DEFAULT = 0.02
+APP_DISK_GB_PER_RXN_DEFAULT = 0.01
+DISK_GB_DEFAULT = 0.2                                   # per task, for the free-disk estimate between quota readings
+DEFAULT_OPTIONS = ["`retry` — 시도 횟수를 0으로 되돌리고 다시 낸다(원인을 고친 뒤) / reset attempts and resubmit",
+                   "`accept` — 이 단계를 끝난 것으로 보고 다음 단계로 간다 / treat the stage as done",
+                   "`skip` — 이 단계를 건너뛴다(뒤 단계가 이 단계 산출물 없이 시작될 수 있다) / skip the stage",
+                   "`param [<단계>.]<이름>=<값>` — 단계 매개변수를 바꾸고 다시 낸다 / set a stage parameter and retry"]
+
+
+class SnapshotError(RuntimeError):
+    pass
+
+
+# ================================================================ small helpers
+def iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+
+
+def parse_iso(s):
+    try:
+        return time.mktime(time.strptime(str(s)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _int(x, default=0):
+    try:
+        return int(str(x).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def gpu_count(tres):
+    t = str(tres or "")
+    if "gpu" not in t:
+        return 0
+    n = [int(x) for x in re.findall(r"gpu(?::[A-Za-z0-9_.-]+)?:(\d+)", t)]
+    return sum(n) if n else 1
+
+
+def parse_sq(line):
+    p = line.rstrip("\n").split("|", 7)
+    p += [""] * (8 - len(p))
+    jid, name, state, cpus, tres, part, reason, comment = (x.strip() for x in p)
+    return dict(id=jid, name=name, state=state, cpus=_int(cpus), gpus=gpu_count(tres), part=part, reason=reason,
+                comment="" if comment in ("(null)", "") else comment)
+
+
+def parse_sa(line):
+    p = line.rstrip("\n").split("|", 8)
+    p += [""] * (9 - len(p))
+    jid, name, state, exitc, elapsed, start, end, submit, comment = (x.strip() for x in p)
+    rc, _, sig = exitc.partition(":")
+    return dict(id=jid, name=name, state=state, exit=_int(rc, None), sig=_int(sig), elapsed=elapsed, start=start,
+                end=end, submit=submit, comment=comment)
+
+
+def expand_ids(jid):
+    """'123_[2-3,5%2]' -> ['123_2', '123_3', '123_5']; anything else -> [jid]."""
+    m = re.fullmatch(r"(\d+)_\[([^\]]+)\]", str(jid))
+    if not m:
+        return [str(jid)]
+    base, spec, out = m.group(1), m.group(2).split("%")[0], []
+    for part in spec.split(","):
+        if "-" in part:
+            a, b = part.split("-")[:2]
+            out += [f"{base}_{i}" for i in range(int(a), int(b) + 1)]
+        elif part.strip():
+            out.append(f"{base}_{int(part)}")
+    return out
+
+
+def parse_comment(c):
+    """'mltp:<stage>:<unit spec>:<intent>' -> (stage, spec, intent) or None."""
+    if not c or not str(c).startswith("mltp:"):
+        return None
+    p = str(c).split(":")
+    if len(p) < 4:
+        return None
+    return p[1], ":".join(p[2:-1]), p[-1]
+
+
+def spec_keys(spec, line_id=None):
+    """unit spec of a comment -> unit keys. 'G1[0+1+2]' with line id '123_1' -> ['G1[1]']; 'collect' -> ['collect']."""
+    m = re.fullmatch(r"(.+)\[([\d+]+)\]", spec or "")
+    if not m:
+        return [spec] if spec else []
+    akey, idx = m.group(1), [int(x) for x in m.group(2).split("+") if x]
+    if line_id and "_" in str(line_id):
+        i = _int(str(line_id).split("_", 1)[1], None)
+        if i is not None:
+            return [f"{akey}[{i}]"]
+    return [f"{akey}[{i}]" for i in idx]
+
+
+def classify(end):
+    s = str(end.get("state") or "").split()[0] if end.get("state") else ""
+    rc = end.get("exit")
+    if s == "COMPLETED":
+        return "ok" if rc in (0, None) else {2: "cont", 3: "stop", EXIT_GUARD: "code"}.get(rc, "infra")
+    if s == "FAILED":
+        return {2: "cont", 3: "stop", EXIT_GUARD: "code"}.get(rc, "infra")
+    if s == "TIMEOUT":
+        return "cont"
+    if s == "OUT_OF_MEMORY":
+        return "oom"
+    if s == "CANCELLED":
+        return "cancelled"
+    return "infra"                     # NODE_FAIL BOOT_FAIL PREEMPTED DEADLINE LOST ...
+
+
+def count_dir(p):
+    try:
+        with os.scandir(p) as it:
+            return sum(1 for _ in it)
+    except OSError:
+        return 0
+
+
+def count_lines(p):
+    try:
+        with open(p, "rb") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+def n_tasks(units_total, unit_wall_h, workers, nmax, wall=WALL_TARGET_H):
+    """n = clamp(ceil(units x unit wall / workers / 20 h), 1, n_max)."""
+    try:
+        x = float(units_total) * float(unit_wall_h) / max(1.0, float(workers)) / wall
+    except (TypeError, ValueError):
+        return 1
+    return int(max(1, min(int(nmax), math.ceil(x)))) if x > 0 else 1
+
+
+def pct(v, q):
+    """numpy-default (linear) percentile of a list."""
+    v = sorted(v)
+    if not v:
+        return None
+    k = (len(v) - 1) * q / 100.0
+    lo, hi = int(math.floor(k)), int(math.ceil(k))
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
+
+
+def child_env(base=None):
+    """environment for sbatch from inside a job: drop the launcher's SLURM_* / SBATCH_* and MLT_JOB_T0 (env.sh would
+    otherwise inherit the launcher's start time)."""
+    e = dict(os.environ if base is None else base)
+    for k in list(e):
+        if k.startswith(("SLURM_", "SBATCH_", "SRUN_", "SALLOC_")) or k in ("MLT_JOB_T0", "MLTENV",
+                                                                              "PIPELINE_FAKE_SLURM"):
+            e.pop(k, None)
+    return e
+
+
+def token_re(sub):
+    s = re.escape(sub)
+    q = r"""["']"""
+    return re.compile(rf"(add_parser\(\s*{q}{s}{q}|==\s*{q}{s}{q}|\bin\s*\([^)]*{q}{s}{q}[^)]*\)|{q}{s}{q}\s*:\s*\(|"
+                      rf"==\s*\[\s*{q}{s}{q}\s*\])")
+
+
+def eligible(line):
+    """a PENDING task that competes for a running slot now (not waiting on a dependency / begin time / hold)."""
+    r = str(line.get("reason") or "")
+    return line.get("state") == "PENDING" and not any(r.startswith(x) for x in INELIGIBLE)
+
+
+def sbatch_error_kind(rc, err):
+    """'maxsubmit' (the submit cap), 'transient' (controller / timeout: the job may or may not exist), 'dependency'
+    (a dependency job left the controller between the snapshot and sbatch: nothing created, recomputed next pass),
+    'fixed' (anything else: counted, HALT after RETRY['sbatch'] passes in a row)."""
+    e = str(err or "")
+    if MAXSUBMIT_RX.search(e):
+        return "maxsubmit"
+    if rc == 255 or TRANSIENT_RX.search(e):
+        return "transient"
+    if DEPENDENCY_RX.search(e):
+        return "dependency"
+    return "fixed"
+
+
+IMPORT_RX = re.compile(r"^[ \t]*(?:from[ \t]+([A-Za-z_]\w*)[ \t]+import|import[ \t]+([A-Za-z_][\w \t,.]*))", re.M)
+
+
+def local_closure(code_dir, scripts):
+    """the scripts + every analysis/mlts module they import (transitively, any indentation) + mlt_common.py, as
+    file names relative to code_dir (sorted). A module counts when <code_dir>/<name>.py exists."""
+    code_dir = Path(code_dir)
+    seen, todo = set(), [s for s in scripts if s]
+    while todo:
+        s = todo.pop()
+        if s in seen:
+            continue
+        p = code_dir / s
+        if not p.is_file():
+            seen.add(s)
+            continue
+        seen.add(s)
+        try:
+            txt = p.read_text()
+        except OSError:
+            continue
+        for a, b in IMPORT_RX.findall(txt):
+            names = [a] if a else [x.strip().split()[0].split(".")[0] for x in b.split(",") if x.strip()]
+            for n in names:
+                if n and (code_dir / f"{n}.py").is_file() and f"{n}.py" not in seen:
+                    todo.append(f"{n}.py")
+    if (code_dir / "mlt_common.py").is_file():
+        seen.add("mlt_common.py")
+    return sorted(seen)
+
+
+def cmd_scripts(cmd):
+    """the script of every ' ::: ' / ' ;;; ' segment of a jobs/mlt.slurm command."""
+    out, first = [], True
+    for t in cmd:
+        if t in (":::", ";;;"):
+            first = True
+            continue
+        if first:
+            out.append(t)
+            first = False
+    return [s for s in out if s.endswith(".py")]
+
+
+# ================================================================ SLURM interfaces
+class Slurm:
+    """real SLURM client commands (compute node)."""
+    fake = False
+
+    def __init__(self, user=None):
+        self.user = user or os.environ.get("USER") or os.environ.get("LOGNAME") or "yeseo1ee"
+
+    @staticmethod
+    def _run(argv, timeout=90, cwd=None, env=None):
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env)
+            return r.returncode, r.stdout, r.stderr
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return 255, "", f"{type(e).__name__}: {e}"
+
+    def squeue(self):
+        rc, out, err = self._run(["squeue", "-r", "-u", self.user, "-h", "-o", SQ_FMT])
+        if rc != 0:
+            raise SnapshotError(f"squeue rc {rc}: {err.strip()[:300]}")
+        return [parse_sq(x) for x in out.splitlines() if x.strip()]
+
+    def sacct(self, ids=None, names=None, since=None):
+        rows = []
+        chunks = [list(ids)[i:i + 100] for i in range(0, len(ids), 100)] if ids else [None]
+        for ch in chunks:
+            argv = ["sacct", "-X", "-n", "-P", "-o", SA_FMT]
+            argv += ["-j", ",".join(ch)] if ch else ["-u", self.user]
+            if names:
+                argv += ["--name", ",".join(names)]
+            if since:
+                argv += ["-S", since]
+            rc, out, err = self._run(argv)
+            if rc != 0:
+                return None
+            rows += [parse_sa(x) for x in out.splitlines() if x.strip()]
+        return rows
+
+    def sbatch(self, argv, cwd, env):
+        rc, out, err = self._run(["sbatch", "--parsable"] + list(argv), timeout=120, cwd=cwd, env=env)
+        return rc, out.strip(), err.strip()
+
+
+class ReadOnlySlurm:
+    """dry mode: squeue / sacct pass through, sbatch refuses."""
+    def __init__(self, inner):
+        self.inner, self.fake = inner, getattr(inner, "fake", False)
+
+    def squeue(self):
+        return self.inner.squeue()
+
+    def sacct(self, *a, **k):
+        return self.inner.sacct(*a, **k)
+
+    def sbatch(self, *a, **k):
+        raise RuntimeError("sbatch called in dry mode")
+
+
+def parse_sbatch(argv):
+    """the options pipeline.py passes (both '--x=v' and '-x v' forms) + the script and its arguments."""
+    o = dict(name=None, cpus=1, gpus=0, mem=None, part=None, array=None, comment="", dep=None, nice=0, begin=None,
+             env=None, output=None, script=None, cmd=[])
+    i, a = 0, list(argv)
+    short = {"-J": "--job-name", "-p": "--partition", "-c": "--cpus-per-task", "-o": "--output", "-a": "--array"}
+    while i < len(a):
+        t = a[i]
+        if t in ("--parsable",):
+            i += 1
+            continue
+        if t in short:
+            k, v = short[t], a[i + 1]
+            i += 2
+        elif t.startswith("--") and "=" in t:
+            k, v = t.split("=", 1)
+            i += 1
+        elif t.startswith("-"):
+            k, v = t, (a[i + 1] if i + 1 < len(a) else "")
+            i += 2
+        else:
+            o["script"], o["cmd"] = t, a[i + 1:]
+            break
+        if k == "--job-name":
+            o["name"] = v
+        elif k == "--partition":
+            o["part"] = v
+        elif k == "--cpus-per-task":
+            o["cpus"] = _int(v, 1)
+        elif k == "--gres":
+            o["gpus"] = gpu_count(v)
+        elif k == "--mem":
+            o["mem"] = v
+        elif k == "--array":
+            o["array"] = [int(x) for x in v.split("%")[0].split(",") if x.strip().isdigit()]
+        elif k == "--comment":
+            o["comment"] = v
+        elif k == "--dependency":
+            o["dep"] = v
+        elif k == "--nice":
+            o["nice"] = _int(v)
+        elif k == "--begin":
+            o["begin"] = v
+        elif k == "--export":
+            m = re.search(r"MLTENV=([A-Za-z0-9_]+)", v)
+            o["env"] = m.group(1) if m else None
+        elif k == "--output":
+            o["output"] = v
+    return o
+
+
+class FakeSlurm:
+    """in-memory SLURM for tests (PIPELINE_FAKE_SLURM=<json> persists it between processes)."""
+    fake = True
+
+    def __init__(self, path=None, clock=None, max_submit=20):
+        self.path = Path(path) if path else None
+        self.jobs = {}
+        self.next_id = 1062500
+        self.calls = []
+        self.max_submit = max_submit
+        self.clock = clock or time.time
+        self.fail = None             # None | 'maxsubmit' | 'error' | 'transient' | 'transient_created' | 'crash_after' | 'crash_before'
+        self.sacct_fail = False
+        if self.path and self.path.is_file():
+            d = json.loads(self.path.read_text())
+            self.jobs, self.next_id, self.calls = d["jobs"], d["next_id"], d.get("calls", [])
+
+    def _save(self):
+        if self.path:
+            M.write_json(self.path, dict(jobs=self.jobs, next_id=self.next_id, calls=self.calls))
+
+    def add(self, jid, name, state="RUNNING", cpus=1, gpus=0, part="cpu2", comment="", reason="None", submit=None,
+            start=None, exit=0, cmd=None):
+        self.jobs[str(jid)] = dict(id=str(jid), name=name, state=state, cpus=cpus, gpus=gpus, part=part,
+                                   comment=comment, reason=reason, submit=submit or iso(self.clock()),
+                                   start=start or (iso(self.clock()) if state == "RUNNING" else "Unknown"),
+                                   end="Unknown", exit=exit, elapsed="00:00:00", cmd=cmd or [])
+        self._save()
+
+    def add_line(self, line):
+        d = parse_sq(line)
+        self.add(d["id"], d["name"], d["state"], d["cpus"], d["gpus"], d["part"], d["comment"], d["reason"])
+
+    def ids(self, jid):
+        jid = str(jid)
+        return [k for k in self.jobs if k == jid or k.split("_")[0] == jid]
+
+    def set(self, jid, state, exit=0, end=None, start=None):
+        for k in self.ids(jid):
+            j = self.jobs[k]
+            if start:
+                j["start"] = start
+            elif j["start"] == "Unknown" and state != "PENDING":
+                j["start"] = iso(self.clock())
+            j["state"], j["exit"] = state, exit
+            if state not in LIVE_STATES:
+                j["end"] = end or iso(self.clock())
+        self._save()
+
+    def squeue(self):
+        return [dict(id=j["id"], name=j["name"], state=j["state"], cpus=j["cpus"], gpus=j["gpus"], part=j["part"],
+                     reason=j["reason"], comment=j["comment"]) for j in self.jobs.values()
+                if j["state"] in ("PENDING", "RUNNING")]
+
+    def sacct(self, ids=None, names=None, since=None):
+        if self.sacct_fail:
+            return None
+        rows = []
+        want = set(map(str, ids)) if ids else None
+        for j in self.jobs.values():
+            if want is not None and j["id"] not in want and j["id"].split("_")[0] not in want:
+                continue
+            if names and j["name"] not in names:
+                continue
+            if since and j["submit"] < since[:19]:
+                continue
+            rows.append(dict(id=j["id"], name=j["name"], state=j["state"], exit=j["exit"], sig=0, elapsed=j["elapsed"],
+                             start=j["start"], end=j["end"], submit=j["submit"], comment=j["comment"]))
+        return rows
+
+    def sbatch(self, argv, cwd=None, env=None):
+        self.calls.append(list(argv))
+        a = parse_sbatch(argv)
+        n = len(a["array"]) if a["array"] is not None else 1
+        if self.fail == "crash_before":
+            raise RuntimeError("fake crash before sbatch")
+        if self.fail == "error":
+            self._save()
+            return 1, "", "sbatch: error: Batch job submission failed: Invalid partition name specified"
+        if self.fail == "transient":
+            self._save()
+            return 1, "", "sbatch: error: Batch job submission failed: Socket timed out on send/recv operation"
+        if self.fail == "maxsubmit" or len(self.squeue()) + n > self.max_submit:
+            self._save()
+            return 1, "", "sbatch: error: QOSMaxSubmitJobPerUserLimit"
+        jid = str(self.next_id)
+        self.next_id += 1
+        ids = [f"{jid}_{i}" for i in a["array"]] if a["array"] is not None else [jid]
+        if a["name"] is None and str(a["script"] or "").endswith("pipeline.slurm"):
+            a["name"] = LAUNCH                               # the script's own #SBATCH --job-name
+        for t in ids:
+            self.jobs[t] = dict(id=t, name=a["name"] or "sbatch", state="PENDING", cpus=a["cpus"], gpus=a["gpus"],
+                                part=a["part"] or "", comment=a["comment"],
+                                reason="Dependency" if a["dep"] else ("BeginTime" if a["begin"] else "Priority"),
+                                submit=iso(self.clock()), start="Unknown", end="Unknown", exit=0, elapsed="00:00:00",
+                                cmd=a["cmd"], script=a["script"], env=a["env"], mem=a["mem"], dep=a["dep"],
+                                nice=a["nice"], begin=a["begin"])
+        self._save()
+        if self.fail == "crash_after":
+            raise RuntimeError("fake crash after sbatch")
+        if self.fail == "transient_created":                 # the controller created the job but the reply timed out
+            return 255, "", "TimeoutExpired: sbatch did not answer in 120 s"
+        return 0, jid, ""
+
+
+def default_slurm():
+    p = os.environ.get("PIPELINE_FAKE_SLURM")
+    return FakeSlurm(p) if p else Slurm()
+
+
+# ================================================================ git interfaces
+class Git:
+    fake = False
+
+    def __init__(self, cwd, readonly=False):
+        self.cwd, self.readonly = str(cwd), readonly
+
+    def _g(self, *args, timeout=60):
+        """git with a timeout that ends it with SIGTERM first (git removes its index.lock on SIGTERM; the SIGKILL of
+        subprocess.run(timeout=) would leave .git/index.lock behind and block every later commit)."""
+        try:
+            p = subprocess.Popen(["git", *args], cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True)
+        except OSError as e:
+            return 255, f"{type(e).__name__}: {e}"
+        try:
+            out, _ = p.communicate(timeout=timeout)
+            return p.returncode, out or ""
+        except subprocess.TimeoutExpired:
+            p.terminate()
+            try:
+                out, _ = p.communicate(timeout=20)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                out, _ = p.communicate()
+            return 255, f"git {args[0] if args else ''} timed out after {timeout} s: {(out or '')[-200:]}"
+
+    def tracked(self, path):
+        return self._g("ls-files", "--error-unmatch", "--", str(path))[0] == 0
+
+    def clean(self, path):
+        return self._g("diff", "--quiet", "HEAD", "--", str(path))[0] == 0
+
+    def branch(self):
+        rc, out = self._g("rev-parse", "--abbrev-ref", "HEAD")
+        return out.strip().splitlines()[0] if rc == 0 and out.strip() else None
+
+    def _lock_path(self):
+        rc, out = self._g("rev-parse", "--git-path", "index.lock")
+        if rc != 0 or not out.strip():
+            return None
+        p = Path(out.strip().splitlines()[0])
+        return p if p.is_absolute() else Path(self.cwd) / p
+
+    def index_locked(self):
+        p = self._lock_path()
+        return True if p is None else p.exists()
+
+    def index_lock_age(self):
+        p = self._lock_path()
+        try:
+            return time.time() - p.stat().st_mtime if p is not None else None
+        except OSError:
+            return None
+
+    def head(self):
+        rc, out = self._g("rev-parse", "--short", "HEAD")
+        return out.strip() if rc == 0 else None
+
+    def add(self, paths):
+        if self.readonly:
+            raise RuntimeError("git add in read-only mode")
+        return self._g("add", "--", *map(str, paths))
+
+    def commit(self, paths, title, body):
+        if self.readonly:
+            raise RuntimeError("git commit in read-only mode")
+        return self._g(*GIT_ID, "commit", "--only", "-m", title, "-m", body, "--", *map(str, paths), timeout=120)
+
+    def push(self):
+        if self.readonly:
+            raise RuntimeError("git push in read-only mode")
+        return self._g("push", "origin", "mlts", timeout=60)
+
+
+class FakeGit:
+    fake = True
+
+    def __init__(self, tracked=None, dirty=(), branch="mlts", push_ok=True, locked=False):
+        self.tracked_names = None if tracked is None else set(tracked)
+        self.dirty, self.br, self.push_ok, self.locked = set(dirty), branch, push_ok, locked
+        self.commits, self.pushes, self.committed, self.n = [], [], set(), 0
+        self.lock_age = 0.0
+
+    def tracked(self, path):
+        n = Path(path).name
+        return self.tracked_names is None or n in self.tracked_names or n in self.committed
+
+    def clean(self, path):
+        return Path(path).name not in self.dirty
+
+    def branch(self):
+        return self.br
+
+    def index_locked(self):
+        return self.locked
+
+    def index_lock_age(self):
+        return self.lock_age if self.locked else None
+
+    def head(self):
+        return f"fake{self.n:04d}"
+
+    def add(self, paths):
+        return 0, ""
+
+    def commit(self, paths, title, body):
+        self.n += 1
+        self.commits.append(dict(paths=[str(p) for p in paths], title=title, body=body))
+        self.committed |= {Path(p).name for p in paths}
+        return 0, ""
+
+    def push(self):
+        self.pushes.append(self.push_ok)
+        return (0, "") if self.push_ok else (1, "fake push failure")
+
+
+# ================================================================ context
+class Ctx:
+    """roots + injectable SLURM / git / clock (tests point every root under $MLT/tmp/pipetest)."""
+
+    def __init__(self, mlt=None, res=None, pdir=None, ctl=None, code=None, slurm=None, git=None, clock=None, job=None,
+                 launcher=None, env=None):
+        self.mlt = Path(mlt) if mlt else Path(M.MLT)
+        self.res = Path(res) if res else Path(M.RES)
+        self.pdir = Path(pdir) if pdir else self.mlt / "pipeline"
+        self.ctl = Path(ctl) if ctl else self.mlt
+        self.code = Path(code) if code else HERE
+        self.slurm = slurm if slurm is not None else default_slurm()
+        self.git = git if git is not None else Git(self.code)
+        self.clock = clock or time.time
+        self.job = str(job or os.environ.get("SLURM_JOB_ID") or f"pid{os.getpid()}")
+        self.launcher = (os.environ.get("SLURM_JOB_NAME") == LAUNCH) if launcher is None else bool(launcher)
+        self.env = env
+
+    @property
+    def state_path(self):
+        return self.res / "PIPELINE_STATE.json"
+
+    @property
+    def log_path(self):
+        return self.res / "PIPELINE_LOG.md"
+
+    @property
+    def dec_path(self):
+        return self.res / "DECISIONS.md"
+
+    @property
+    def lists(self):
+        return self.pdir / "lists"
+
+    def list_path(self, name):
+        return self.lists / f"{name}.csv"
+
+
+# ================================================================ registry building blocks
+class Unit:
+    __slots__ = ("key", "akey", "idx", "cmd", "env", "part", "c", "mem", "gpu", "deps", "done", "sink", "disk_gb")
+
+    def __init__(self, key, cmd, env="reactot", part="C", c=4, mem=16, gpu=0, deps=(), done=None, sink=False,
+                 akey=None, idx=None, disk_gb=None):
+        self.key, self.cmd, self.env, self.part, self.c, self.mem, self.gpu = key, [str(x) for x in cmd], env, part, c, mem, gpu
+        self.deps, self.done, self.sink, self.akey, self.idx = list(deps), done, sink, akey, idx
+        self.disk_gb = float(DISK_GB_DEFAULT if disk_gb is None else disk_gb)     # GB this task may write (estimate)
+
+
+def one(key, cmd, **kw):
+    return [Unit(key, cmd, **kw)]
+
+
+def arr(akey, cmd, n, **kw):
+    """array units akey[0..n-1]; cmd carries '@I' (mlt_common.array_task) and n."""
+    return [Unit(f"{akey}[{i}]", cmd, akey=akey, idx=i, **kw) for i in range(int(n))]
+
+
+def keys(us):
+    return [u.key for u in us]
+
+
+class Stage:
+    """one registry entry. after: stages that must be done (or skipped) first; code: [(script, sub[, regex])];
+    done(P): the outputs are complete; decide(P, S, st) -> {key, line | halt, numbers, options}; guard(P) -> HALT text;
+    gate(P) -> ('pass' | 'fail' | 'wait', why, numbers) (no jobs); active(P) -> False marks the stage skipped (an
+    optional branch, judged once its prerequisites are done); partial(P) -> (ok, text): outputs accepted with a few
+    records missing after the no-progress rounds; filler: rank only (never waits in the queue ahead of critical work,
+    its HALT is local: only its dependants stop); rearm: finishes an input set and waits for more (H-early)."""
+
+    def __init__(self, name, phase, crit, units=None, *, after=(), code=(), need=(), done=None, guard=None, gate=None,
+                 progress=None, adopt=(), decide=None, on_start=None, on_exit3="halt", filler=False, results=(),
+                 commit_gate=False, placeholder=False, summary="", rearm=False, active=None, partial=None,
+                 halt_scope=None):
+        self.name, self.phase, self.crit, self.units_fn, self.rearm = name, phase, crit, units, rearm
+        self.after, self.need, self.done, self.guard, self.gate = list(after), list(need), done, guard, gate
+        self.code = [tuple(c) + (None,) * (3 - len(c)) for c in code]
+        self.progress, self.adopt, self.decide, self.on_start, self.on_exit3 = progress, list(adopt), decide, on_start, on_exit3
+        self.filler, self.results, self.commit_gate, self.placeholder, self.summary = filler, list(results), commit_gate, placeholder, summary
+        self.active, self.partial = active, partial
+        self.halt_scope = halt_scope or ("local" if filler else "global")
+
+    def units(self, P, st):
+        return self.units_fn(P, self, st) if self.units_fn else []
+
+
+# ---------------------------------------------------------------- shared predicates / estimates
+def fixed_n(P, st, key, compute):
+    """task count fixed in the state at its first use (per epoch), so slices stay stable."""
+    nm = st.setdefault("params", {}).setdefault("n", {})
+    k = f"{key}@{st.get('epoch', 0)}"
+    if k not in nm:
+        try:
+            nm[k] = max(1, int(compute()))
+        except Exception:                                                   # noqa: BLE001
+            nm[k] = 1
+    return int(nm[k])
+
+
+def rep_complete(name):
+    return lambda P: (P.rj(name) or {}).get("complete") is True
+
+
+def lists_info(P):
+    return P.rjp(P.c.lists / "lists.json") or {}
+
+
+def n_list(P, name):
+    return int(((lists_info(P).get("files") or {}).get(name) or {}).get("n") or 0)
+
+
+def lists_done(P):
+    info = lists_info(P)
+    want = [f"f{k}_test" for k in range(5)] + [f"dip{d}" for d in range(5)] + ["a3"]
+    f = info.get("files") or {}
+    return all(w in f and Path(f[w]["path"]).is_file() for w in want)
+
+
+def geom_cov(P, out_dir):
+    """records summarised in <out_dir>/summary.json (every status, incl. no_start / not_covered)."""
+    S = P.rjp(Path(out_dir) / "summary.json") or {}
+    sc = (S.get("all") or {}).get("status_counts") or {}
+    try:
+        return sum(int(v) for v in sc.values())
+    except (TypeError, ValueError):
+        return 0
+
+
+def geom_done(P, out_dir, nl):
+    return nl > 0 and geom_cov(P, out_dir) >= nl
+
+
+def geom_partial(dirs_fn):
+    """Stage.partial for ts_geom stages: after the no-progress rounds, accept when every (out_dir, list size) has
+    >= 99.5 % of its reactions recorded (ts_geom writes no record for a reaction that raises a pipeline error; such
+    reactions count as failures in the pooled FT-2 numbers, decide_ft2r2)."""
+    def f(P):
+        rows = [(str(d), nl, geom_cov(P, d)) for d, nl in dirs_fn(P)]
+        bad = [r for r in rows if r[1] <= 0 or r[2] < math.ceil(GEOM_PARTIAL * r[1])]
+        miss = sum(max(0, nl - c) for _, nl, c in rows)
+        if not rows or bad:
+            return False, f"{len(bad)} output folders below {GEOM_PARTIAL:.1%} coverage"
+        return True, (f"ts_geom: {miss} reactions without a record after 2 rounds without progress (pipeline errors) — "
+                      f"coverage >= {GEOM_PARTIAL:.1%} in every folder, accepted; they count as failures (not same TS) in "
+                      f"the pooled FT-2 numbers")
+    return f
+
+
+def geom_all(P, out_dir):
+    return (P.rjp(Path(out_dir) / "summary.json") or {}).get("all") or {}
+
+
+def data_ok(P, run, newer_than=("G_report.json", "G_report_d0.json")):
+    p = P.c.res / "ft" / f"{run}_data.json"
+    J = P.rjp(p)
+    if not J or not J.get("inputs_complete") or not (J.get("leakage_C2") or {}).get("pass_"):
+        return False
+    t = P.mt(p)
+    for n in newer_than:                          # a report that does not exist (stage skipped by RESOLVE) is ignored
+        tn = P.mt(P.c.res / n)
+        if tn is not None and t < tn:
+            return False
+    return True
+
+
+def train_done(P, run):
+    T = P.rjp(P.c.res / "ft" / f"{run}_train.json") or {}
+    if T.get("status") != "done" or not (P.c.mlt / "models" / f"{run}.json").is_file():
+        return False
+    D = P.rjp(P.c.res / "ft" / f"{run}_data.json")
+    if D and T.get("data_fingerprint") and D.get("fingerprint") and T["data_fingerprint"] != D["fingerprint"]:
+        return False
+    tf, tt = P.mt(P.c.res / "ft" / f"{run}_ft1.json"), P.mt(P.c.res / "ft" / f"{run}_train.json")
+    return tf is not None and tt is not None and tf >= tt
+
+
+def is_aimnet(cand):
+    return str(cand).lower().startswith("aimnet")
+
+
+def train_unit(key, run, cand, al=False, deps=()):
+    x = ["--with-al"] if al else []
+    cmd = ["finetune.py", "train", run, cand] + x + [":::", "finetune.py", "ft1", run] + x
+    rd = run + ("_al" if al else "")
+    return one(key, cmd, env="mlts", part="GA" if is_aimnet(cand) else "G24", c=8, mem=64 if is_aimnet(cand) else 96,
+               gpu=1, deps=deps, done=lambda P, r=rd: train_done(P, r), disk_gb=3.0)
+
+
+def pilots(P):
+    return list(P.state.get("params", {}).get("pilots") or [])
+
+
+def base_cand(P):
+    return P.state.get("params", {}).get("base")
+
+
+def r1_run(P, k):
+    return P.state.get("params", {}).get("base_run") if k == 0 else f"FT_{k}"
+
+
+def z_wall_h(P, cand):
+    Z = P.rj("Z_report.json") or {}
+    g = ((Z.get("candidates") or {}).get(FT2Z.get(cand, cand)) or {}).get("geometry") or {}
+    w = g.get("wall_median_s")
+    return (float(w) if w else 120.0) / 3600.0
+
+
+def geom_units(P, st, run, cand, list_name, out_root, akey_prefix=""):
+    """ts_geom array units for both starts of one model (skips a start whose summary covers the list)."""
+    nl = n_list(P, list_name)
+    out = []
+    for s in STARTS:
+        od = out_root / run / s
+        if geom_done(P, od, nl):
+            continue
+        ak = f"{akey_prefix}{run}/{s}"
+        n = fixed_n(P, st, ak, lambda: n_tasks(nl, z_wall_h(P, cand), 14, 4))
+        out += arr(ak, ["ts_geom.py", "run", run, str(P.c.list_path(list_name)), s, str(od), "@I", str(n)], n,
+                   env="mlts", part="GA", c=16, mem=64, gpu=1, disk_gb=0.3)
+    return out
+
+
+def geom_progress(P, runs, root):
+    return sum(count_dir(root / r / s / "recs") for r in runs for s in STARTS)
+
+
+def geom_dirs(runs_lists, root):
+    """[(run, list name)] -> [(out_dir, list size)] for both starts (Stage.partial input)."""
+    def f(P):
+        return [(root(P) / r / s, n_list(P, ln)) for r, ln in runs_lists(P) if r for s in STARTS]
+    return f
+
+
+def rank_key_cmp(a, b):
+    """zero_shot.rank comparator: same-TS higher; within 0.025 -> |dd| lower; within 0.002 A -> faster."""
+    sa, sb = a.get("same") or 0.0, b.get("same") or 0.0
+    if abs(sa - sb) > TIE_SAME:
+        return -1 if sa > sb else 1
+    da, db = a.get("dd") if a.get("dd") is not None else 9.9, b.get("dd") if b.get("dd") is not None else 9.9
+    if abs(da - db) > TIE_DD:
+        return -1 if da < db else 1
+    ta, tb = a.get("ef") if a.get("ef") is not None else 1e9, b.get("ef") if b.get("ef") is not None else 1e9
+    return -1 if ta < tb else (1 if ta > tb else 0)
+
+
+def fmt(v, nd=3):
+    if v is None:
+        return "—"
+    if isinstance(v, float):
+        return f"{v:.{nd}f}"
+    return str(v)
+
+
+# ================================================================ stage functions: G
+GCMD = ["gen_dft.py"]
+
+
+def g_run_units(akey, cmd, n, env="reactot"):
+    return arr(akey, cmd + ["@I", str(n)], n, env=env, part="C2", c=64, mem=240, disk_gb=2.0)
+
+
+def units_gd1(P, S, st):
+    ep = st.get("epoch", 0)
+    if ep == 0:                                       # the lead's manual layout (DECISIONS G-0 / G-helper), adopted
+        u = g_run_units("G1", GCMD + ["run", "G1"], 3)
+        u += one("G1rev", GCMD + ["run", "G1", "0", "1", "--rev"], env="reactot", part="C2", c=64, mem=240)
+        u += g_run_units("G3", GCMD + ["run", "G3"], 1)
+        u += g_run_units("G2", GCMD + ["run_g2"], 3, env="d1")
+    else:
+        R = P.rj("G_report.json")
+        if R is None:
+            return one("collect", GCMD + ["collect"], env="reactot", part="C", c=4, mem=32, sink=True)
+        u = []
+        G0 = P.rj("G0_estimate.json") or {}
+        by = ((G0.get("predicted_core_h") or {}).get("by_group") or {})
+        for g in ("G1", "G3", "G2"):
+            gr = (R.get("groups") or {}).get(g) or {}
+            m = int(gr.get("n_missing") or 0)
+            if m <= 0:
+                continue
+            planned = max(1, int(gr.get("n_planned") or 1))
+            n = fixed_n(P, st, g, lambda: n_tasks(m, float(by.get(g) or 0) / planned, 64, 6))
+            u += g_run_units(g, GCMD + (["run_g2"] if g == "G2" else ["run", g]), n, env="d1" if g == "G2" else "reactot")
+    return u + one("collect", GCMD + ["collect"], env="reactot", part="C", c=4, mem=32, deps=keys(u), sink=True)
+
+
+def done_gd1(P):
+    R = P.rj("G_report.json") or {}
+    return R.get("complete") is True and R.get("stop_file") is None
+
+
+def guard_dft_stop(report):
+    def g(P):
+        f = P.c.mlt / "dft" / "STOP"
+        if f.is_file():
+            try:
+                txt = f.read_text().strip()[:300]
+            except OSError:
+                txt = ""
+            return f"$MLT/dft/STOP (라벨 수준 검사 실패: {txt})"
+        R = P.rj(report) or {}
+        if R.get("stop_file"):
+            return f"{report} stop_file: {str(R['stop_file'])[:300]}"
+        return None
+    return g
+
+
+def prog_gd1(P):
+    r = P.c.mlt / "dft" / "runs"
+    return count_dir(r / "G1") + count_dir(r / "G3") + count_dir(r / "G2")
+
+
+# D0 extension (gen_dft.py + gen_d0.py, user decision 'D0'): plan_d0 (auto) -> g0_d0 (G-0 on D0; its estimate
+# carries the budget rule n_g2_rule = largest D0 G-2 prefix with D1 + D0 <= 5,000 x 0.9 core-h, exit 3 if even that is
+# over) -> plan_d0 --n-g2 <n_g2_rule> (the recommended refit) -> run D0G1 / D0G3 / run_g2 --d0 -> collect --d0.
+def d0_plan(P):
+    return P.rj("G_plan_d0.json") or {}
+
+
+def d0_est(P):
+    return P.rj("G0_estimate_d0.json") or {}
+
+
+def d0_plan_n(J):
+    b = J.get("budget") or {}
+    return b.get("n_g2_selected", J.get("n_g2"))
+
+
+def units_gd0p(P, S, st):
+    return one("plan_d0", GCMD + ["plan_d0"], env="reactot", part="C", c=16, mem=32)
+
+
+def d0_plan_full(J):
+    """a production plan: written with a fingerprint and without --limit (a test `plan_d0 --limit N` never counts;
+    gen_d0 records limit both at the top level and inside the fingerprint dict)."""
+    fp = J.get("fingerprint")
+    if not fp or J.get("limit"):
+        return False
+    return not (isinstance(fp, dict) and fp.get("limit"))
+
+
+def done_gd0p(P):
+    return d0_plan_full(d0_plan(P))
+
+
+def units_gd0e(P, S, st):
+    return one("g0_d0", GCMD + ["g0_d0"], env="reactot", part="C", c=16, mem=64)
+
+
+def done_gd0e(P):
+    E = d0_est(P)
+    return (E.get("predicted_core_h") or {}).get("total") is not None and \
+        E.get("plan_fingerprint") == d0_plan(P).get("fingerprint")
+
+
+def decide_gd0e(P, S, st):
+    E = d0_est(P)
+    pc = E.get("predicted_core_h") or {}
+    tot, d1p = float(pc.get("total") or 0.0), float(pc.get("d1_total") or 0.0)
+    d0 = tot - d1p
+    R = P.rj("G_report.json") or {}
+    if R.get("complete"):
+        d1, src = float((R.get("core_h_measured") or {}).get("total") or 0.0), "D1 실측"
+    else:
+        d1, src = d1p, "D1 G-0 예상"
+    tot2 = d1 + d0
+    n = E.get("n_g2_rule")
+    sg = E.get("suggested_tasks") or {}
+    nums = dict(d1_core_h=round(d1, 1), d1_source=src, d0_predicted_core_h=round(d0, 1), total=round(tot2, 1),
+                budget=G_BUDGET, n_g2_plan=d0_plan_n(d0_plan(P)), n_g2_rule=n, estimate_stop=E.get("stop"),
+                suggested_tasks={k: sg.get(k) for k in ("D0G1", "D0G3", "D0G2")})
+    if E.get("stop") or tot2 > G_BUDGET or n is None:
+        return dict(key="over budget", numbers=nums,
+                    halt=f"G 예산: {src} {d1:,.0f} + D0 예상 {d0:,.0f} = {tot2:,.0f} core-h > 5,000 core-h — D0 경로 "
+                         f"반응 수를 예산 규칙으로 줄여도(n_g2_rule {n}) 넘는다(명령서 0-5 STOP, 남은 추천안 없음)",
+                    options=["`param G-D0f.n_g2=<수>` — D0 경로 반응 수를 정해 plan_d0를 다시 하고 D0 본 실행으로 간다",
+                             "`accept` — 예산 초과를 받아들이고 n_g2_rule 그대로 진행",
+                             "`skip` — D0 없이 진행(사용자 D0 결정과 다름)"])
+    P.st("G-D0f").setdefault("params", {})["n_g2"] = int(n)
+    return dict(key=f"go n_g2={n}", numbers=nums,
+                line=f"D0 G-0: {src} {d1:,.0f} + D0 예상 {d0:,.0f} = {tot2:,.0f} core-h ≤ 5,000 → 추천안(gen_d0 예산 규칙, "
+                     f"여유 10 %): D0 경로 반응 수 = n_g2_rule {n} (plan_d0 --n-g2 {n}; 계획 {nums['n_g2_plan']}), 본 실행 "
+                     f"task = D0G1 {sg.get('D0G1')} · D0G3 {sg.get('D0G3')} · D0G2 {sg.get('D0G2')} (64코어, suggested_tasks).")
+
+
+def gd0f_n(P):
+    v = (P.st("G-D0f").get("params") or {}).get("n_g2")
+    return int(v) if v is not None else _int(d0_est(P).get("n_g2_rule"), 0)
+
+
+def units_gd0f(P, S, st):
+    return one("plan_d0", GCMD + ["plan_d0", "--n-g2", str(gd0f_n(P))], env="reactot", part="C", c=16, mem=32)
+
+
+def done_gd0f(P):
+    J = d0_plan(P)
+    return d0_plan_full(J) and _int(d0_plan_n(J), -1) == gd0f_n(P)
+
+
+def units_gd0(P, S, st):
+    E = d0_est(P)
+    sugg = E.get("suggested_tasks") or {}
+    nr, nf = _int(E.get("n_g2_rule"), 0), gd0f_n(P)
+    groups = [("D0G1", GCMD + ["run", "D0G1"], "reactot"), ("D0G3", GCMD + ["run", "D0G3"], "reactot"),
+              ("D0G2", GCMD + ["run_g2"], "d1")]
+    ep = st.get("epoch", 0)
+    R = P.rj("G_report_d0.json") if ep > 0 else None
+    u = []
+    for g, cmd, env in groups:
+        base = _int(sugg.get(g), 1)
+        if g == "D0G2":
+            if nf <= 0:
+                continue
+            base = max(1, math.ceil(base * nf / nr)) if nr > 0 else max(1, base)
+        if R is not None and isinstance(R.get("groups"), dict):
+            gr = R["groups"].get(g) or {}
+            m = _int(gr.get("n_missing"), 0)
+            if m <= 0:
+                continue
+            base = math.ceil(base * m / max(1, _int(gr.get("n_planned"), m)))
+        n = fixed_n(P, st, g, lambda b=base: max(1, min(8, b)))
+        u += arr(g, cmd + ["@I", str(n)] + (["--d0"] if g == "D0G2" else []), n, env=env, part="C2", c=64, mem=240,
+                 disk_gb=2.0)
+    return u + one("collect", GCMD + ["collect", "--d0"], env="reactot", part="C", c=4, mem=32, deps=keys(u), sink=True,
+                   disk_gb=2.0)
+
+
+def guard_d0(P):
+    for f in (P.c.mlt / "dft" / "STOP_D0", P.c.mlt / "dft" / "STOP"):
+        if f.is_file():
+            try:
+                txt = f.read_text().strip()[:300]
+            except OSError:
+                txt = ""
+            return f"$MLT/dft/{f.name} (D0 / 라벨 수준 검사 실패: {txt})"
+    R = P.rj("G_report_d0.json") or {}
+    return f"G_report_d0.json stop_file: {str(R['stop_file'])[:300]}" if R.get("stop_file") else None
+
+
+def done_gd0(P):
+    R = P.rj("G_report_d0.json") or {}
+    return R.get("complete") is True and R.get("stop_file") is None
+
+
+def prog_gd0(P):
+    r = P.c.mlt / "dft" / "runs"
+    return count_dir(r / "D0G1") + count_dir(r / "D0G3") + count_dir(r / "D0G2")
+
+
+# ---------------------------------------------------------------- Z
+def z_done(P, c):
+    """unavailable, or finished with records for (almost) the whole list: zero_shot sets 'finished' even when its
+    ts_geom runner stopped on the wall or after 20 pipeline errors, so the record count is checked too (<= 1 % of
+    the list may lack a record: a reaction that keeps raising a pipeline error)."""
+    J = P.rjp(P.c.mlt / "z" / c / "z.json") or {}
+    if J.get("available") is False:
+        return True
+    if not J.get("finished"):
+        return False
+    n = _int(J.get("n_rxn"), -1)
+    sc = (((J.get("geometry") or {}).get("all") or {}).get("status_counts") or {})
+    try:
+        cov = sum(int(v) for v in sc.values())
+    except (TypeError, ValueError):
+        cov = 0
+    return n >= 0 and cov >= n - math.floor(Z_TOL * n)
+
+
+def units_z(P, S, st):
+    out = []
+    for c in Z_CANDS:
+        if c == "xtb":
+            res = dict(part="C", c=32, mem=64, gpu=0)
+        else:
+            res = dict(part="G48" if c == "MACE-OMOL-0" else "GA", c=8, mem=64, gpu=1)
+        out += one(c, ["zero_shot.py", "run", c], env="mlts", done=lambda P, c_=c: z_done(P, c_), disk_gb=0.5, **res)
+    return out
+
+
+SPEED_TAGS = ("MACE-OMOL-0|float64|", "MACE-MH-1|float64|", "AIMNet2||", "MACE-OFF24|float64|")
+
+
+def done_zspeed(P):
+    J = P.rjp(P.c.mlt / "z" / "speed.json") or {}
+    return all(t in J and (J[t].get("ef_ms_median") is not None or J[t].get("error")) for t in SPEED_TAGS)
+
+
+def done_zrep(P):
+    p = P.c.res / "Z_report.json"
+    J = P.rjp(p) or {}
+    if "ranking" not in J:
+        return False
+    t = P.mt(p)
+    deps = [P.mt(P.c.mlt / "z" / c / "z.json") for c in Z_CANDS] + [P.mt(P.c.mlt / "z" / "speed.json")]
+    return all(d is None or t >= d for d in deps)
+
+
+def decide_zrep(P, S, st):
+    R = P.rj("Z_report.json") or {}
+    top = [c for c in (R.get("top2_for_ft_pilot") or []) if c]
+    rank = R.get("ranking") or []
+    if not top:
+        return dict(key="no eligible", halt="Phase Z: 순위에 든 후보가 없다(Si를 다루는 MLIP 없음 또는 모두 실패)",
+                    numbers=dict(ranking=rank, candidates={k: (v or {}).get("available") for k, v in
+                                                           (R.get("candidates") or {}).items()}))
+    pil = [Z2FT.get(c, c) for c in top]
+    P.state.setdefault("params", {})["pilots"] = pil
+    extra = (" 대상 후보가 하나뿐이라 그 하나로 시범한다(추천안: 명령서 4절 '상위 2개'를 채울 수 없음)." if len(pil) == 1 else "")
+    return dict(key="pilots " + ",".join(pil), line=f"Phase Z 순위 {', '.join(rank)} → FT 시범(fold 0) = "
+                                                     f"{', '.join(pil)} (finetune.py 이름).{extra}")
+
+
+# ---------------------------------------------------------------- FT
+def units_ftdp(P, S, st):
+    runs = [f"FTpilot_{c}_0" for c in pilots(P)]
+    return one("data", ["finetune.py", "data"] + runs, env="mlts", part="C", c=4, mem=48) if runs else []
+
+
+def done_ftdp(P):
+    p = pilots(P)
+    return bool(p) and all(data_ok(P, f"FTpilot_{c}_0") for c in p)
+
+
+def units_ftp(P, S, st):
+    out = []
+    for c in pilots(P):
+        out += train_unit(c, f"FTpilot_{c}_0", c)
+    return out
+
+
+def done_ftp(P):
+    p = pilots(P)
+    return bool(p) and all(train_done(P, f"FTpilot_{c}_0") for c in p)
+
+
+def prog_train(runs_fn):
+    return lambda P: sum(count_lines(P.c.mlt / "ft" / r / "epochs.jsonl") for r in runs_fn(P))
+
+
+def units_ft2p(P, S, st):
+    out = []
+    for c in pilots(P):
+        out += geom_units(P, st, f"FTpilot_{c}_0", c, "f0_test", P.c.mlt / "ft2")
+    return out
+
+
+def done_ft2p(P):
+    p, nl = pilots(P), n_list(P, "f0_test")
+    return bool(p) and all(geom_done(P, P.c.mlt / "ft2" / f"FTpilot_{c}_0" / s, nl) for c in p for s in STARTS)
+
+
+def pilot_speeds(P, cands):
+    """GPU E+F ms per call for the tie-break: Z_report.speed_variants[default tag] when it covers every pilot (one
+    z_speed job on one GPU: a fair comparison), else the per-candidate z.json speeds (each job's own GPU type)."""
+    Z = P.rj("Z_report.json") or {}
+    sv = Z.get("speed_variants") or {}
+    same = {c: (sv.get(SPEED_DEFAULT_TAG.get(FT2Z.get(c, c), "")) or {}).get("ef_ms_median") for c in cands}
+    if cands and all(v is not None for v in same.values()):
+        return same, "speed.json (z_speed: 한 job · 한 GPU)"
+    own = {c: ((Z.get("candidates") or {}).get(FT2Z.get(c, c)) or {}).get("ef_ms") for c in cands}
+    return own, "후보별 z.json (job마다 GPU 종류가 다를 수 있음 — speed.json에 시범 후보가 다 있지 않음)"
+
+
+def decide_ft2p(P, S, st):
+    speeds, src = pilot_speeds(P, pilots(P))
+    rows = []
+    for c in pilots(P):
+        run = f"FTpilot_{c}_0"
+        g = geom_all(P, P.c.mlt / "ft2" / run / "label")
+        rows.append(dict(cand=c, run=run, same=g.get("same_ts_frac"), dd=g.get("dd_median_A"), ef=speeds.get(c),
+                         n=g.get("n_attempted"), rmsd=g.get("rmsd_median_A")))
+    from functools import cmp_to_key
+    order = sorted(rows, key=cmp_to_key(rank_key_cmp))
+    b = order[0]
+    P.state.setdefault("params", {}).update(base=b["cand"], base_run=b["run"])
+    desc = "; ".join(f"{r['cand']} 같은 TS {fmt(r['same'])} · |Δd| 중앙값 {fmt(r['dd'], 4)} Å · RMSD {fmt(r['rmsd'], 4)} Å "
+                     f"({r['n']}반응), E+F {fmt(r['ef'], 1)} ms" for r in rows)
+    return dict(key=f"base {b['cand']}", numbers=dict(rows=rows, speed_source=src),
+                line=f"FT-2(a) 라벨 TS 출발(fold 0 시험): {desc} → 기반 MLIP = {b['cand']} (규칙: 같은 TS 비율 → 차이 "
+                     f"{TIE_SAME} 안이면 |Δd| → {TIE_DD} Å 안이면 빠른 쪽, '같으면 빠른 쪽'; 속도 출처 {src}). "
+                     f"FT_0 = {b['run']} 재사용(같은 fold0 분할, 약 12 GPU-h 절약). 1차 FT_1–FT_4는 {b['cand']}로 학습한다.")
+
+
+def units_ftd1(P, S, st):
+    return one("data", ["finetune.py", "data", "FT_1", "FT_2", "FT_3", "FT_4"], env="mlts", part="C", c=4, mem=48)
+
+
+def units_ftr1(P, S, st):
+    b = base_cand(P)
+    out = []
+    for k in range(1, 5):
+        out += train_unit(f"FT_{k}", f"FT_{k}", b)
+    return out
+
+
+def units_ft2r1(P, S, st):
+    b = base_cand(P)
+    out = []
+    for k in range(5):
+        run = r1_run(P, k)
+        if run and train_done(P, run):
+            out += geom_units(P, st, run, b, f"f{k}_test", P.c.mlt / "ft2")
+    return out
+
+
+def done_ft2r1(P):
+    return all(r1_run(P, k) and geom_done(P, P.c.mlt / "ft2" / r1_run(P, k) / s, n_list(P, f"f{k}_test"))
+               for k in range(5) for s in STARTS)
+
+
+def models_r1(P):
+    return ",".join(r1_run(P, k) or "" for k in range(5))
+
+
+def g4_est(P, step):
+    e = (P.rj("G4_plan.json") or {}).get("est") or {}
+    e = e.get(step) if isinstance(e.get(step), dict) else e
+    return e or {}
+
+
+def units_g4(P, S, st):
+    u = one("plan", GCMD + ["g4_plan", "--models", models_r1(P)], env="reactot", part="C", c=4, mem=16,
+            done=rep_complete("G4_plan.json"))
+    if not (P.rj("G4_plan.json") or {}).get("complete"):
+        return u
+    eo, er = g4_est(P, "opt"), g4_est(P, "run")
+    no = fixed_n(P, st, "opt", lambda: n_tasks(eo.get("units_total", 1000), eo.get("unit_wall_h", 0.02),
+                                               eo.get("workers", 14), 4))
+    nr = fixed_n(P, st, "run", lambda: n_tasks(er.get("units_total", 1000), er.get("unit_wall_h", 0.1),
+                                               er.get("workers", 64), 4))
+    opt = arr("opt", GCMD + ["g4_opt", "@I", str(no), "--models", models_r1(P)], no, env="mlts", part="GA", c=16, mem=64,
+              gpu=1, deps=["plan"])
+    run = arr("run", GCMD + ["run", "G4", "@I", str(nr)], nr, env="reactot", part="C2", c=64, mem=240, deps=keys(opt))
+    return u + opt + run + one("collect", GCMD + ["collect", "--g4"], env="reactot", part="C", c=4, mem=32,
+                               deps=keys(run), sink=True)
+
+
+def done_g4(P):
+    return (P.rj("G4_report.json") or {}).get("complete") is True and (P.c.mlt / "dft" / "gen_G4.extxyz").is_file()
+
+
+def core_h_of(J):
+    c = (J or {}).get("core_h_measured")
+    if isinstance(c, dict):
+        return float(c.get("total") or 0.0)
+    return float((J or {}).get("core_h") or 0.0)
+
+
+def guard_g4(P):
+    """$MLT/dft/STOP or G4_report stop_file -> HALT; and, before any G-4 DFT runs, the plan's predicted cost:
+    measured D1 + D0 + predicted G-4 > 5,000 core-h -> HALT (spec 0-5)."""
+    g = guard_dft_stop("G4_report.json")(P)
+    if g:
+        return g
+    J = P.rj("G4_plan.json") or {}
+    pred = J.get("predicted_core_h")
+    pred = pred.get("total") if isinstance(pred, dict) else pred
+    if J.get("complete") and pred is not None and not (P.rj("G4_report.json") or {}).get("complete"):
+        meas = core_h_of(P.rj("G_report.json")) + core_h_of(P.rj("G_report_d0.json"))
+        if meas + float(pred) > G_BUDGET:
+            return (f"G-4 계획 예상: G 실측 {meas:,.0f} + G-4 예상 {float(pred):,.0f} = {meas + float(pred):,.0f} core-h > "
+                    f"5,000 (G-4 DFT 실행 전; 명령서 0-5 STOP)")
+    return None
+
+
+def decide_g4(P, S, st):
+    parts = {n: core_h_of(P.rj(n)) for n in ("G_report.json", "G_report_d0.json", "G4_report.json")}
+    tot = sum(parts.values())
+    if tot > G_BUDGET:
+        return dict(key="over budget", numbers=dict(parts=parts, total=tot, budget=G_BUDGET),
+                    halt=f"G 전체 실측 {tot:,.0f} core-h > 5,000 (G-4 뒤; 명령서 0-5 STOP)")
+    return dict(key="ok", line=f"G-4 능동학습 끝: G 전체 실측 {tot:,.0f} core-h ≤ 5,000 ({', '.join(f'{k} {v:,.0f}' for k, v in parts.items())}).")
+
+
+ALL_RUNS = [f"FT_{k}" for k in range(5)] + [f"FT_all_s{i}" for i in range(3)] + [f"FT_LODO_{d}" for d in range(5)]
+FIN_RUNS = [f"FT_all_s{i}" for i in range(3)] + [f"FT_LODO_{d}" for d in range(5)]
+
+
+def units_ftd2(P, S, st):
+    return one("data", ["finetune.py", "data", "--all", "--with-al"], env="mlts", part="C", c=4, mem=64)
+
+
+def done_ftd2(P):
+    return all(data_ok(P, r + "_al", newer_than=("G4_report.json",)) for r in ALL_RUNS)
+
+
+def units_ftr2(P, S, st):
+    b = base_cand(P)
+    out = []
+    for k in range(5):
+        out += train_unit(f"FT_{k}_al", f"FT_{k}", b, al=True)
+    return out
+
+
+def units_ft2r2(P, S, st):
+    b = base_cand(P)
+    out = []
+    for k in range(5):
+        run = f"FT_{k}_al"
+        if train_done(P, run):
+            out += geom_units(P, st, run, b, f"f{k}_test", P.c.mlt / "ft2")
+    return out
+
+
+def done_ft2r2(P):
+    return all(geom_done(P, P.c.mlt / "ft2" / f"FT_{k}_al" / s, n_list(P, f"f{k}_test")) for k in range(5) for s in STARTS)
+
+
+def read_geom_csv(path):
+    import csv
+    rows = []
+    try:
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+    except OSError:
+        pass
+    return rows
+
+
+def _f(x):
+    try:
+        v = float(x)
+        return v if math.isfinite(v) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def pooled(rows, n_missing=0):
+    """ts_geom.table over pooled records: fractions over attempted, |dd| / RMSD over optimised. n_missing = list
+    reactions without any record (pipeline errors, Stage.partial): counted as attempted failures (not same TS,
+    n_imag != 1), never in the |dd| / RMSD percentiles."""
+    att = [r for r in rows if r.get("status") not in ("no_start", "no_label", "not_covered")]
+    dd = [v for v in (_f(r.get("dd_max")) for r in att) if v is not None]
+    rm = [_f(r.get("rmsd_heavy")) for r in att if _f(r.get("dd_max")) is not None]
+    rm = [v for v in rm if v is not None]
+    n = len(att) + int(n_missing)
+    return dict(n_attempted=n, n_missing_records=int(n_missing), n_optimised=len(dd), dd_median_A=pct(dd, 50),
+                dd_p90_A=pct(dd, 90), rmsd_median_A=pct(rm, 50),
+                same_ts_frac=(sum(str(r.get("same_ts")) == "True" for r in att) / n) if n else None,
+                nimag1_frac=(sum(_f(r.get("n_imag")) == 1.0 for r in att) / n) if n else None)
+
+
+FT_GEOM_COLS = ("run", "fold", "start", "rxn_id", "dipole", "g1_class", "status", "converged", "dd_max", "rmsd_heavy",
+                "rmsd_direct", "same_ts", "n_imag", "n_cycles", "wall_s")
+
+
+def ft2_rows(P, run, start):
+    return read_geom_csv(P.c.mlt / "ft2" / run / start / "geom.csv")
+
+
+def write_ft_outputs(P, gate=None):
+    """spec 5 outputs: results/FT_report.json (FT-1 per run from results/ft/*_ft1.json, train cost, FT-2 summaries of
+    every round and the pooled round-2 gate) and results/FT_geom.csv (one row per FT_<k>_al test reaction and start:
+    |Δd|, RMSD, same TS, imaginary-mode count). Never in dry mode."""
+    if P.dry:
+        P.planned.append("(dry) would write results/FT_report.json + results/FT_geom.csv")
+        return
+    import csv
+    runs = {}
+    for f in sorted((P.c.res / "ft").glob("*_train.json")):
+        run = f.name[:-len("_train.json")]
+        T = P.rjp(f) or {}
+        F1 = P.rjp(P.c.res / "ft" / f"{run}_ft1.json") or {}
+        runs[run] = dict(cand=T.get("cand"), status=T.get("status"), gpu_h=T.get("gpu_h"), epochs=T.get("epochs"),
+                         data_fingerprint=T.get("data_fingerprint"),
+                         ft1={s: {k: v.get(k) for k in ("force_mae_kcal_A", "rel_e", "n") if k in v}
+                              for s, v in (F1.get("sets") or {}).items()})
+    ft2 = {}
+    for root in ("ft2", "x"):
+        base = P.c.mlt / root
+        for sj in sorted(base.glob("*/*/summary.json")) if base.is_dir() else []:
+            run, start = sj.parent.parent.name, sj.parent.name
+            S = P.rjp(sj) or {}
+            ft2.setdefault(root, {}).setdefault(run, {})[start] = dict(all=S.get("all"), by_dipole=S.get("by_dipole"),
+                                                                      by_g1_class=S.get("by_g1_class"))
+    rep = dict(spec_section="5 Phase FT", written=P.now, writer="pipeline.py (FT2-r2 decision)",
+               thresholds_ft2_a=FT2_A, nimag1_min=NIMAG1_MIN, runs=runs, ft2=ft2, gate_round2=gate,
+               note="FT-1 is recorded only; the FT-2 (a) gate is the pooled round-2 label-start numbers (FT_<k>_al, "
+                    "fold k test reactions); per-reaction rows in results/FT_geom.csv")
+    M.write_json(P.c.res / "FT_report.json", rep)
+    out = []
+    for k in range(5):
+        for s in STARTS:
+            for r in ft2_rows(P, f"FT_{k}_al", s):
+                r = dict(r, run=f"FT_{k}_al", fold=k, start=s)
+                out.append({c: r.get(c, "") for c in FT_GEOM_COLS})
+
+    def w(t):
+        with open(t, "w", newline="") as fh:
+            wr = csv.DictWriter(fh, fieldnames=list(FT_GEOM_COLS))
+            wr.writeheader()
+            wr.writerows(out)
+    M._atomic(P.c.res / "FT_geom.csv", w)
+
+
+def decide_ft2r2(P, S, st):
+    out = {}
+    for s in STARTS:
+        rows, miss = [], 0
+        for k in range(5):
+            rk = ft2_rows(P, f"FT_{k}_al", s)
+            rows += rk
+            miss += max(0, n_list(P, f"f{k}_test") - geom_cov(P, P.c.mlt / "ft2" / f"FT_{k}_al" / s))
+        out[s] = pooled(rows, miss)
+    a = out["label"]
+    chk = {k: (a.get(k) is not None and (a[k] <= v if not k.startswith("same") else a[k] >= v)) for k, v in FT2_A.items()}
+    nums = dict(label=a, g2=out["g2"], thresholds=FT2_A, pass_=chk)
+    write_ft_outputs(P, gate=dict(pooled=out, pass_=chk, pass_all=all(chk.values())))
+    txt = (f"FT-2 (2차, 5 fold 합침, 라벨 TS 출발 {a['n_attempted']}반응): |Δd| 중앙값 {fmt(a['dd_median_A'], 4)} · 90 % "
+           f"{fmt(a['dd_p90_A'], 4)} Å, RMSD 중앙값 {fmt(a['rmsd_median_A'], 4)} Å, 같은 TS {fmt(a['same_ts_frac'])}, "
+           f"허수 1개 {fmt(a['nimag1_frac'])}; G2 TS 출발: |Δd| 중앙값 {fmt(out['g2']['dd_median_A'], 4)} Å, 같은 TS "
+           f"{fmt(out['g2']['same_ts_frac'])}")
+    if not all(chk.values()):
+        return dict(key="FT-2 fail", numbers=nums,
+                    halt=f"{txt}. 2차 미세조정 뒤에도 FT-2 (a) 실패({', '.join(k for k, v in chk.items() if not v)}) — "
+                         f"명령서 5절 · 14절 STOP(설계가 틀렸다는 뜻, 보고)",
+                    options=["`accept` — 기준 미달을 기록하고 A 단계로 진행", "`retry` — 원인을 고친 뒤 FT2-r2를 다시 잰다",
+                             "`skip` — FT2-r2 판정을 건너뛴다"])
+    note = "" if (a.get("nimag1_frac") or 0) >= NIMAG1_MIN else f" 허수 진동수 1개 비율 {fmt(a['nimag1_frac'])} < 0.95(기록만)."
+    return dict(key="FT-2 pass", numbers=nums, line=f"{txt} → FT-2 (a) 통과.{note}")
+
+
+def units_ftfin(P, S, st):
+    b = base_cand(P)
+    out = []
+    for r in FIN_RUNS:
+        out += train_unit(r + "_al", r, b, al=True)
+    return out
+
+
+def start_ftfin(P, S, st):
+    return "FT_all_s0–2와 FT_LODO_0–4를 모두 --with-al(G-4 능동학습 자료 포함)로 학습한다. 추천안: LODO는 최종 모델과 같은 자료"\
+           "(능동학습 포함)를 쓰고 그 dipole 구조만 뺀다 — X(LODO) 결과가 배포 모델의 일반화를 그대로 대신하게 하기 위함."
+
+
+def units_xrun(P, S, st):
+    b = base_cand(P)
+    out = []
+    for d in range(5):
+        run = f"FT_LODO_{d}_al"
+        if train_done(P, run):
+            out += geom_units(P, st, run, b, f"dip{d}", P.c.mlt / "x")
+    return out
+
+
+def done_xrun(P):
+    return all(geom_done(P, P.c.mlt / "x" / f"FT_LODO_{d}_al" / s, n_list(P, f"dip{d}")) for d in range(5) for s in STARTS)
+
+
+# ---------------------------------------------------------------- C-1 with FT_0_al, A
+def done_c1ft(P):
+    p = P.c.res / "C1_tests.json"
+    m = ((P.rjp(p) or {}).get("models") or {}).get("FT_0_al") or {}
+    tm = P.mt(P.c.mlt / "models" / "FT_0_al.json")
+    return m.get("pass_C1") is not None and m.get("pass_C4") is not None and tm is not None and P.mt(p) >= tm
+
+
+def decide_c1ft(P, S, st):
+    m = ((P.rj("C1_tests.json") or {}).get("models") or {}).get("FT_0_al") or {}
+    if m.get("pass_C1") and m.get("pass_C4"):
+        return dict(key="pass", line="C-1 · C-4 (FT_0_al): 다리 · 최적화기 · Hessian · 단위 검사 모두 통과.")
+    return dict(key="fail", numbers=dict(passes=m.get("passes"), pass_C1=m.get("pass_C1"), pass_C4=m.get("pass_C4")),
+                halt="C-1/C-4 실패 (FT_0_al) — 버그일 수 있어 고치기 전에 보고한다(명령서 머리말)")
+
+
+def decide_a2(P, S, st):
+    J = P.rj("A2_smoke.json") or {}
+    if J.get("pass"):
+        return dict(key="pass", line="A-2 smoke: autodE-MLTS 입력에 범함수 · 기저 · CPCM · SMD 단어 없음, ExtOpt 있음(C-3 문구) → 통과.")
+    return dict(key="fail", numbers={k: J.get(k) for k in list(J)[:12]}, halt="A-2 smoke 실패(C-3 문구 검사 또는 실행)")
+
+
+def a3_per_rxn_disk(P):
+    v = (P.rj("A3_report.json") or {}).get("disk_gb_per_rxn")
+    return float(v) if v is not None else DISK_GB_PER_RXN_DEFAULT
+
+
+def units_a3(P, S, st):
+    na = fixed_n(P, st, "A", lambda: 2)
+    npp = fixed_n(P, st, "App", lambda: 1)
+    A = arr("A", ["mlts_autode.py", "run", "a3", "@I", str(na), "--list", str(P.c.list_path("a3"))], na, env="mlts",
+            part="GA", c=32, mem=96, gpu=1, disk_gb=300 / na * DISK_GB_PER_RXN_DEFAULT)
+    App = arr("App", ["mlts_autode.py", "refine_dft", "a3", "@I", str(npp)], npp, env="reactot", part="C2", c=64,
+              mem=240, deps=keys(A), disk_gb=300 / npp * 0.01)
+    return A + App + one("report", ["mlts_autode.py", "a3_report"], env="reactot", part="C", c=4, mem=16,
+                         deps=keys(App), sink=True)
+
+
+ARM_NAME = {"A": "A (autodE-MLTS)", "Ap": "A′ (G2 TS → MLTS OptTS)", "App": "A″ (A → 라벨 수준 OptTS)"}
+
+
+def arm_in_budget(arm, v):
+    """spec 0-5: A / A′ <= 0.6 core-h + 3 GPU-min per reaction (median); A″ (A + label-level OptTS) <= the deployment
+    target 1 core-h + 3 GPU-min. A missing cost is not in budget. A′'s core_h_median must include generating the G2 TS
+    (contract), since a new reaction has none."""
+    ch, gm = A3_BUDGET.get(arm, (0.6, 3.0))
+    c, g = v.get("core_h_median"), v.get("gpu_min_median")
+    try:
+        return c is not None and g is not None and float(c) <= ch and float(g) <= gm
+    except (TypeError, ValueError):
+        return False
+
+
+def write_arms(P):
+    """$MLT/pipeline/arms.json: the A-3 engine and the optional A″ arm, read by train_k.py / eval_v2.py (contract)."""
+    p = P.state.get("params") or {}
+    J = dict(engine=p.get("engine"), extra_arm_App=bool(p.get("extra_arm_App")),
+             app_root=str(P.c.mlt / "app") if p.get("extra_arm_App") else None, app_usable=p.get("app_usable"),
+             written=P.now, writer="pipeline.py")
+    if P.dry:
+        P.planned.append(f"(dry) would write $MLT/pipeline/arms.json {J}")
+        return
+    M.write_json(P.c.pdir / "arms.json", J)
+
+
+def decide_a3(P, S, st):
+    R = P.rj("A3_report.json") or {}
+    arms = R.get("arms") or {}
+    nums = dict(arms={k: {kk: (v or {}).get(kk) for kk in ("same_ts_frac", "core_h_median", "gpu_min_median", "n")}
+                      for k, v in arms.items()}, budget=A3_BUDGET)
+    rows = [dict(arm=k, same=v.get("same_ts_frac"), cost=v.get("core_h_median"), gpu=v.get("gpu_min_median"),
+                 ok=arm_in_budget(k, v)) for k, v in arms.items() if v and v.get("same_ts_frac") is not None]
+    if not rows:
+        return dict(key="report incomplete", numbers=nums, halt="A3_report.json에 arms{A, Ap, App}.same_ts_frac가 없다")
+
+    def cmp(a, b):
+        if abs((a["same"] or 0) - (b["same"] or 0)) > TIE_SAME:
+            return -1 if (a["same"] or 0) > (b["same"] or 0) else 1
+        ca, cb = (a["cost"] if a["cost"] is not None else 1e9), (b["cost"] if b["cost"] is not None else 1e9)
+        return -1 if ca < cb else (1 if ca > cb else 0)
+    from functools import cmp_to_key
+    order = sorted(rows, key=cmp_to_key(cmp))
+    desc = ", ".join(f"{r['arm']} {fmt(r['same'])} / {fmt(r['cost'], 2)} core-h / {fmt(r['gpu'], 1)} GPU-분"
+                     f"{'' if r['ok'] else ' (예산 초과)'}" for r in order)
+    within = [r for r in order if r["ok"]]
+    if not within:
+        return dict(key="all over budget", numbers=nums,
+                    halt=f"A-3 비용: 예산 안의 엔진이 없다({desc}; A · A′ ≤ 0.6 core-h + 3 GPU-분, A″ ≤ 1 core-h + 3 GPU-분, "
+                         f"명령서 0-5 · 14절 STOP)")
+    best = within[0]
+    if (best["same"] or 0) < A3_RULE["stop_below"]:
+        return dict(key="same-TS < 0.70", numbers=nums,
+                    halt=f"A-3: 예산 안의 가장 좋은 엔진 {best['arm']}의 같은 TS 비율 {fmt(best['same'])} < 0.70 ({desc}; "
+                         f"명령서 6절 STOP: 형태 문제를 다른 방법으로 풀어야 함)")
+    P.state.setdefault("params", {})["engine"] = best["arm"]
+    app = arms.get("App") or {}
+    extra = best["arm"] != "App" and app.get("same_ts_frac") is not None and arm_in_budget("App", app) and \
+        float(app["core_h_median"]) <= A3_RULE["app_core_h"]
+    P.state["params"]["extra_arm_App"] = bool(extra)
+    write_arms(P)
+    skipped = [r["arm"] for r in order if not r["ok"] and order.index(r) < order.index(best)]
+    sk = (f" 같은 TS가 더 높은 {', '.join(skipped)}는 예산 초과라 고르지 않았다(명령서 0-5)." if skipped else "")
+    lim = (f" 같은 TS 비율 {best['same']:.3f}는 0.70–0.85 사이: 진행하고 형태 불일치를 주된 한계로 기록한다(명령서 6절)."
+           if best["same"] < A3_RULE["limit_below"] else "")
+    ex = (" A″ 비용 ≤ 1 core-h → K · E에서 별도 arm으로 평가한다(A4-App: 9,266반응 refine_dft → $MLT/app, H-App: 그 입력, "
+          "$MLT/pipeline/arms.json)." if extra else "")
+    return dict(key=f"engine {best['arm']}", numbers=nums,
+                line=f"A-3 엔진 선택(예산 안에서 같은 TS 비율 → 0.025 안이면 싼 쪽): {desc} → A-4 엔진 = "
+                     f"{ARM_NAME.get(best['arm'], best['arm'])}.{sk}{lim}{ex}")
+
+
+def h_disk_per_rxn(P):
+    cache = P.state.setdefault("params", {})
+    if "h_disk_gb_per_rxn" in cache:
+        return cache["h_disk_gb_per_rxn"]
+    tot, n = 0, count_dir(P.c.mlt / "h1" / "final")
+    for sub in ("final", "hf"):
+        for root, _, files in os.walk(P.c.mlt / "h1" / sub):
+            for f in files:
+                try:
+                    tot += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    pass
+    v = (tot / 1e9 / n) if n and tot else H_DISK_GB_PER_RXN_DEFAULT
+    cache["h_disk_gb_per_rxn"] = round(v, 5)
+    return cache["h_disk_gb_per_rxn"]
+
+
+def gate_a4(P):
+    q = P.state.get("quota") or {}
+    if q.get("stale") or q.get("gb") is None:
+        return "wait", "QUOTA_FREE_GB가 없거나 24 h 넘음 (lead가 mmlsquota 값을 적어야 판정)", {}
+    per, h = a3_per_rxn_disk(P), h_disk_per_rxn(P)
+    extra = bool((P.state.get("params") or {}).get("extra_arm_App"))
+    app = app_disk_per_rxn(P) if extra else 0.0
+    need = (per + h + (app + h if extra else 0.0)) * N_D1
+    free = float(q.get("est_free") if q.get("est_free") is not None else q["gb"])
+    nums = dict(free_gb_est=round(free, 1), a3_gb_per_rxn=per, h_gb_per_rxn=h, app_gb_per_rxn=app, extra_arm_App=extra,
+                need_gb=round(need, 1), margin_gb=30)
+    if free - need >= QUOTA_MIN_GB:
+        return "pass", "", nums
+    return "fail", (f"디스크: 예상 여유 {free:,.0f} GB − 필요 {need:,.0f} GB < 30 GB (A-4 9,266반응 + H"
+                    f"{' + A″ arm' if extra else ''})"), nums
+
+
+def app_disk_per_rxn(P):
+    v = (((P.rj("A3_report.json") or {}).get("arms") or {}).get("App") or {}).get("disk_gb_per_rxn")
+    return float(v) if v is not None else APP_DISK_GB_PER_RXN_DEFAULT
+
+
+def fold_sizes(P):
+    return {k: n_list(P, f"f{k}_test") for k in range(5)}
+
+
+def units_a4(P, S, st):
+    eng = P.state.get("params", {}).get("engine") or "A"
+    est = (P.rj("A3_report.json") or {}).get("est") or {}
+    per = a3_per_rxn_disk(P)
+    u, sink_deps = [], []
+    folds = list(range(5)) + ([-1] if (lists_info(P).get("n_fold_minus1") or 0) > 0 else [])
+    for k in folds:
+        nf = n_list(P, f"f{k}_test") if k >= 0 else int(lists_info(P).get("n_fold_minus1") or 0)
+        n = fixed_n(P, st, f"f{k}", lambda: n_tasks(nf, est.get("unit_wall_h", 0.3), est.get("workers", 32), 6))
+        model = f"FT_{k}_al" if k >= 0 else "FT_0_al"
+        r = arr(f"f{k}", ["mlts_autode.py", "run", f"d1:{k}", "@I", str(n), "--model", model, "--engine", eng], n,
+                env="mlts", part="GA", c=32, mem=96, gpu=1, disk_gb=nf / n * per)
+        u += r
+        sink_deps += keys(r)
+        if eng == "App":
+            n2 = fixed_n(P, st, f"r{k}", lambda: max(1, math.ceil(n / 2)))
+            rr = arr(f"r{k}", ["mlts_autode.py", "refine_dft", f"d1:{k}", "@I", str(n2)], n2, env="reactot", part="C2",
+                     c=64, mem=240, deps=keys(r), disk_gb=nf / n2 * 0.01)
+            u += rr
+            sink_deps += keys(rr)
+    return u + one("status", ["mlts_autode.py", "status"], env="reactot", part="C", c=2, mem=8, deps=sink_deps, sink=True)
+
+
+def start_a4(P, S, st):
+    if (lists_info(P).get("n_fold_minus1") or 0) > 0:
+        return (f"A-4: fold −1(anchor-only core, 모든 학습 쪽) {lists_info(P)['n_fold_minus1']}반응은 자기 FT_k가 없어 "
+                "FT_0_al을 쓴다(추천안: C-1을 다시 한 모델, 어느 FT_k_al에서도 학습 쪽).")
+    return None
+
+
+def a4_folds_done(P):
+    f = (P.rj("A4_report.json") or {}).get("folds") or {}
+    return sorted(str(k) for k, v in f.items() if (v or {}).get("complete"))
+
+
+def h_chain(P, st, tag, early=False, root=None):
+    """the inputs_mlts.py chain for source mlts; root = an A-2 layout below another folder (--root R: every mlts path
+    and report moves below R, e.g. the A″ arm $MLT/app)."""
+    def ak(x):
+        return f"{x}{tag}"
+    ro = ["--root", str(root)] if root else []
+
+    def im(*a):
+        return ["inputs_mlts.py", *a] + ro
+    dpr = h_disk_per_rxn(P)
+    nfin = fixed_n(P, st, ak("fin"), lambda: 2 if early else 4)
+    fin = arr(ak("fin"), im("finalize", "mlts", "@I", str(nfin)), nfin, env="reactot", part="C2", c=64,
+              mem=240, disk_gb=N_D1 / nfin * dpr / 2)
+    meta = one(ak("meta"), im("meta", "mlts"), env="reactot", part="C", c=4, mem=16, deps=keys(fin))
+    hfin = one(ak("hfin"), im("hf_inputs", "mlts"), env="reactot", part="C", c=4, mem=16, deps=keys(meta))
+    nhf = fixed_n(P, st, ak("hfr"), lambda: 2 if early else 4)
+    hfr = arr(ak("hfr"), im("hf_run", "mlts", "@I", str(nhf)), nhf, env="reactot", part="C2", c=64, mem=240,
+              deps=keys(hfin), disk_gb=N_D1 / nhf * dpr / 2)
+    if early:
+        return fin + meta + hfin + hfr
+    nx = fixed_n(P, st, "x182", lambda: 4)
+    x = arr("x182", im("x182", "mlts", "@I", str(nx)), nx, env="reactot", part="C", c=32, mem=64, deps=keys(meta))
+    xm = one("x182m", im("x182_merge", "mlts"), env="reactot", part="C", c=4, mem=32, deps=keys(x))
+    na = fixed_n(P, st, "atoms", lambda: 4)
+    at = arr("atoms", im("atoms", "mlts", "@I", str(na)), na, env="reactot", part="C", c=32, mem=64, deps=keys(xm))
+    tok = one("tokens", im("tokens", "mlts"), env="reactot", part="C", c=8, mem=32, deps=keys(at))
+    hfb = one("hfb", im("hf_build", "mlts"), env="reactot", part="C", c=8, mem=32, deps=keys(hfr))
+    d3 = one("d3", im("d3", "mlts"), env="reactot", part="C", c=8, mem=16, deps=keys(meta))
+    b = one("build", im("build", "mlts"), env="reactot", part="C", c=8, mem=64,
+            deps=keys(tok) + keys(hfb) + keys(d3) + keys(xm))
+    bm = one("buildmin", im("build", "mlts", "--refs", "min"), env="reactot", part="C", c=8, mem=64, deps=keys(b))
+    h2 = one("h2", im("h2", "mlts"), env="reactot", part="C", c=2, mem=8, deps=keys(b) + keys(bm), sink=True)
+    return fin + meta + x + xm + at + tok + hfin + hfr + hfb + d3 + b + bm + h2
+
+
+# ---- the optional A″ arm (spec 6 A-3: A″ <= 1 core-h per reaction -> a separate arm in K / E)
+def app_root(P):
+    return P.c.mlt / "app"
+
+
+def extra_app(P):
+    return bool((P.state.get("params") or {}).get("extra_arm_App"))
+
+
+def units_a4app(P, S, st):
+    """A″ for every D1 target: refine_dft reads A's folders ($MLT/ade/jobs) and writes the A-2 layout below
+    $MLT/app (contract: `mlts_autode.py refine_dft d1:<k> @I n --root R`, then `status --root R` ->
+    R/reports/A4_report.json)."""
+    u = []
+    per = app_disk_per_rxn(P)
+    folds = list(range(5)) + ([-1] if (lists_info(P).get("n_fold_minus1") or 0) > 0 else [])
+    for k in folds:
+        nf = n_list(P, f"f{k}_test") if k >= 0 else int(lists_info(P).get("n_fold_minus1") or 0)
+        n = fixed_n(P, st, f"r{k}", lambda: 2)
+        u += arr(f"r{k}", ["mlts_autode.py", "refine_dft", f"d1:{k}", "@I", str(n), "--root", str(app_root(P))], n,
+                 env="reactot", part="C2", c=64, mem=240, disk_gb=nf / n * per)
+    return u + one("status", ["mlts_autode.py", "status", "--root", str(app_root(P))], env="reactot", part="C", c=2,
+                   mem=8, deps=keys(u), sink=True)
+
+
+def done_a4app(P):
+    return (P.rjp(app_root(P) / "reports" / "A4_report.json") or {}).get("complete") is True
+
+
+def done_happ(P):
+    p = app_root(P) / "reports" / "H2_report.json"
+    J = P.rjp(p) or {}
+    ta = P.mt(app_root(P) / "reports" / "A4_report.json")
+    return bool(J.get("judged")) and (ta is None or P.mt(p) >= ta)
+
+
+def decide_happ(P, S, st):
+    """the optional arm's H-2: a rate > 2 % drops the arm from K / E (recommended option: the spec STOP is about the
+    main inputs; the arm is extra) — recorded, no HALT."""
+    J = P.rjp(app_root(P) / "reports" / "H2_report.json") or {}
+    ok = not J.get("stop")
+    P.state.setdefault("params", {})["app_usable"] = ok
+    write_arms(P)
+    if ok:
+        return dict(key="A'' arm inputs ok", line=f"A″ arm 입력(H-App): 실패율 {fmt(J.get('rate'), 4)} ≤ 0.02 → K · E에서 별도 "
+                                                   f"arm으로 쓴다($MLT/pipeline/arms.json app_usable true).")
+    return dict(key="A'' arm dropped", line=f"A″ arm 입력(H-App): 실패율 {fmt(J.get('rate'), 4)} > 0.02 → 추천안: 이 선택 arm을 "
+                                              f"K · E에서 뺀다(주 입력 H는 따로 판정; arms.json app_usable false).")
+
+
+def units_hearly(P, S, st):
+    if P.st("A4").get("status") == "done":
+        return []
+    fd = a4_folds_done(P)
+    if not fd:
+        return []
+    tag = "@" + "".join(fd)
+    if tag in (st.get("params") or {}).get("done_tags", []):
+        return []                                               # this fold set is finalised; wait for more folds
+    st.setdefault("params", {})["cur_tag"] = tag
+    return h_chain(P, st, tag, early=True)
+
+
+def done_h(P):
+    p = P.c.res / "H2_report.json"
+    J = P.rjp(p) or {}
+    ta = P.mt(P.c.res / "A4_report.json")
+    return bool(J.get("judged")) and not J.get("stop") and (ta is None or P.mt(p) >= ta)
+
+
+def decide_h(P, S, st):
+    J = P.rj("H2_report.json") or {}
+    if J.get("stop"):
+        return dict(key="H-2 fail", numbers={k: J.get(k) for k in ("n_with_ts", "n_fail", "rate", "by_stage")},
+                    halt=f"H-2 입력 실패율 {fmt(J.get('rate'), 4)} > 0.02 (명령서 7절 STOP)")
+    return dict(key="H-2 pass", line=f"H-2: 입력 실패율 {fmt(J.get('rate'), 4)} ≤ 0.02 ({J.get('n_fail')}/{J.get('n_with_ts')}).")
+
+
+def decide_cagg(P, S, st):
+    J = P.rj("C_tests.json") or {}
+    c2 = (J.get("C2") or J.get("C-2") or {}).get("pass")
+    if c2 is False:
+        return dict(key="C-2 fail", numbers=dict(C2=J.get("C2") or J.get("C-2")), halt="C-2 누수 검사 실패 (명령서 14절 STOP)")
+    return dict(key="ok", line=f"Phase C 검사 모음: C-2 통과, C-7 보고({str((J.get('C7') or J.get('C-7') or {}).get('summary', ''))[:120]}).")
+
+
+def done_r(P):
+    f = P.c.res / "PREREG_V2.md"
+    return f.is_file() and P.c.git.tracked(f) and P.c.git.clean(f)
+
+
+def done_kc1(P):
+    t, tp = P.mt(P.c.res / "C1_report.json"), P.mt(P.c.res / "PREREG_V2.md")
+    return t is not None and tp is not None and t >= tp
+
+
+def units_kc23(P, S, st):
+    u = one("plan", ["train_k.py", "plan"], env="reactot", part="C", c=2, mem=8, done=rep_complete("K_plan.json"))
+    K = P.rj("K_plan.json") or {}
+    if not K.get("complete"):
+        return u
+    allk = []
+    for x in K.get("units") or []:
+        n = _int(x.get("n"), 3)
+        c = _int(x.get("cpus"), 64)
+        part = "GA" if _int(x.get("gpu"), 0) else ("C2" if c >= 64 else "C")
+        a = arr(f"{x['arm']}/{x['unit']}", ["train_k.py", x["arm"], x["unit"], "@I", str(n)], n, env="reactot", part=part,
+                c=c, mem=_int(x.get("mem_gb"), 240 if c >= 64 else 64), gpu=_int(x.get("gpu"), 0), deps=["plan"])
+        u += a
+        allk += keys(a)
+    return u + one("select", ["train_k.py", "select"], env="reactot", part="C", c=4, mem=16, deps=allk, sink=True)
+
+
+def done_kc23(P):
+    K = P.rj("K_report.json") or {}
+    return K.get("complete") is True and "primary" in K
+
+
+def decide_kc23(P, S, st):
+    K = P.rj("K_report.json") or {}
+    lk = K.get("leakage_C2") or {}
+    if lk and lk.get("pass_") is False:
+        return dict(key="C-2 fail (K)", numbers=dict(leakage_C2=lk), halt="K: 채널 단위 학습 짝 ∩ fold k ≠ ∅ (C-2 누수, 명령서 14절 STOP)")
+    return dict(key=f"primary {K.get('primary')}", line=f"K: 1차 모델 = {K.get('primary')} (안쪽 검증 oi + cpcm para MAE; "
+                                                       f"results/K_report.json). C-2(K 단위)는 C2-K 단계가 따로 검사한다.")
+
+
+def done_c2k(P):
+    p = P.c.res / "C2K_report.json"
+    J = P.rjp(p) or {}
+    tk = P.mt(P.c.res / "K_report.json")
+    return J.get("complete") is True and "pass" in J and (tk is None or P.mt(p) >= tk)
+
+
+def decide_c2k(P, S, st):
+    J = P.rj("C2K_report.json") or {}
+    if J.get("pass") is True:
+        return dict(key="pass", line=f"C-2 (K 채널 단위): 학습 짝 ∩ fold k = ∅ — {J.get('n_units')}개 단위 통과.")
+    return dict(key="C-2 fail", numbers={k: J.get(k) for k in ("n_units", "n_overlap", "overlaps")},
+                halt="C-2 누수: K 채널 단위(C2/C3)의 f{k} 학습 짝 ∩ fold k ≠ ∅ (명령서 8 · 14절 STOP)")
+
+
+def decide_e(P, S, st):
+    E = P.rj("E_report.json") or {}
+    if E.get("prereg_change_needed"):
+        return dict(key="prereg change", numbers=dict(reason=E.get("prereg_change_reason")),
+                    halt="E: 결과를 본 뒤 등록 내용을 바꿔야 할 것 같다(명령서 14절 STOP)")
+    return dict(key="ok", line=f"E 평가 끝: 등급 {E.get('grade', '—')} (results/E_report.json).")
+
+
+def start_p(P, S, st):
+    return "P-3 DFT 증명서(최종 TS에서 라벨 수준 EnGrad 1회, 시험 200반응, 약 20 core-h)는 선택 항목이지만 추천안대로 실행한다."
+
+
+def decide_p(P, S, st):
+    J = P.rj("P_report.json") or {}
+    if J.get("selfcheck_pass") is False:
+        return dict(key="self-check fail", numbers={k: J.get(k) for k in ("selfcheck", "selfcheck_pass")},
+                    halt="P-2 자체 검사 실패(D1 20반응 E 예측 불일치 또는 새 SMILES 5개 실패)")
+    return dict(key="ok", line="P 추론기 자체 검사 통과 (results/P_report.json).")
+
+
+def decide_lists(P, S, st):
+    info = lists_info(P)
+    a3 = (info.get("files") or {}).get("a3") or {}
+    fd = a3.get("by_fold_dipole") or {}
+    per_fold = {}
+    for kd, v in fd.items():
+        k, _, d = kd.partition("/")
+        per_fold.setdefault(k, []).append(f"{d} {v}")
+    short = sorted(k for k, v in per_fold.items() if len(v) < 5)
+    why = (f"fold {', '.join(short)}에는 시험 반응이 없는 dipole이 있어 dipole마다 12개를 채울 수 없다. 추천안: 그 fold에 있는 "
+           f"dipole에 60개를 고르게 나눈다" if short else "dipole마다 12개")
+    return dict(key="lists", numbers=dict(n=a3.get("n"), by_fold=a3.get("by_fold")),
+                line=(f"목록(pipeline.py lists): fold 시험 {', '.join(str(n_list(P, f'f{k}_test')) for k in range(5))}반응, "
+                      f"fold −1 {info.get('n_fold_minus1')}반응(A-4에서 FT_0_al). A-3 시범 목록 = fold마다 60반응(명령서 6절): "
+                      f"{why}(시드 {M.SEED}+3) — " + "; ".join(f"f{k}: {', '.join(v)}" for k, v in sorted(per_fold.items()))
+                      + "."))
+
+
+def decide_ftfin(P, S, st):
+    write_ft_outputs(P, gate=((P.st("FT2-r2").get("decision") or {}).get("numbers")))
+    return dict(key="final models", line="FT_all_s0–2 · FT_LODO_0–4 (--with-al) 학습 끝 → results/FT_report.json에 FT-1 추가.")
+
+
+def decide_s(P, S, st):
+    P.state["finished"] = P.now
+    if not P.dry:
+        M.write_text(P.c.res / "STOP_S.md", f"# 명령서 S: 멈춤\n\n{P.now} pipeline.py: SUMMARY_V2.md가 생겼다. 명령서 순서의 끝"
+                                            "(S 요약 후 멈춤). launcher는 더 이상 자신을 다시 내지 않는다.\n")
+    return dict(key="finished", line="명령서 S: 멈춤 — SUMMARY_V2.md 작성 완료, 자동 실행을 끝낸다(launcher 재예약 중지).")
+
+
+# ================================================================ the registry (topological order)
+def registry():
+    R, Mm, D = "reactot", "mlts", "d1"
+    S = []
+    S.append(Stage("lists", "pipe", 5, lambda P, S_, st: one("lists", ["pipeline.py", "lists"], env=R, part="C", c=2, mem=8),
+                   code=[("pipeline.py", "lists")], done=lists_done, decide=decide_lists,
+                   summary="pipeline.py lists -> $MLT/pipeline/lists/{f<k>_test,dip<d>,a3}.csv"))
+    S.append(Stage("G-D1", "G", 10, units_gd1, code=[("gen_dft.py", "run"), ("gen_dft.py", "run_g2"),
+                                                       ("gen_dft.py", "collect")],
+                   done=done_gd1, guard=guard_dft_stop("G_report.json"), progress=prog_gd1,
+                   adopt=[(r"g_run1", "G1[{i}]"), (r"g_run1rev", "G1rev"), (r"g_run3", "G3[{i}]"), (r"g_run2", "G2[{i}]"),
+                          (r"g_collect", "collect")], results=["G_report.json"],
+                   summary="adopt g_run1/1rev/3/2 + g_collect; replan: run G1|G3 / run_g2 for groups with n_missing > 0, collect"))
+    d0code = ("gen_dft.py", "plan_d0", r"gen_d0")
+    S.append(Stage("G-D0p", "G", 11, units_gd0p, code=[d0code, ("gen_d0.py", "")], done=done_gd0p, guard=guard_d0,
+                   adopt=[(r"g_plan_?d0", "plan_d0")],
+                   results=["G_plan_d0.json"], summary="gen_dft plan_d0 (auto) -> results/G_plan_d0.json"))
+    S.append(Stage("G-D0e", "G", 12, units_gd0e, after=["G-D0p"], code=[("gen_dft.py", "g0_d0"), ("gen_d0.py", "")],
+                   done=done_gd0e, decide=decide_gd0e, on_exit3="decide", guard=guard_d0, results=["G0_estimate_d0.json"],
+                   adopt=[(r"g_g0_?d0", "g0_d0")],
+                   summary="gen_dft g0_d0 -> G0_estimate_d0.json; D1 + D0 <= 5,000 -> refit n_g2 = n_g2_rule, else HALT"))
+    S.append(Stage("G-D0f", "G", 13, units_gd0f, after=["G-D0e"], code=[d0code, ("gen_d0.py", "")], done=done_gd0f,
+                   guard=guard_d0, results=["G_plan_d0.json"],
+                   summary="gen_dft plan_d0 --n-g2 <n_g2_rule> (recommended refit of the D0 G-2 path count)"))
+    S.append(Stage("G-D0", "G", 14, units_gd0, after=["G-D0f"],
+                   code=[("gen_dft.py", "run", r"D0G1"), ("gen_dft.py", "run_g2", r"--d0"),
+                         ("gen_dft.py", "collect", r"--d0"), ("gen_d0.py", "")],
+                   done=done_gd0, guard=guard_d0, progress=prog_gd0, results=["G_report_d0.json"],
+                   adopt=[(r"g_run_?d0g?1", "D0G1[{i}]"), (r"g_run_?d0g?3", "D0G3[{i}]"), (r"g_run_?d0g?2", "D0G2[{i}]"),
+                          (r"g_collect_?d0", "collect"), (r"g_\w*d0\w*", None)],
+                   summary="run D0G1|D0G3 @I n, run_g2 @I n --d0 (n = suggested_tasks), collect --d0 -> G_report_d0.json"))
+    S.append(Stage("Z-run", "Z", 20, units_z, code=[("zero_shot.py", "run")],          # Z reads no G output
+                   done=lambda P: all(z_done(P, c) for c in Z_CANDS),
+                   progress=lambda P: sum(count_dir(P.c.mlt / "z" / c / "geom_label" / "recs") for c in Z_CANDS),
+                   adopt=[(r"z_omol", "MACE-OMOL-0"), (r"z_mh1", "MACE-MH-1"), (r"z_aim", "AIMNet2"),
+                          (r"z_off24", "MACE-OFF24"), (r"z_xtb", "xtb")],
+                   summary="zero_shot run <c> x 5 (adopt z_*)"))
+    S.append(Stage("Z-speed", "Z", 21, lambda P, S_, st: one("speed", ["zero_shot.py", "speed"], env=Mm, part="G48", c=8,
+                                                              mem=32, gpu=1),
+                   code=[("zero_shot.py", "speed")], done=done_zspeed, adopt=[(r"z_speed", "speed")],
+                   summary="zero_shot speed (one G48 job)"))
+    S.append(Stage("Z-rep", "Z", 22, lambda P, S_, st: one("report", ["zero_shot.py", "report"], env=Mm, part="C", c=2, mem=8),
+                   after=["Z-run", "Z-speed"], code=[("zero_shot.py", "report")], done=done_zrep, decide=decide_zrep,
+                   adopt=[(r"z_report", "report")], results=["Z_report.json", "Z_DECISION.md"],
+                   summary="zero_shot report -> top 2 pilots (1 -> pilot it; 0 -> HALT)"))
+    S.append(Stage("FT-dp", "FT", 30, units_ftdp, after=["G-D1", "G-D0", "Z-rep"], code=[("finetune.py", "data")],
+                   done=done_ftdp, adopt=[(r"ft_data", "data")], results=["ft/FTpilot_*_data.json"],
+                   summary="finetune data FTpilot_<a>_0 FTpilot_<b>_0 (after D1 + D0 G collect)"))
+    S.append(Stage("FT-p", "FT", 31, units_ftp, after=["FT-dp"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+                   done=done_ftp, progress=prog_train(lambda P: [f"FTpilot_{c}_0" for c in pilots(P)]),
+                   adopt=[(r"ft_p_(?P<x>.+)", lambda m, i: FT_ALIAS.get(m.group("x"), m.group("x")))],
+                   results=["ft/FTpilot_*_train.json", "ft/FTpilot_*_ft1.json"],
+                   summary="finetune train FTpilot_<c>_0 <c> ::: ft1 (MACE G24 96G, AIMNet2 GA 64G)"))
+    ft2root, xroot = (lambda P: P.c.mlt / "ft2"), (lambda P: P.c.mlt / "x")
+    S.append(Stage("FT2-p", "FT", 32, units_ft2p, after=["FT-p", "lists"], code=[("ts_geom.py", "run")], done=done_ft2p,
+                   decide=decide_ft2p,
+                   partial=geom_partial(geom_dirs(lambda P: [(f"FTpilot_{c}_0", "f0_test") for c in pilots(P)], ft2root)),
+                   progress=lambda P: geom_progress(P, [f"FTpilot_{c}_0" for c in pilots(P)], P.c.mlt / "ft2"),
+                   summary="ts_geom run FTpilot_<c>_0 f0_test label|g2 -> base MLIP (FT_0 := FTpilot_<base>_0)"))
+    S.append(Stage("FT-d1", "FT", 33, units_ftd1, after=["FT2-p"], code=[("finetune.py", "data")],
+                   done=lambda P: all(data_ok(P, f"FT_{k}") for k in range(1, 5)), results=["ft/FT_[1-4]_data.json"],
+                   summary="finetune data FT_1 FT_2 FT_3 FT_4"))
+    S.append(Stage("FT-r1", "FT", 34, units_ftr1, after=["FT-d1"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+                   done=lambda P: all(train_done(P, f"FT_{k}") for k in range(1, 5)),
+                   progress=prog_train(lambda P: [f"FT_{k}" for k in range(1, 5)]),
+                   results=["ft/FT_[1-4]_train.json", "ft/FT_[1-4]_ft1.json"],
+                   summary="train FT_<k> <base> ::: ft1 FT_<k>, k = 1..4"))
+    S.append(Stage("FT2-r1", "FT", 35, units_ft2r1, after=["FT2-p", "lists"], code=[("ts_geom.py", "run")],
+                   done=done_ft2r1, filler=True,
+                   partial=geom_partial(geom_dirs(lambda P: [(r1_run(P, k), f"f{k}_test") for k in range(5)], ft2root)),
+                   progress=lambda P: geom_progress(P, [r1_run(P, k) or "_" for k in range(5)], P.c.mlt / "ft2"),
+                   summary="filler: ts_geom on FT_k (round 1), fold k, both starts (report only)"))
+    S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1"],
+                   code=[("gen_dft.py", "g4_plan"), ("gen_dft.py", "g4_opt"), ("gen_dft.py", "run", r"G4"),
+                         ("gen_dft.py", "collect", r"--g4")],
+                   done=done_g4, decide=decide_g4, guard=guard_g4, placeholder=True,
+                   results=["G4_plan.json", "G4_report.json"],
+                   summary="gen_dft g4_plan -> g4_opt @I n (GPU) -> run G4 @I n -> collect --g4"))
+    S.append(Stage("FT-d2", "FT", 41, units_ftd2, after=["G4"], code=[("finetune.py", "data")], done=done_ftd2,
+                   results=["ft/*_al_data.json"], summary="finetune data --all --with-al"))
+    S.append(Stage("FT-r2", "FT", 42, units_ftr2, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+                   done=lambda P: all(train_done(P, f"FT_{k}_al") for k in range(5)),
+                   progress=prog_train(lambda P: [f"FT_{k}_al" for k in range(5)]),
+                   results=["ft/FT_[0-4]_al_train.json", "ft/FT_[0-4]_al_ft1.json"],
+                   summary="train FT_<k> <base> --with-al ::: ft1 (k = 0..4)"))
+    S.append(Stage("FT2-r2", "FT", 43, units_ft2r2, after=["FT-d2", "lists"], code=[("ts_geom.py", "run")],
+                   done=done_ft2r2, decide=decide_ft2r2,
+                   partial=geom_partial(geom_dirs(lambda P: [(f"FT_{k}_al", f"f{k}_test") for k in range(5)], ft2root)),
+                   progress=lambda P: geom_progress(P, [f"FT_{k}_al" for k in range(5)], P.c.mlt / "ft2"),
+                   results=["FT_report.json", "FT_geom.csv"],
+                   summary="ts_geom FT_<k>_al fold k both starts; pooled FT-2 (a) gate -> HALT on fail; "
+                           "results/FT_report.json + FT_geom.csv"))
+    S.append(Stage("FT-fin", "FT", 44, units_ftfin, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+                   done=lambda P: all(train_done(P, r + "_al") for r in FIN_RUNS), filler=True, on_start=start_ftfin,
+                   decide=decide_ftfin, progress=prog_train(lambda P: [r + "_al" for r in FIN_RUNS]),
+                   results=["ft/FT_all_s*_al_train.json", "ft/FT_all_s*_al_ft1.json", "ft/FT_LODO_*_al_train.json",
+                            "ft/FT_LODO_*_al_ft1.json", "FT_report.json"],
+                   summary="filler: FT_all_s0-2 + FT_LODO_0-4, --with-al"))
+    S.append(Stage("X-run", "X", 45, units_xrun, after=["FT-d2", "lists"], code=[("ts_geom.py", "run")], done=done_xrun,
+                   filler=True, progress=lambda P: geom_progress(P, [f"FT_LODO_{d}_al" for d in range(5)], P.c.mlt / "x"),
+                   partial=geom_partial(geom_dirs(lambda P: [(f"FT_LODO_{d}_al", f"dip{d}") for d in range(5)], xroot)),
+                   summary="filler: ts_geom FT_LODO_<d>_al on dipole d, both starts"))
+    S.append(Stage("X-rep", "X", 46, lambda P, S_, st: one("x_report", ["ts_geom.py", "x_report"], env=Mm, part="C", c=4,
+                                                             mem=16),
+                   after=["X-run"], code=[("ts_geom.py", "x_report")], done=rep_complete("X_report.json"),
+                   placeholder=True, halt_scope="local", results=["X_report.json"],
+                   summary="ts_geom x_report -> results/X_report.json (report only)"))
+    S.append(Stage("C1-ft", "C", 50, lambda P, S_, st: one("c1", ["tests_c1.py", "all", "FT_0_al"], env=Mm, part="G48",
+                                                             c=16, mem=64, gpu=1),
+                   after=["FT-d2"], need=[("FT_0_al trained", lambda P: train_done(P, "FT_0_al"))],
+                   code=[("tests_c1.py", "all")], done=done_c1ft, decide=decide_c1ft, results=["C1_tests.json"],
+                   summary="tests_c1 all FT_0_al (G48) -> pass_C1 and pass_C4 else HALT"))
+    S.append(Stage("A2-smoke", "A", 51, lambda P, S_, st: one("smoke", ["mlts_autode.py", "smoke", "--model", "FT_0_al"],
+                                                               env=Mm, part="GA", c=8, mem=32, gpu=1),
+                   after=["C1-ft"], code=[("mlts_autode.py", "smoke")], done=lambda P: "pass" in (P.rj("A2_smoke.json") or {}),
+                   decide=decide_a2, placeholder=True, results=["A2_smoke.json"],
+                   summary="mlts_autode smoke --model FT_0_al -> results/A2_smoke.json pass"))
+    S.append(Stage("A3", "A", 52, units_a3, after=["FT2-r2", "A2-smoke", "lists"],
+                   code=[("mlts_autode.py", "run"), ("mlts_autode.py", "refine_dft"), ("mlts_autode.py", "a3_report")],
+                   done=rep_complete("A3_report.json"), decide=decide_a3, placeholder=True, results=["A3_report.json"],
+                   progress=lambda P: count_dir(P.c.mlt / "ade" / "a3"),
+                   summary="mlts_autode run a3 @I n (A) -> refine_dft a3 @I n (A'') -> a3_report; engine rule"))
+    S.append(Stage("A4_disk", "A", 53, None, after=["A3"], gate=gate_a4,
+                   summary="disk gate: quota fresh and free - (A-3 disk/rxn + H [+ A'' arm]) x 9,266 >= 30 GB"))
+    S.append(Stage("A4", "A", 54, units_a4, after=["A4_disk"],
+                   code=[("mlts_autode.py", "run"), ("mlts_autode.py", "refine_dft"), ("mlts_autode.py", "status")],
+                   done=rep_complete("A4_report.json"), placeholder=True, on_start=start_a4, results=["A4_report.json"],
+                   progress=lambda P: count_dir(P.c.mlt / "ade" / "jobs"),
+                   summary="per fold k: mlts_autode run d1:<k> @I n --model FT_<k>_al --engine <e>; status -> A4_report"))
+    S.append(Stage("A4-App", "A", 55, units_a4app, after=["A4"], active=extra_app,
+                   code=[("mlts_autode.py", "refine_dft", r"--root"), ("mlts_autode.py", "status")],
+                   done=done_a4app, placeholder=True, progress=lambda P: count_dir(app_root(P) / "ade" / "jobs"),
+                   summary="only if A-3 set extra_arm_App: refine_dft d1:<k> @I n --root $MLT/app (A'' for all 9,266); "
+                           "status --root $MLT/app -> $MLT/app/reports/A4_report.json"))
+    S.append(Stage("H-early", "H", 59, units_hearly, after=["A4_disk"],
+                   code=[("inputs_mlts.py", "finalize"), ("inputs_mlts.py", "meta"), ("inputs_mlts.py", "hf_inputs"),
+                         ("inputs_mlts.py", "hf_run")],
+                   done=lambda P: P.st("A4").get("status") == "done", filler=True, rearm=True,
+                   summary="filler: finalize -> meta -> hf_inputs -> hf_run on the A-4 folds finished so far"))
+    S.append(Stage("H", "H", 60, lambda P, S_, st: h_chain(P, st, ""), after=["A4", "H-early"],
+                   code=[("inputs_mlts.py", x) for x in ("finalize", "meta", "x182", "x182_merge", "atoms", "tokens",
+                                                         "hf_inputs", "hf_run", "hf_build", "d3", "build", "h2")],
+                   done=done_h, decide=decide_h, progress=lambda P: count_dir(P.c.mlt / "final"),
+                   results=["H_*_mlts.json", "H2_report.json", "fu2_mlts/*"],
+                   summary="inputs_mlts mlts: finalize -> meta -> x182/merge -> atoms/tokens, hf_inputs -> hf_run -> "
+                           "hf_build, d3 -> build (own, min) -> h2"))
+    S.append(Stage("H-App", "H", 61, lambda P, S_, st: h_chain(P, st, "", root=app_root(P)), after=["A4-App"],
+                   active=extra_app,
+                   code=[("inputs_mlts.py", x) for x in ("finalize", "meta", "x182", "x182_merge", "atoms", "tokens",
+                                                         "hf_inputs", "hf_run", "hf_build", "d3", "build", "h2")],
+                   done=done_happ, decide=decide_happ, progress=lambda P: count_dir(app_root(P) / "final"),
+                   summary="only with the A'' arm: the H chain with --root $MLT/app -> $MLT/app/reports/H2_report.json; "
+                           "H-2 > 2 % drops the arm (recorded)"))
+    S.append(Stage("C-agg", "C", 70, lambda P, S_, st: one("all", ["tests.py", "all"], env=Mm, part="GA", c=16, mem=64, gpu=1),
+                   after=["FT-r2", "A4", "H"], code=[("tests.py", "all")], done=rep_complete("C_tests.json"),
+                   decide=decide_cagg, placeholder=True, results=["C_tests.json"], summary="tests all -> C_tests.json"))
+    S.append(Stage("R", "R", 71, lambda P, S_, st: one("write", ["prereg_v2.py", "write"], env=R, part="C", c=2, mem=8),
+                   after=["FT2-r2", "A3", "H", "H-App", "C-agg"], code=[("prereg_v2.py", "write")], done=done_r,
+                   commit_gate=True,
+                   placeholder=True, results=["PREREG_V2.md"],
+                   summary="prereg_v2 write -> PREREG_V2.md, committed by the launcher before K"))
+    S.append(Stage("K-C1", "K", 72, lambda P, S_, st: (one("atoms", ["predict_c1.py", "atoms", "mlts"], env=R, part="GA", c=8,
+                                                            mem=64, gpu=1) +
+                                                        one("xgb", ["predict_c1.py", "xgb", "mlts"], env=R, part="C", c=32,
+                                                            mem=64) +
+                                                        one("collect", ["predict_c1.py", "collect"], env=R, part="C", c=4,
+                                                            mem=32, deps=["atoms", "xgb"], sink=True)),
+                   after=["R"], code=[("predict_c1.py", "atoms"), ("predict_c1.py", "xgb"), ("predict_c1.py", "collect")],
+                   done=done_kc1, results=["C1_report.json"], summary="predict_c1 atoms|xgb mlts -> collect"))
+    S.append(Stage("K-C2C3", "K", 73, units_kc23, after=["R"],
+                   code=[("train_k.py", "plan"), ("train_k.py", "c2"), ("train_k.py", "c3"), ("train_k.py", "select")],
+                   done=done_kc23, decide=decide_kc23, placeholder=True, results=["K_plan.json", "K_report.json"],
+                   summary="train_k plan -> c2|c3 <unit> @I n -> select (primary by inner validation oi + cpcm)"))
+    S.append(Stage("C2-K", "C", 74, lambda P, S_, st: one("c2k", ["tests.py", "c2_k"], env=R, part="C", c=4, mem=32),
+                   after=["K-C2C3"], code=[("tests.py", "c2_k")], done=done_c2k, decide=decide_c2k, placeholder=True,
+                   results=["C2K_report.json"],
+                   summary="tests c2_k -> C2K_report.json: K channel units' f{k} training pairs ∩ fold k = ∅, else HALT"))
+    S.append(Stage("E", "E", 75, lambda P, S_, st: one("run", ["eval_v2.py", "run"], env=R, part="C", c=16, mem=64),
+                   after=["K-C1", "K-C2C3", "C2-K"], code=[("eval_v2.py", "run")], done=rep_complete("E_report.json"),
+                   decide=decide_e, placeholder=True, results=["E_*"], summary="eval_v2 run -> E_report.json"))
+    S.append(Stage("W", "W", 75, lambda P, S_, st: (one("channel", ["final_w.py", "channel"], env=Mm, part="GA", c=8, mem=64,
+                                                         gpu=1) +
+                                                     arr("committee", ["final_w.py", "committee", "@I", "3"], 3, env=Mm,
+                                                         part="GA", c=16, mem=64, gpu=1) +
+                                                     one("report", ["final_w.py", "report"], env=R, part="C", c=4, mem=16,
+                                                         deps=["channel", "committee[0]", "committee[1]", "committee[2]"],
+                                                         sink=True)),
+                   after=["FT-fin", "K-C2C3", "E"],
+                   code=[("final_w.py", "channel"), ("final_w.py", "committee"), ("final_w.py", "report")],
+                   done=rep_complete("W_report.json"), placeholder=True, results=["W_*"],
+                   summary="final_w channel; committee @I 3; report -> W_report.json"))
+    S.append(Stage("P", "P", 76, lambda P, S_, st: (one("selfcheck", ["predict_v2.py", "selfcheck"], env=Mm, part="GA", c=16,
+                                                         mem=64, gpu=1) +
+                                                     arr("cert", ["predict_v2.py", "cert", "@I", "1"], 1, env=R, part="C2",
+                                                         c=64, mem=240) +
+                                                     one("report", ["predict_v2.py", "report"], env=R, part="C", c=4,
+                                                         mem=16, deps=["selfcheck", "cert[0]"], sink=True)),
+                   after=["W"], code=[("predict_v2.py", "selfcheck"), ("predict_v2.py", "cert"), ("predict_v2.py", "report")],
+                   done=rep_complete("P_report.json"), decide=decide_p, on_start=start_p, placeholder=True,
+                   results=["P_report.json"], summary="predict_v2 selfcheck + cert @I 1 (P-3) -> report"))
+    S.append(Stage("S", "S", 77, lambda P, S_, st: one("write", ["summary_v2.py", "write"], env=R, part="C", c=2, mem=8),
+                   after=["X-rep", "P"], code=[("summary_v2.py", "write")],
+                   done=lambda P: (P.c.res / "SUMMARY_V2.md").is_file(), decide=decide_s, placeholder=True,
+                   results=["SUMMARY_V2.md", "STOP_S.md"], summary="summary_v2 write -> SUMMARY_V2.md, STOP_S.md, stop"))
+    del D
+    return S
+
+
+def ancestors(reg):
+    by = {s.name: s for s in reg}
+    out = {}
+    for s in reg:
+        seen, todo = set(), list(s.after)
+        while todo:
+            a = todo.pop()
+            if a in seen or a not in by:
+                continue
+            seen.add(a)
+            todo += by[a].after
+        out[s.name] = seen
+    return out
+
+
+# ================================================================ one pass
+def new_state():
+    return dict(version=CODE_VERSION, created=None, paused=False, halted=[], quota={}, slots={}, stages={},
+                intents=[], params={}, push_pending=False, commit_pending=[], finished=None, resolved={},
+                stop_removed=[], hist_scan=None)
+
+
+def new_stage_state():
+    return dict(status="", why="", epoch=0, att=dict(cont=0, infra=0), noprog=0, prog_epoch=None, units={}, params={},
+                decision=None, t_done=None, commit=None, sticky=True, started=False, halt_kind=None, sbatch_err=0,
+                sbatch_err_pass=None)
+
+
+def new_unit_state():
+    return dict(jobs=[], ok=None, epoch=0, att=dict(cont=0, infra=0, oom=0, code=0), noprog=0, prog_sub=None,
+                mem_mult=1.0)
+
+
+class Pass:
+    def __init__(self, ctx, dry=False):
+        self.c, self.dry = ctx, dry
+        if dry:
+            self.c.slurm = ReadOnlySlurm(self.c.slurm)
+            if isinstance(self.c.git, Git):
+                self.c.git.readonly = True
+        self.t = ctx.clock()
+        self.now = iso(self.t)
+        self.reg = registry()
+        self.by = {s.name: s for s in self.reg}
+        self.anc = ancestors(self.reg)
+        self.events, self.declines, self.planned, self.attn = [], [], [], []
+        self.to_commit = []
+        self._json, self._mt, self._prog, self._code, self._git = {}, {}, {}, {}, {}
+        self.stop_submit = None
+        self.n_sub = 0
+        self.locked = False
+        self.successor_ok = True
+        self.cands = []
+        self.unresolved, self.foreign, self.jobidx, self.masters = set(), {}, {}, set()
+        self.paused = self.pause_exit = False
+
+    # ---------------------------------------------------------------- io helpers
+    def rjp(self, p):
+        p = Path(p)
+        try:
+            m = p.stat().st_mtime
+        except OSError:
+            return None
+        k = str(p)
+        if k in self._json and self._json[k][0] == m:
+            return self._json[k][1]
+        try:
+            v = json.loads(p.read_text())
+        except (OSError, ValueError):
+            v = None
+        self._json[k] = (m, v)
+        return v
+
+    def rj(self, rel):
+        return self.rjp(self.c.res / rel)
+
+    def mt(self, p):
+        try:
+            return Path(p).stat().st_mtime
+        except OSError:
+            return None
+
+    def st(self, name):
+        s = self.state["stages"].setdefault(name, new_stage_state())
+        for k, v in new_stage_state().items():
+            s.setdefault(k, v)
+        return s
+
+    def log(self, ev):
+        self.events.append(ev)
+
+    def dec(self, stage, text, key=None):
+        """append one DECISIONS.md line, idempotently: the line ends with an id (an invisible markdown comment) made
+        from the stage and the event key, and a line whose id is already in the file is not written again (a pass
+        that crashed after writing it and is re-run makes the same decision with the same key)."""
+        did = hashlib.sha1(f"{stage}|{key if key is not None else text}".encode()).hexdigest()[:10]
+        line = (f"- **auto {stage} ({time.strftime('%m-%d %H:%M', time.localtime(self.t))}, pipeline)**: {text} "
+                f"<!-- mltp:{did} -->\n")
+        self.declines.append(line)
+        if self.dry:
+            return
+        p = M.assert_write_ok(self.c.dec_path)
+        pre = ""
+        try:
+            raw = Path(p).read_bytes()
+            if f"<!-- mltp:{did} -->".encode() in raw:
+                return
+            pre = "" if (not raw or raw.endswith(b"\n")) else "\n"
+        except OSError:
+            pass
+        with open(p, "a") as f:
+            f.write(pre + line)
+
+    def write_state(self):
+        if self.dry:
+            return
+        M.write_json(self.c.state_path, self.state)
+
+    def flush_log(self):
+        if self.dry or not self.events:
+            return
+        p = M.assert_write_ok(self.c.log_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        head = "" if p.is_file() else "# MLTS pipeline log (pipeline.py: one line per pass that changed something)\n\n"
+        line = f"- {self.now[:16]} p{self.state['pass'].get('n')} j{self.c.job} | " + " | ".join(self.events) + "\n"
+        with open(p, "a") as f:
+            f.write(head + line)
+        self.events = []
+
+    # ---------------------------------------------------------------- lock
+    def lock(self):
+        """$MLT/pipeline/lock '<job> <iso time> <host> <pid>'. Held by a RUNNING job and younger than 12 min -> no
+        pass; otherwise stale and taken over (a pass is killed after 600 s, so an older lock is never live — e.g. a
+        manual `once` in the sandbox killed by SBX_T leaves the RUNNING sandbox as its holder)."""
+        p = M.assert_write_ok(self.c.pdir / "lock")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        me = f"{self.c.job} {self.now} {socket.gethostname()} {os.getpid()}\n"
+        self.lock_token = me
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            os.write(fd, me.encode())
+            os.close(fd)
+            self.locked = True
+            return True
+        except FileExistsError:
+            pass
+        try:
+            tok = p.read_text().split()
+        except OSError:
+            tok = []
+        holder = tok[0] if tok else ""
+        t_lock = parse_iso(tok[1]) if len(tok) > 1 else None
+        age = (self.t - t_lock) if t_lock else None
+        if age is None or age < LOCK_STALE_S:
+            try:
+                sq = self.c.slurm.squeue()
+            except SnapshotError as e:
+                print(f"[pipeline] lock held by {holder}; squeue failed ({e}): no pass", flush=True)
+                return False
+            alive = any(l["id"] == holder and l["state"] == "RUNNING" for l in sq)
+            mine = holder == self.c.job and len(tok) > 3 and tok[3] == str(os.getpid())
+            if alive and not mine:
+                print(f"[pipeline] lock held by live job {holder} ({'?' if age is None else round(age)} s): no pass",
+                      flush=True)
+                return False
+        M.write_text(p, me)
+        self.locked = True
+        self.takeover = f"{holder} ({'age unknown' if age is None else f'{age:.0f} s'})"
+        return True
+
+    def unlock(self):
+        if not self.locked:
+            return
+        p = self.c.pdir / "lock"
+        try:
+            if p.read_text() == getattr(self, "lock_token", None):
+                os.remove(p)
+        except OSError:
+            pass
+
+    # ---------------------------------------------------------------- the pass
+    def run(self):
+        if not self.dry and not self.lock():
+            return 0
+        try:
+            if not self.load_state():
+                return 0
+            pn = int((self.state.get("pass") or {}).get("n") or 0) + 1
+            self.state["pass"] = dict(n=pn, job=self.c.job, t0=self.now, t1=None, code=CODE_VERSION,
+                                       host=socket.gethostname(), dry=self.dry)
+            if getattr(self, "takeover", None):
+                self.log(f"lock takeover from {self.takeover}")
+            self.snapshot()
+            self.read_pause()
+            self.resolve_stops()
+            self.index_jobs()
+            self.reconcile_intents()
+            self.adopt()
+            self.fetch_ends()
+            self.quota()
+            self.successor()
+            for S in self.reg:
+                self.eval_stage(S)
+            self.state["halted"] = [n for n, s in self.state["stages"].items() if s.get("status") == "halted"]
+            self.commit()
+            self.submit_all()
+            self.finish()
+            return 0
+        finally:
+            if not self.dry:
+                self.unlock()
+
+    def load_state(self):
+        """results/PIPELINE_STATE.json; unreadable -> the previous pass's copy $MLT/pipeline/state.prev.json (jobs
+        submitted since are re-adopted by their squeue comment); neither -> no pass (never a fresh start over an
+        existing state: that would re-adopt and resubmit from scratch)."""
+        st = None
+        if self.c.state_path.is_file():
+            st = self.rjp(self.c.state_path)
+            if not isinstance(st, dict):
+                prev = self.rjp(self.c.pdir / "state.prev.json")
+                if isinstance(prev, dict):
+                    st = prev
+                    self.attn.append("results/PIPELINE_STATE.json unreadable: continued from $MLT/pipeline/state.prev.json")
+                    self.log("state file unreadable -> state.prev.json")
+                else:
+                    msg = (f"{iso(self.c.clock())} results/PIPELINE_STATE.json unreadable and no $MLT/pipeline/"
+                           "state.prev.json: pass skipped, nothing submitted — lead: restore it (git show HEAD:"
+                           "analysis/mlts/results/PIPELINE_STATE.json)\n")
+                    print(msg.strip(), flush=True)
+                    if not self.dry:
+                        M.write_text(self.c.ctl / "PIPELINE_ATTENTION", msg)
+                    return False
+        if not st:
+            st = new_state()
+            st["created"] = self.now
+        for k, v in new_state().items():
+            st.setdefault(k, v)
+        self.state = st
+        return True
+
+    # ---------------------------------------------------------------- snapshot
+    def snapshot(self):
+        """one squeue (-r: one line per array task). total = every task of the user (launchers, sandbox, manual
+        work); EP = eligible pending non-launcher tasks (they start before anything submitted later: FIFO)."""
+        self.sq = self.c.slurm.squeue()
+        self.live = {l["id"]: l for l in self.sq}
+        other = [l for l in self.sq if l["name"] != LAUNCH]
+        self.total = len(self.sq)
+        self.T = len(other)
+        self.Rn = sum(l["state"] == "RUNNING" for l in self.sq)
+        me = self.live.get(self.c.job)
+        self.self_run = 1 if (self.c.launcher and me and me["state"] == "RUNNING") else 0
+        self.EP = sum(1 for l in other if eligible(l))
+        self.CPU = sum(l["cpus"] for l in self.sq)
+        self.GPU = sum(l["gpus"] for l in self.sq)
+        fillers = {f"mltp_{s.name}" for s in self.reg if s.filler}
+        self.T_filler = sum(l["name"] in fillers for l in other)
+        self.succ_pending = any(l["name"] == LAUNCH and l["state"] == "PENDING" and l["id"] != self.c.job for l in self.sq)
+        self.state["slots"] = dict(total=self.total, T=self.T, running=self.Rn, eligible_pending=self.EP, CPU=self.CPU,
+                                   GPU=self.GPU, T_filler=self.T_filler, launcher=self.total - self.T, t=self.now)
+
+    def read_pause(self):
+        p = self.c.ctl / "PIPELINE_PAUSE"
+        self.paused = p.is_file()
+        try:
+            self.pause_exit = self.paused and p.read_text().strip() == "exit"
+        except OSError:
+            self.pause_exit = False
+        if self.paused != bool(self.state.get("paused")):
+            self.log("paused" if self.paused else "resumed")
+        self.state["paused"] = self.paused
+
+    # ---------------------------------------------------------------- RESOLVE
+    def reset_stage(self, name, why):
+        """a new round with fresh attempt counters. Jobs of the stage that are still in squeue are carried into the
+        new round (their end is judged there), so a retry never submits a second copy of a unit that still runs."""
+        st = self.st(name)
+        st.update(status="", why=why, decision=None, t_done=None, noprog=0, prog_epoch=None, att=dict(cont=0, infra=0),
+                  halt_kind=None, sbatch_err=0)
+        st["epoch"] = int(st.get("epoch") or 0) + 1
+        live = getattr(self, "live", {})
+        for us in st["units"].values():
+            us.update(att=dict(cont=0, infra=0, oom=0, code=0), noprog=0)
+            for j in us.get("jobs", []):
+                if j["id"] in live:
+                    j["epoch"], j["carried"] = st["epoch"], True
+        if name in self.state["halted"]:
+            self.state["halted"].remove(name)
+        self.log(f"{name} reset ({why})")
+
+    def rename_stop(self, f, name):
+        """STOP_<name>.md -> STOP_<name>.resolved[.k].md (a rename, never a deletion); the old tracked path is
+        committed as removed with the next commit."""
+        k = 1
+        tgt = f.with_name(f"STOP_{name}.resolved.md")
+        while tgt.exists():
+            k += 1
+            tgt = f.with_name(f"STOP_{name}.resolved.{k}.md")
+        os.replace(f, tgt)
+        if str(f) not in self.state["stop_removed"]:
+            self.state["stop_removed"].append(str(f))
+        return tgt
+
+    def auto_resolve(self, S, st, why):
+        """a cancelled / operational HALT whose outputs became complete: the STOP file is marked resolved."""
+        f = self.c.res / f"STOP_{S.name}.md"
+        self.dec(S.name, f"자동 해제: {why} → `STOP_{S.name}.md`를 .resolved.md로 바꿨다.", key=f"autores:{st.get('epoch')}:{why}")
+        self.log(f"{S.name} auto-resolved ({why})")
+        if S.name in self.state["halted"]:
+            self.state["halted"].remove(S.name)
+        if not self.dry and f.is_file():
+            self.rename_stop(f, S.name)
+        self.to_commit.append((S.name, "auto-resolved"))
+
+    def resolve_stops(self):
+        """first line `RESOLVE: <option>` of results/STOP_<stage>.md. Crash-safe order: apply to the state, record the
+        file hash in state.resolved, DECISIONS line (idempotent id), write the state, THEN rename the file. A file
+        whose hash is already recorded is only renamed (never applied twice)."""
+        for f in sorted(self.c.res.glob("STOP_*.md")):
+            if ".resolved" in f.name or f.name == "STOP_S.md":
+                continue
+            try:
+                txt = f.read_text()
+            except OSError:
+                continue
+            first = txt.split("\n", 1)[0].strip()
+            m = re.match(r"RESOLVE:\s*(\w+)\s*(.*)$", first)
+            if not m:
+                continue
+            name = f.name[len("STOP_"):-len(".md")]
+            if name not in self.by:
+                self.attn.append(f"{f.name}: unknown stage")
+                continue
+            h = hashlib.sha1((f.name + "\n" + txt).encode()).hexdigest()[:12]
+            opt, arg = m.group(1).lower(), m.group(2).strip()
+            if h in self.state["resolved"]:
+                if not self.dry:
+                    tgt = self.rename_stop(f, name)
+                    self.state["resolved"][h]["renamed"] = tgt.name
+                    self.log(f"{name}: RESOLVE already applied (hash {h}); {f.name} -> {tgt.name}")
+                self.to_commit.append((name, f"resolve {opt}"))
+                continue
+            st = self.st(name)
+            if opt == "param":
+                targets = set()
+                for kv in arg.split():
+                    k, _, v = kv.partition("=")
+                    tgt, _, k2 = k.rpartition(".")
+                    tgt = tgt or name
+                    if tgt not in self.by:
+                        continue
+                    try:
+                        val = int(v)
+                    except ValueError:
+                        try:
+                            val = float(v)
+                        except ValueError:
+                            val = v
+                    self.st(tgt).setdefault("params", {})[k2] = val
+                    targets.add(tgt)
+                for t in targets - {name}:
+                    self.reset_stage(t, f"RESOLVE param from {f.name}")
+                if name in targets or not targets:
+                    self.reset_stage(name, f"RESOLVE param {arg}")       # retry this stage with the new parameter
+                else:                                                    # continue past this STOP with another stage's parameter
+                    st.update(status="done", why=f"accepted with {arg} (RESOLVE)", accepted=self.now, t_done=self.now)
+                    if name in self.state["halted"]:
+                        self.state["halted"].remove(name)
+            elif opt == "retry":
+                self.reset_stage(name, "RESOLVE retry")
+            elif opt == "accept":
+                st.update(status="done", why="accepted by lead (RESOLVE)", accepted=self.now, t_done=self.now)
+                if name in self.state["halted"]:
+                    self.state["halted"].remove(name)
+            elif opt == "skip":
+                st.update(status="skipped", why="skipped by lead (RESOLVE)", t_done=self.now)
+                if name in self.state["halted"]:
+                    self.state["halted"].remove(name)
+            else:
+                self.attn.append(f"{f.name}: unknown RESOLVE option {opt!r}")
+                continue
+            self.state["resolved"][h] = dict(file=f.name, stage=name, opt=opt, arg=arg, t=self.now, renamed=None)
+            self.dec(name, f"lead `RESOLVE: {opt}{(' ' + arg) if arg else ''}` 적용 ({f.name} → .resolved.md).",
+                     key=f"resolve:{h}")
+            self.log(f"{name} RESOLVE {opt} {arg}".strip())
+            if not self.dry:
+                self.write_state()                                   # persisted before the file disappears
+                tgt = self.rename_stop(f, name)
+                self.state["resolved"][h]["renamed"] = tgt.name
+            self.to_commit.append((name, f"resolve {opt}"))
+
+    # ---------------------------------------------------------------- jobs index / intents / adoption / ends
+    def all_jobs(self):
+        for name, st in self.state["stages"].items():
+            for key, us in st.get("units", {}).items():
+                for j in us.get("jobs", []):
+                    yield name, key, us, j
+
+    def index_jobs(self):
+        self.jobidx = {j["id"]: (n, k) for n, k, _, j in self.all_jobs()}
+        self.masters = {j["id"].split("_")[0] for _, _, _, j in self.all_jobs()}
+
+    def attach(self, stage, key, jid, intent, t_sub, adopted=False, name=None, end=None):
+        st = self.st(stage)
+        us = st["units"].setdefault(key, new_unit_state())
+        if any(j["id"] == jid for j in us["jobs"]):
+            return
+        us["jobs"].append(dict(id=jid, intent=intent, t_sub=t_sub, epoch=int(st.get("epoch") or 0), adopted=adopted,
+                               name=name, end=end))
+        self.jobidx[jid] = (stage, key)
+        self.masters.add(jid.split("_")[0])
+        st["started"] = True
+
+    def reconcile_intents(self):
+        """an intent left 'submitting' by an interrupted pass / a timed-out sbatch: matched by its comment in squeue
+        (accounting stores no comments here, AccountingStoreFlags=(null)), else by name + submit time + the same
+        array index set in sacct; sacct failing keeps the intent (its units wait) — never voided on a failed query."""
+        for it in self.state["intents"]:
+            if it.get("status") != "submitting":
+                continue
+            m = [l for l in self.sq if l["comment"].endswith(":" + it["id"])]
+            if not m:
+                rows = self.c.slurm.sacct(names=[f"mltp_{it['stage']}"], since=it["t"][:19])
+                if rows is None:
+                    self.attn.append(f"sacct failed: intent {it['id']} ({it['stage']}) kept, its units wait")
+                    continue
+                m = [r for r in rows if (r.get("comment") or "").endswith(":" + it["id"])]
+                if not m and rows and not any(r.get("comment") for r in rows):     # comments not in accounting
+                    want = {re.fullmatch(r".+\[(\d+)\]", k).group(1) for k in it.get("units", [])
+                            if it.get("array") and re.fullmatch(r".+\[(\d+)\]", k)}
+                    by_master = {}
+                    for r in rows:
+                        if r["id"].split("_")[0] in self.masters or (r.get("submit") or "") < it["t"][:19]:
+                            continue
+                        for x in expand_ids(r["id"]):
+                            by_master.setdefault(x.split("_")[0], set()).add(x.split("_", 1)[1] if "_" in x else "")
+                    ok = sorted(ms for ms, idx in by_master.items()
+                                if (idx == want if it.get("array") else idx == {""}))
+                    m = [dict(id=ok[0])] if ok else []
+            if m:
+                master = m[0]["id"].split("_")[0]
+                for key in it["units"]:
+                    idx = re.fullmatch(r".+\[(\d+)\]", key)
+                    jid = f"{master}_{idx.group(1)}" if (it.get("array") and idx) else master
+                    self.attach(it["stage"], key, jid, it["id"], it["t"])
+                it.update(status="adopted", job=master)
+                self.log(f"{it['stage']} intent {it['id']} -> job {master} (adopted after an interrupted pass)")
+            elif self.t - (parse_iso(it["t"]) or self.t) > INTENT_VOID_S:
+                it["status"] = "void"
+                self.log(f"{it['stage']} intent {it['id']} void (no job found)")
+        if len(self.state["intents"]) > 300:
+            keep = [x for x in self.state["intents"] if x.get("status") == "submitting"]
+            self.state["intents"] = (self.state["intents"][-300:] if not keep else
+                                     [x for x in self.state["intents"][-300:] if x not in keep] + keep)
+        self.unresolved = {(it["stage"], k) for it in self.state["intents"] if it.get("status") == "submitting"
+                           for k in it.get("units", [])}
+
+    def match(self, name, jid, comment):
+        """(stage, unit key | None) for a job name / id / comment, or None."""
+        cm = parse_comment(comment)
+        if cm and cm[0] in self.by:
+            ks = spec_keys(cm[1], jid)
+            return cm[0], (ks[0] if len(ks) == 1 else None)
+        idx = str(jid).split("_", 1)[1] if "_" in str(jid) else "0"
+        for S in self.reg:
+            for rx, key in S.adopt:
+                mm = re.fullmatch(rx, name or "")
+                if mm:
+                    if key is None:                          # recognised as this stage's, unit unknown: blocks it
+                        return S.name, None
+                    k = key(mm, idx) if callable(key) else key.format(i=idx)
+                    return S.name, k
+        if (name or "").startswith("mltp_") and name[5:] in self.by:
+            return name[5:], None
+        return None
+
+    def adopt(self):
+        self.foreign = {}
+        for l in self.sq:
+            if l["name"] == LAUNCH or l["id"] in self.jobidx:
+                continue
+            hit = self.match(l["name"], l["id"], l["comment"])
+            if not hit:
+                continue
+            stage, key = hit
+            if key is None:
+                self.foreign.setdefault(stage, []).append(l["id"])
+                continue
+            self.attach(stage, key, l["id"], "adopt", self.now, adopted=True, name=l["name"])
+            self.log(f"{stage} adopt {l['id']} ({l['name']}) as {key}")
+        # every pass: sacct since the last scan (- 15 min), so a manual job that started and ended between two passes
+        # is adopted too (newer than the unit's latest job only)
+        last = parse_iso(self.state.get("hist_scan")) if self.state.get("hist_scan") else None
+        since = iso(last - HISTORY_MARGIN_S) if last else HISTORY_SINCE
+        rows = self.c.slurm.sacct(since=since)
+        if rows is None:
+            self.attn.append("sacct failed: manual-job history not scanned this pass")
+            return
+        best = {}
+        for r in rows:
+            for jid in expand_ids(r["id"]):
+                if jid in self.jobidx or jid in self.live:
+                    continue
+                hit = self.match(r["name"], jid, r.get("comment"))
+                if not hit or hit[1] is None:
+                    continue
+                k = (hit[0], hit[1])
+                if k not in best or (r.get("submit") or "", jid) > (best[k][0].get("submit") or "", best[k][1]):
+                    best[k] = (r, jid)
+        for (stage, key), (r, jid) in sorted(best.items()):
+            us = self.st(stage)["units"].get(key)
+            latest = max([str(j.get("t_sub") or "") for j in (us or {}).get("jobs", [])] or [""])
+            if us and us.get("jobs") and (r.get("submit") or "") <= latest:
+                continue
+            end = None
+            if r["state"].split()[0] not in LIVE_STATES:
+                end = dict(state=r["state"], exit=r["exit"], sig=r.get("sig"), elapsed=r["elapsed"], start=r["start"],
+                           end=r["end"])
+            self.attach(stage, key, jid, "adopt-history", r.get("submit") or self.now, adopted=True, name=r["name"], end=end)
+            self.log(f"{stage} adopt {jid} ({r['name']}, {r['state']}) from sacct history as {key}")
+        if not self.dry:
+            self.state["hist_scan"] = self.now
+
+    def fetch_ends(self):
+        need = [j for _, _, _, j in self.all_jobs() if j.get("end") is None and j["id"] not in self.live]
+        if not need:
+            return
+        rows = self.c.slurm.sacct(ids=sorted({j["id"] for j in need}))
+        if rows is None:
+            self.attn.append("sacct failed: job end states deferred")
+            return
+        by = {}
+        for r in rows:
+            for x in expand_ids(r["id"]):
+                by[x] = r
+        if not by:
+            self.attn.append(f"sacct returned no rows for {len(need)} ended jobs (accounting delay?): end states deferred")
+        for j in need:
+            r = by.get(j["id"])
+            age = self.t - (parse_iso(j.get("t_sub")) or self.t)
+            if r and r["state"].split()[0] not in LIVE_STATES:
+                j["end"] = dict(state=r["state"], exit=r["exit"], sig=r.get("sig"), elapsed=r["elapsed"],
+                                start=r["start"], end=r["end"])
+            elif r is None and ((by and age > LOST_AFTER_S) or age > LOST_ALONE_S):
+                # LOST only when accounting answers for other jobs (or after 12 h): an empty answer is an outage
+                j["end"] = dict(state="LOST", exit=None, sig=None, elapsed=None, start=None, end=None)
+
+    # ---------------------------------------------------------------- quota / successor
+    def quota(self):
+        f = self.c.ctl / "QUOTA_FREE_GB"
+        q = dict(gb=None, t=None, age_h=None, stale=True, est_free=None, used_since=0.0)
+        try:
+            tok = f.read_text().split()
+            q["gb"], q["t"] = float(tok[0]), tok[1]
+            tq = parse_iso(tok[1])
+            q["age_h"] = round((self.t - tq) / 3600.0, 2) if tq else None
+            q["stale"] = tq is None or q["age_h"] > QUOTA_STALE_H
+        except (OSError, IndexError, ValueError):
+            pass
+        if q["gb"] is not None and q["t"]:
+            # every job that could still write after the reading: submitted after it, live now, or ended after it
+            # (a job running at the reading time keeps writing); conservative (its whole estimate is counted)
+            used, tq = 0.0, q["t"][:19]
+            for _, _, _, j in self.all_jobs():
+                d = float(j.get("disk_gb") if j.get("disk_gb") is not None else DISK_GB_DEFAULT)
+                if d <= 0:
+                    continue
+                e = (j.get("end") or {}).get("end")
+                if (j.get("t_sub") or "") >= tq or j["id"] in self.live or (e and str(e)[:19] >= tq):
+                    used += d
+            q["used_since"] = round(used, 2)
+            q["est_free"] = round(q["gb"] - used, 2)
+        self.state["quota"] = q
+        self.no_submit = None
+        if q["gb"] is None or q["stale"]:
+            self.no_submit = "QUOTA_FREE_GB missing or > 24 h old (DECISIONS 0-8: free disk checked before submitting)"
+            self.attn.append("QUOTA_FREE_GB missing or > 24 h old: NO submissions — lead: write '<GB> <ISO time>' from login "
+                             "mmlsquota to $MLT/QUOTA_FREE_GB (refresh at the hourly check)")
+        elif q["est_free"] is not None and q["est_free"] < QUOTA_MIN_GB:
+            self.no_submit = f"estimated free disk {q['est_free']:.0f} GB < 30 GB"
+            self.attn.append(f"estimated free disk {q['est_free']:.0f} GB < 30 GB: no submissions (DECISIONS 0-8)")
+
+    def successor(self):
+        if not self.c.launcher or self.dry or self.pause_exit or self.state.get("finished"):
+            return
+        if self.succ_pending:
+            return
+        rc, out, err = self.c.slurm.sbatch(["--begin=now+10minutes", "jobs/pipeline.slurm"], cwd=str(self.c.code),
+                                           env=child_env(self.c.env))
+        if rc == 0:
+            self.log(f"successor launcher {out} (bash resubmission had failed)")
+            self.CPU += 1
+            self.total += 1
+            self.succ_pending = True
+        else:
+            self.successor_ok = False
+            self.attn.append(f"launcher successor could not be queued ({err[:120]}): lead — `sbatch jobs/pipeline.slurm`")
+
+    # ---------------------------------------------------------------- per stage
+    def safe(self, fn, *a):
+        try:
+            return fn(self, *a)
+        except Exception:                                                   # noqa: BLE001
+            return False
+
+    def progress(self, S):
+        if S.progress is None:
+            return None
+        if S.name not in self._prog:
+            try:
+                self._prog[S.name] = S.progress(self)
+            except Exception:                                               # noqa: BLE001
+                self._prog[S.name] = None
+        return self._prog[S.name]
+
+    def file_ready(self, name):
+        """(ok, why) for one analysis/mlts file: present, tracked, equal to HEAD (cached per pass)."""
+        f = self.c.code / name
+        if not f.is_file():
+            return False, f"{name} missing"
+        if name not in self._git:
+            self._git[name] = (self.c.git.tracked(f), self.c.git.clean(f))
+        tr, cl = self._git[name]
+        if not tr:
+            return False, f"{name} not committed"
+        if not cl:
+            return False, f"{name} modified since HEAD (being edited)"
+        return True, ""
+
+    def closure(self, scripts):
+        k = tuple(sorted(set(scripts)))
+        if k not in self._code:
+            self._code[k] = local_closure(self.c.code, list(k))
+        return self._code[k]
+
+    def code_ready(self, S):
+        """every registered (script, sub-command) present, and the script + every analysis/mlts module it imports +
+        mlt_common.py tracked and equal to HEAD."""
+        for script, sub, extra in S.code:
+            ok, why = self.file_ready(script)
+            if not ok:
+                return False, why
+            try:
+                txt = (self.c.code / script).read_text()
+            except OSError:
+                txt = ""
+            if sub and not token_re(sub).search(txt):
+                return False, f"{script} has no '{sub}' command"
+            if extra and not re.search(extra, txt):
+                return False, f"{script} '{sub}' lacks {extra}"
+        for name in self.closure([s for s, _, _ in S.code]):
+            ok, why = self.file_ready(name)
+            if not ok:
+                return False, f"{why} (imported)"
+        return True, ""
+
+    def stage_live(self, S):
+        ids = set()
+        for us in self.st(S.name)["units"].values():
+            ids |= {j["id"] for j in us["jobs"]}
+        out = []
+        for l in self.sq:
+            if l["name"] == LAUNCH:
+                continue
+            if l["id"] in ids or l["name"] == f"mltp_{S.name}" or (parse_comment(l["comment"]) or ("",))[0] == S.name:
+                out.append(l)
+                continue
+            if any(re.fullmatch(rx, l["name"]) for rx, _ in S.adopt):
+                out.append(l)
+        return out
+
+    def eval_stage(self, S, again=False):
+        st = self.st(S.name)
+        st.pop("_planned", None)
+        if st.get("status") in ("done", "skipped") and st.get("sticky", True):
+            return
+        live = self.stage_live(S)
+        if st.get("status") in ("halted", "cancelled"):
+            # an operational stop (a lead-cancelled unit, retries used up) clears itself once nothing of the stage
+            # runs and its outputs are complete (prerequisites done); a decision HALT (spec STOP) waits for RESOLVE
+            if (st.get("status") == "cancelled" or st.get("halt_kind") == "ops") and not live and \
+                    S.done is not None and self.after_ready(S)[0] and self.safe(S.done):
+                self.auto_resolve(S, st, "산출물이 모두 끝남")
+                self.mark_done(S, st)
+            return
+        if S.guard:
+            g = self.safe_guard(S)
+            if g:
+                self.halt(S, st, g)
+                return
+        after_ok, after_why = self.after_ready(S)
+        if S.gate is not None:
+            if not after_ok:
+                self.set_status(S, st, "blocked", after_why)
+                return
+            r, why, nums = S.gate(self)
+            if r == "pass":
+                st["decision"] = dict(key="pass", numbers=nums)
+                self.mark_done(S, st)
+            elif r == "fail":
+                self.halt(S, st, why, numbers=nums, options=[
+                    "지울 대상을 사용자에게 묻는다(DECISIONS 0-8: 삭제는 사용자 승인) — 지운 뒤 `retry`",
+                    "`accept` — 여유가 모자란 채로 A-4를 낸다(권하지 않음)"])
+            else:
+                self.set_status(S, st, "blocked", why)
+            return
+        if after_ok and S.active is not None and not live and not self.safe(S.active):
+            st.update(status="skipped", why="optional branch not taken (its condition is false)", t_done=self.now)
+            self.log(f"{S.name}: skipped (optional branch not taken)")
+            return
+        # outputs complete count only once the prerequisites are done (never mark a stage done ahead of its inputs)
+        if after_ok and not live and S.done is not None and self.safe(S.done):
+            self.mark_done(S, st)
+            return
+        code_ok, code_why = self.code_ready(S)
+        need_ok, need_why = True, ""
+        for w, fn in S.need:
+            if not self.safe(fn):
+                need_ok, need_why = False, f"needs {w}"
+                break
+        if not (code_ok and after_ok and need_ok):
+            self.exit3_scan(S, st)
+            if st.get("status") in ("halted", "done"):
+                return
+            why = code_why or after_why or need_why
+            if live:
+                self.set_status(S, st, "running" if any(l["state"] == "RUNNING" for l in live) else "queued",
+                                f"{len(live)} live ({why})")
+            else:
+                self.set_status(S, st, "waiting_code" if not code_ok else "blocked",
+                                f"waiting: code — {why}" if not code_ok else why)
+            return
+        try:
+            units = S.units(self, st)
+        except Exception as e:                                              # noqa: BLE001
+            self.set_status(S, st, "blocked", f"units(): {type(e).__name__}: {e}"[:200])
+            return
+        ep = int(st.get("epoch") or 0)
+        res = {}
+        for u in units:
+            us = st["units"].setdefault(u.key, new_unit_state())
+            for k, v in new_unit_state().items():
+                us.setdefault(k, v)
+            if us.get("epoch") != ep:
+                us.update(epoch=ep, att=dict(cont=0, infra=0, oom=0, code=0), noprog=0)
+            res[u.key] = self.eval_unit(S, st, u, us, res, ep)
+            if st.get("status") in ("halted", "cancelled"):
+                return
+        if any(v == "halt" for v in res.values()):
+            return
+        foreign = self.foreign.get(S.name) or []
+        if not units:
+            if live:
+                self.set_status(S, st, "running", f"{len(live)} live")
+            else:
+                self.set_status(S, st, "idle", "nothing to run now")
+            return
+        canc = [k for k, v in res.items() if v == "cancelled"]
+        if all(v in ("ok", "cancelled") for v in res.values()):
+            if live or foreign:
+                self.set_status(S, st, "running", f"{len(live)} live (not ours)")
+                return
+            if S.done is None or self.safe(S.done):
+                self.mark_done(S, st)
+                return
+            if canc:                                       # the lead cancelled a unit and the outputs are incomplete
+                self.cancel_stop(S, st, canc)
+                return
+            if S.rearm:                                     # e.g. H-early: this input set is finished, wait for more
+                tag = (st.get("params") or {}).get("cur_tag")
+                st.setdefault("params", {}).setdefault("done_tags", [])
+                if tag and tag not in st["params"]["done_tags"]:
+                    st["params"]["done_tags"].append(tag)
+                    self.log(f"{S.name}: {tag} finished; waiting for more inputs")
+                self.set_status(S, st, "idle", f"{tag} finished; waiting for more inputs")
+                return
+            if S.commit_gate:
+                if (S.name, "commit gate") not in self.to_commit:
+                    self.to_commit.append((S.name, "commit gate"))
+                self.set_status(S, st, "committing", "outputs ready; the launcher commits them")
+                return
+            self.epoch_end(S, st)
+            if st.get("status") != "halted" and not again:
+                self.eval_stage(S, again=True)
+            return
+        cands = []
+        if not foreign:
+            for u in units:
+                if res[u.key] != "todo":
+                    continue
+                deps, ok = [], True
+                for d in u.deps:
+                    r = res.get(d)
+                    if r in ("ok", "cancelled"):                # afterany: a cancelled input does not block
+                        continue
+                    if r == "live:R":
+                        deps += [j["id"] for j in st["units"][d]["jobs"] if j["id"] in self.live]
+                        continue
+                    ok = False
+                    break
+                if ok:
+                    cands.append((u, sorted(set(deps))))
+        nl = sum(1 for v in res.values() if v.startswith("live"))
+        nok = sum(1 for v in res.values() if v == "ok")
+        summ = f"units {nok}/{len(units)} ok, {nl} live" + (f", {len(cands)} ready" if cands else "") + \
+            (f", cancelled {canc}" if canc else "")
+        if foreign:
+            summ += f"; foreign live {foreign} (no submissions)"
+        if cands:
+            self.cands += [(S, u, d) for u, d in cands]
+        status = ("running" if any(v == "live:R" for v in res.values()) else "queued" if nl else
+                  "ready" if cands else "waiting")
+        self.set_status(S, st, status, summ)
+
+    def safe_guard(self, S):
+        try:
+            return S.guard(self)
+        except Exception:                                                   # noqa: BLE001
+            return None
+
+    def set_status(self, S, st, status, why):
+        if st.get("status") != status:
+            if status not in ("waiting", "queued", "running") or st.get("status") in ("", "blocked", "waiting_code", "ready"):
+                self.log(f"{S.name}: {st.get('status') or 'new'} -> {status}")
+        st["status"], st["why"] = status, why
+
+    def after_ready(self, S):
+        for a in S.after:
+            s = self.st(a).get("status")
+            if s not in ("done", "skipped"):
+                return False, f"after {a} ({s or 'not started'})"
+        return True, ""
+
+    def exit3_scan(self, S, st):
+        """jobs of a stage that cannot act now: only an exit 3 (STOP) is handled immediately."""
+        for key, us in st["units"].items():
+            for j in us["jobs"]:
+                if j.get("end") and not j.get("handled") and classify(j["end"]) == "stop":
+                    j["handled"] = "stop"
+                    self.on_exit3(S, st, key, j)
+                    return
+
+    def ok_job(self, st, key, ep):
+        js = [j for j in st["units"].get(key, {}).get("jobs", []) if j.get("epoch", 0) == ep and j.get("handled") == "ok"]
+        return js[-1] if js else None
+
+    def eval_unit(self, S, st, u, us, res, ep):
+        # live in ANY round (a RESOLVE retry / new round never resubmits a unit whose earlier job still runs)
+        lv = [j for j in us["jobs"] if j["id"] in self.live]
+        if lv:
+            return "live:R" if any(self.live[j["id"]]["state"] == "RUNNING" for j in lv) else "live:PD"
+        jobs = [j for j in us["jobs"] if j.get("epoch", 0) == ep and not j.get("void")]
+        if us.get("ok") == ep:
+            return "ok"
+        if (S.name, u.key) in self.unresolved:
+            return "wait"                                   # an interrupted sbatch: never submit twice (void after 2 min)
+        if u.done is not None and not u.sink and self.safe(u.done):
+            us["ok"] = ep
+            if jobs and not jobs[-1].get("handled"):
+                jobs[-1]["handled"] = "ok"
+            return "ok"
+        if not jobs:
+            return "todo"
+        j = jobs[-1]
+        h = j.get("handled")
+        if h:
+            return {"retry": "todo", "ok": "ok", "void": "todo", "cancelled": "cancelled"}.get(h, "halt")
+        end = j.get("end")
+        if end is None:
+            return "wait"
+        cls = classify(end)
+        if cls not in ("stop", "cancelled") and u.deps:
+            js = parse_iso(end.get("start"))
+            stale = False
+            for d in u.deps:
+                if res.get(d) not in ("ok", "cancelled"):
+                    stale = True
+                    break
+                dj = self.ok_job(st, d, ep)
+                de = parse_iso(((dj or {}).get("end") or {}).get("end")) if dj else None
+                if de and js and de > js + 1:
+                    stale = True
+                    break
+            if stale:
+                j["handled"], j["void"] = "void", True
+                self.log(f"{S.name} {u.key}: {j['id']} ran before its inputs were final -> again")
+                return "todo"
+        if cls == "ok" and u.done is not None and not u.sink and not self.safe(u.done):
+            cls = "cont"                                                    # exit 0 but its outputs are incomplete
+        if u.sink and cls in ("ok", "cont"):
+            j["handled"], us["ok"] = "ok", ep
+            return "ok"
+        if cls == "ok":
+            j["handled"], us["ok"] = "ok", ep
+            return "ok"
+        if cls == "stop":
+            j["handled"] = "stop"
+            self.on_exit3(S, st, u.key, j)
+            return "halt"
+        if cls == "cancelled":
+            # never resubmitted (the lead decided); counts as finished for afterany dependants; the stage is done if
+            # its outputs are complete, else it stops and asks (cancel_stop)
+            j["handled"] = "cancelled"
+            self.log(f"{S.name} {u.key}: {j['id']} CANCELLED (lead) -> not resubmitted")
+            return "cancelled"
+        att = us["att"]
+        what = f"{end.get('state')} exit {end.get('exit')}"
+        if cls == "code":
+            att["code"] = att.get("code", 0) + 1
+            if att["code"] > RETRY["code"]:
+                j["handled"] = "halt"
+                self.halt(S, st, f"{u.key}: the job-start guard refused the code {att['code']} times (exit 4: a script "
+                                 f"changed after submission)", numbers=dict(job=j["id"], unit=u.key), kind="ops")
+                return "halt"
+            j["handled"] = "retry"
+            self.log(f"{S.name} {u.key}: {j['id']} guard exit 4 (code changed after submission) -> resubmit when committed")
+            return "todo"
+        if cls == "cont":
+            att["cont"] = att.get("cont", 0) + 1
+            prog = self.progress(S)
+            if prog is not None and us.get("prog_sub") is not None and prog <= us["prog_sub"]:
+                us["noprog"] = us.get("noprog", 0) + 1
+            else:
+                us["noprog"] = 0
+            if att["cont"] > RETRY["cont"] or us["noprog"] >= RETRY["noprog"]:
+                j["handled"] = "halt"
+                self.halt(S, st, f"{u.key}: {what} — 재제출 {att['cont'] - 1}회, 진전 없는 재제출 {us['noprog']}회 연속",
+                          numbers=dict(job=j["id"], unit=u.key, progress=prog, progress_at_submit=us.get("prog_sub"),
+                                       attempts=att), kind="ops")
+                return "halt"
+        elif cls == "oom":
+            att["oom"] = att.get("oom", 0) + 1
+            if att["oom"] > RETRY["oom"]:
+                j["handled"] = "halt"
+                self.halt(S, st, f"{u.key}: OUT_OF_MEMORY twice (mem x {us.get('mem_mult')})", numbers=dict(job=j["id"]),
+                          kind="ops")
+                return "halt"
+            us["mem_mult"] = round(float(us.get("mem_mult") or 1.0) * 1.5, 3)
+        else:
+            att["infra"] = att.get("infra", 0) + 1
+            if att["infra"] > RETRY["infra"]:
+                j["handled"] = "halt"
+                self.halt(S, st, f"{u.key}: {what} again (infra / exit 1 retry used)", numbers=dict(job=j["id"], end=end),
+                          kind="ops")
+                return "halt"
+        j["handled"] = "retry"
+        self.log(f"{S.name} {u.key}: {j['id']} {what} -> resubmit ({cls})")
+        return "todo"
+
+    def cancel_stop(self, S, st, keys):
+        st.update(status="cancelled", why=f"{', '.join(keys)}: CANCELLED (lead), outputs incomplete — not resubmitted",
+                  halt_kind="ops")
+        self.write_stop(S.name, st["why"], numbers=dict(units=keys),
+                        options=["`retry` — 새 라운드로 다시 낸다(취소한 작업 포함)", "`accept` — 이대로 끝난 것으로 본다",
+                                 "`skip` — 이 단계를 건너뛴다"],
+                        recommended="취소한 사람(lead)이 고른다. 산출물이 나중에 다 차면(예: 손으로 낸 job) 다음 pass가 저절로 푼다.")
+        self.log(f"{S.name}: cancelled unit(s) {keys}, outputs incomplete -> STOP_{S.name}.md")
+        self.to_commit.append((S.name, "cancelled"))
+
+    def epoch_end(self, S, st):
+        att = st.setdefault("att", dict(cont=0, infra=0))
+        att["cont"] = att.get("cont", 0) + 1
+        prog = self.progress(S)
+        if prog is not None and st.get("prog_epoch") is not None and prog <= st["prog_epoch"]:
+            st["noprog"] = st.get("noprog", 0) + 1
+        else:
+            st["noprog"] = 0
+        if att["cont"] > RETRY["cont"] or st["noprog"] >= RETRY["noprog"]:
+            if S.partial is not None:
+                try:
+                    ok, txt = S.partial(self)
+                except Exception as e:                                      # noqa: BLE001
+                    ok, txt = False, f"partial(): {type(e).__name__}: {e}"
+                if ok:
+                    st["partial"] = txt
+                    self.dec(S.name, txt, key=f"partial:{st.get('epoch')}")
+                    self.mark_done(S, st)
+                    return
+            self.halt(S, st, f"단계 산출물이 끝나지 않음: 라운드 {att['cont']}회, 진전 없는 라운드 {st['noprog']}회 연속",
+                      numbers=dict(progress=prog, progress_at_round_start=st.get("prog_epoch"), epoch=st.get("epoch")),
+                      kind="ops")
+            return
+        st["epoch"] = int(st.get("epoch") or 0) + 1
+        st["prog_epoch"] = prog
+        self.log(f"{S.name}: outputs incomplete -> round {st['epoch']}")
+        st["status"] = "ready"
+
+    def on_exit3(self, S, st, key, j):
+        if S.on_exit3 == "decide" and S.done is not None and self.safe(S.done):
+            self.log(f"{S.name} {key}: exit 3 with its report written -> decision rule")
+            self.mark_done(S, st)
+            return
+        self.halt(S, st, f"{key}: job {j['id']} exit 3 (STOP) — log {self.c.mlt}/logs/mltp_{S.name}_*{j['id'].split('_')[0]}*",
+                  numbers=dict(job=j["id"], unit=key, end=j.get("end")))
+
+    def mark_done(self, S, st):
+        st.update(status="done", why="", t_done=self.now, halt_kind=None)
+        self.log(f"{S.name} done")
+        r = {}
+        if S.decide:
+            try:
+                r = S.decide(self, S, st) or {}
+            except Exception as e:                                          # noqa: BLE001
+                r = dict(key="decide error", halt=f"decision rule failed: {type(e).__name__}: {e}"[:300])
+            st["decision"] = {k: v for k, v in r.items() if k in ("key", "numbers", "line", "halt")}
+            if r.get("line"):
+                self.dec(S.name, r["line"], key=f"done:{st.get('epoch')}:{r.get('key')}")
+        if r.get("halt"):
+            self.halt(S, st, r["halt"], numbers=r.get("numbers"), options=r.get("options"), recommended=r.get("recommended"))
+        else:
+            self.to_commit.append((S.name, f"done ({r.get('key') or 'complete'})"))
+        for name in r.get("reset", []):
+            self.reset_stage(name, f"decision of {S.name}")
+
+    def halt(self, S, st, why, numbers=None, options=None, recommended=None, kind="decision"):
+        """kind 'decision' = a spec STOP / decision rule / exit 3 (waits for RESOLVE); 'ops' = retries used up
+        (also clears itself once the outputs are complete). Scope: a filler (report-only) stage's HALT stops only its
+        dependants; any other HALT also stops new stages from starting."""
+        st.update(status="halted", why=why, t_halt=self.now, halt_kind=kind)
+        if S.name not in self.state["halted"]:
+            self.state["halted"].append(S.name)
+        self.write_stop(S.name, why, numbers, options, recommended, scope=S.halt_scope)
+        eff = ("이 단계와 이에 의존하는 단계는 RESOLVE까지 멈추고, HALT 동안 새 단계도 시작하지 않는다." if S.halt_scope == "global"
+               else "보고용(filler) 단계라 이 단계에 의존하는 단계만 멈추고 다른 단계는 계속한다.")
+        self.dec(S.name, f"**HALT** — {why}. `results/STOP_{S.name}.md`에 조건 · 수치 · 선택지를 적었다. 정해진 추천안이 "
+                         f"없어 {eff}", key=f"halt:{st.get('epoch')}:{why[:160]}")
+        self.log(f"{S.name} HALT: {why}"[:300])
+        self.to_commit.append((S.name, "halted"))
+
+    def write_stop(self, name, why, numbers=None, options=None, recommended=None, scope="global"):
+        L = [f"# STOP: {name} ({self.now}, pipeline.py)", "", f"- **조건 / condition**: {why}"]
+        if numbers:
+            L.append("- **수치 / numbers**:")
+            L += [f"  - {k}: {json.dumps(v, ensure_ascii=False, default=str)}" for k, v in numbers.items()]
+        L.append(f"- **선택지 / options** — 이 파일 첫 줄에 `RESOLVE: <선택지>`를 쓰면 다음 pass가 적용하고 DECISIONS.md에 "
+                 f"적은 뒤 이 파일을 `STOP_{name}.resolved.md`로 이름을 바꾼다(지우지 않음):")
+        L += [f"  - {o}" for o in (options or DEFAULT_OPTIONS)]
+        L.append(f"- **추천 / recommended**: {recommended or '정해진 추천안 없음 — 명령서 STOP이므로 사용자(lead)가 고른다.'}")
+        L += [("- **영향 / effect**: 이 단계와 이 단계에 의존하는 단계는 시작하지 않고, HALT 동안 새 단계도 시작하지 않는다. "
+               "이미 시작했고 이 단계에 의존하지 않는 단계는 계속한다." if scope == "global" else
+               "- **영향 / effect**: 보고용(filler) 단계: 이 단계에 의존하는 단계만 시작하지 않는다. 다른 단계는 계속한다."), ""]
+        if self.dry:
+            self.planned.append(f"(dry) would write results/STOP_{name}.md: {why}")
+            return
+        M.write_text(self.c.res / f"STOP_{name}.md", "\n".join(L))
+
+    # ---------------------------------------------------------------- git
+    def commit(self):
+        items = [tuple(x) for x in self.state.get("commit_pending") or []] + [x for x in self.to_commit]
+        seen, items_u = set(), []
+        for x in items:
+            if x not in seen:
+                seen.add(x)
+                items_u.append(x)
+        items = items_u
+        if not items and not self.state.get("push_pending"):
+            return
+        if self.dry:
+            if items:
+                self.planned.append("(dry) would commit + push: " + "; ".join(f"{n} {k}" for n, k in items))
+            return
+        g = self.c.git
+        if items:
+            br = g.branch()
+            if br != "mlts":
+                self.attn.append(f"git branch is {br!r}, not mlts: commits deferred")
+                self.state["commit_pending"] = [list(x) for x in items]
+                return
+            if g.index_locked():
+                age = g.index_lock_age()
+                self.log("git index.lock present: commit next pass")
+                if age is not None and age > 600:
+                    self.attn.append(f".git index.lock is {age / 60:.0f} min old: commits deferred — lead: check for a "
+                                     "running git, remove the stale lock from login if none")
+                self.state["commit_pending"] = [list(x) for x in items]
+                return
+            res_root = (HERE / "results").resolve()
+            if not getattr(g, "fake", False) and self.c.res.resolve() != res_root:
+                self.attn.append(f"results root {self.c.res} is not analysis/mlts/results: no commit")
+                self.state["commit_pending"] = []
+                return
+            paths = set()
+            for name, _ in items:
+                S = self.by.get(name)
+                for pat in (S.results if S else []):
+                    paths |= {p for p in self.c.res.glob(pat) if p.is_file()}
+            paths |= {p for p in self.c.res.glob("STOP_*.md") if p.is_file()}
+            # STOP files renamed to .resolved.md: commit the removal of the old tracked path (never a data deletion)
+            gone = [Path(p) for p in self.state.get("stop_removed") or [] if not Path(p).exists() and g.tracked(p)]
+            self.state["commit_pending"] = []
+            self.flush_log()
+            self.write_state()
+            paths |= {p for p in (self.c.state_path, self.c.log_path, self.c.dec_path) if p.is_file()}
+            root = str(self.c.res.resolve()) + os.sep
+            paths = sorted(str(p) for p in paths if str(p.resolve()).startswith(root))
+            gone = sorted(str(p) for p in gone if str(p.resolve()).startswith(root))
+            title = ("MLTS pipeline: " + "; ".join(f"{n} {k}" for n, k in items))[:200]
+            g.add(paths + gone)
+            rc, out = g.commit(paths + gone, title, TRAILER)
+            if rc == 0:
+                sha = g.head()
+                for name, _ in items:
+                    if name in self.by:
+                        self.st(name)["commit"] = dict(sha=sha, pushed=False)
+                self.state["push_pending"] = True
+                self.state["stop_removed"] = []
+                self.log(f"commit {sha}: {title[15:80]}")
+            elif "nothing to commit" in (out or "") or "no changes added" in (out or ""):
+                self.log("commit: nothing to commit")
+            else:
+                self.state["commit_pending"] = [list(x) for x in items]
+                self.attn.append(f"git commit failed: {(out or '').strip()[:160]}")
+                return
+        if self.state.get("push_pending"):
+            rc, out = g.push()
+            if rc == 0:
+                self.state["push_pending"] = False
+                for s in self.state["stages"].values():
+                    if s.get("commit") and not s["commit"].get("pushed"):
+                        s["commit"]["pushed"] = True
+                self.log("push origin mlts ok")
+            else:
+                self.attn.append(f"git push pending ({(out or '').strip()[:120]}); retried next pass — lead may push from login")
+                self.log("push failed (pending)")
+
+    # ---------------------------------------------------------------- submission
+    def stage_started(self, S):
+        st = self.st(S.name)
+        return bool(st.get("started")) or any(us.get("jobs") for us in st["units"].values())
+
+    def room_queue(self):
+        """places left under MaxSubmit: 20 - 1 spare (the lead) - every task now - the successor launcher if none is
+        pending yet (its place is reserved so the chain can never be crowded out)."""
+        succ = 0 if (self.succ_pending or self.pause_exit or self.state.get("finished")) else 1
+        return SUBMIT_CAP - SPARE - self.total - succ
+
+    def room_eligible(self, filler):
+        """FIFO cluster: a task that is eligible now starts before anything submitted later, so eligible pending
+        work is kept to the free running slots (+ PEND_BUF for critical work; filler only into free slots)."""
+        free = MAX_RUN - (self.Rn - self.self_run) - self.EP
+        return free if filler else free + PEND_BUF
+
+    def submit_all(self):
+        if not self.cands:
+            return
+        if self.paused:
+            for S, _, _ in self.cands:
+                self.st(S.name)["why"] += " | paused"
+            return
+        if self.state.get("finished"):
+            return
+        if not self.successor_ok:
+            self.attn.append("no submissions this pass: launcher successor missing")
+            return
+        if getattr(self, "no_submit", None):
+            for S, _, _ in self.cands:
+                self.st(S.name)["why"] += f" | no submissions: {self.no_submit}"
+            return
+        halted = set(self.state.get("halted") or [])
+        ghalt = {h for h in halted if h in self.by and self.by[h].halt_scope == "global"}
+        order = sorted(range(len(self.cands)), key=lambda i: (self.cands[i][0].filler, self.cands[i][0].crit, i))
+        groups = []
+        for i in order:
+            S, u, deps = self.cands[i]
+            mm = float((self.st(S.name)["units"][u.key]).get("mem_mult") or 1.0)
+            if u.akey is not None and groups and groups[-1][0] is S and groups[-1][1][0].akey == u.akey \
+                    and groups[-1][3] == mm and groups[-1][2] == deps:
+                groups[-1][1].append(u)
+            else:
+                groups.append((S, [u], deps, mm))
+        for S, us, deps, mm in groups:
+            if self.stop_submit or self.n_sub >= MAX_TASKS_PER_PASS:
+                break
+            st = self.st(S.name)
+            # the status is left as computed (ready): only the reason changes, so a HALT adds no log line per pass
+            if self.anc[S.name] & halted:
+                st["why"] = f"depends on halted {sorted(self.anc[S.name] & halted)}"
+                continue
+            if ghalt and not self.stage_started(S):
+                st["why"] = f"HALT ({', '.join(sorted(ghalt))}): no new stages"
+                continue
+            u0 = us[0]
+            rq, re_ = self.room_queue(), (self.room_eligible(S.filler) if not deps else None)
+            room = rq if re_ is None else min(rq, re_)
+            if u0.c:
+                room = min(room, (CPU_CAP - self.CPU) // max(1, u0.c))
+            if u0.gpu:
+                room = min(room, (GPU_CAP - self.GPU) // max(1, u0.gpu))
+            room = min(room, MAX_TASKS_PER_PASS - self.n_sub)
+            if room <= 0:
+                if " | no room" not in st["why"]:
+                    st["why"] += (f" | no room (queue {self.total}/{SUBMIT_CAP - SPARE}, running {self.Rn - self.self_run}/"
+                                  f"{MAX_RUN}, eligible pending {self.EP}"
+                                  f"{'' if deps else ' (filler: free slots only)' if S.filler else f' (+{PEND_BUF})'}, "
+                                  f"CPU {self.CPU}/{CPU_CAP}, GPU {self.GPU}/{GPU_CAP})")
+                continue
+            if u0.akey is None:
+                for u in us[:room]:
+                    if self.stop_submit:
+                        break
+                    self.submit(S, [u], deps, mm)
+            else:
+                self.submit(S, us[:room], deps, mm)
+
+    def guard_files(self, u):
+        return self.closure(cmd_scripts(u.cmd))
+
+    def sbatch_argv(self, S, us, deps, mm, iid):
+        u0 = us[0]
+        mem = max(1, int(math.ceil(u0.mem * mm)))
+        arrv = u0.akey is not None
+        spec = f"{u0.akey}[{'+'.join(str(u.idx) for u in us)}]" if arrv else u0.key
+        logs = self.c.mlt / "logs"
+        argv = ["-p", PART[u0.part], "-J", f"mltp_{S.name}", "--time=48:00:00", f"--cpus-per-task={u0.c}", f"--mem={mem}G"]
+        if u0.gpu:
+            argv.append(f"--gres=gpu:{u0.gpu}")
+        if arrv:
+            argv.append(f"--array={','.join(str(u.idx) for u in us)}")
+        argv += [f"--output={logs}/mltp_{S.name}_" + ("%A_%a.out" if arrv else "%j.out"),
+                 f"--comment=mltp:{S.name}:{spec}:{iid}"]
+        if deps:
+            argv.append(f"--dependency=afterany:{':'.join(deps)}")
+        guard = ["pipeline.py", "guard"] + self.guard_files(u0) + [":::"]
+        argv += [f"--export=ALL,MLTENV={u0.env}", "jobs/mlt.slurm"] + guard + u0.cmd
+        return argv, mem
+
+    def submit(self, S, us, deps, mm):
+        st = self.st(S.name)
+        iid = secrets.token_hex(4)
+        argv, mem = self.sbatch_argv(S, us, deps, mm, iid)
+        line = "sbatch --parsable " + shlex.join(argv)
+        u0, n = us[0], len(us)
+        if self.dry:
+            self.planned.append(f"[{S.name}] {line}")
+            self._count(S, us, bool(deps))
+            return
+        if S.on_start and not st.get("started"):
+            try:
+                txt = S.on_start(self, S, st)
+            except Exception:                                               # noqa: BLE001
+                txt = None
+            if txt:
+                self.dec(S.name, txt, key=f"start:{st.get('epoch')}")
+        it = dict(id=iid, stage=S.name, units=[u.key for u in us], array=u0.akey is not None, t=self.now,
+                  status="submitting", cmd=line)
+        self.state["intents"].append(it)
+        self.write_state()
+        rc, out, err = self.c.slurm.sbatch(argv, cwd=str(self.c.code), env=child_env(self.c.env))
+        if rc != 0:
+            kind = sbatch_error_kind(rc, err)
+            if kind == "transient":
+                # the controller may have created the job: the intent stays 'submitting' (matched by its squeue
+                # comment next pass, voided after 2 min if absent); nothing more this pass; never counted
+                it["err"] = err[:300]
+                self.stop_submit = "sbatch transient error"
+                self._count(S, us, bool(deps))
+                self.log(f"{S.name}: sbatch transient error ({err[:120]}) -> intent kept, no more submissions this pass")
+            elif kind == "maxsubmit":
+                it.update(status="failed", err=err[:300])
+                self.stop_submit = "MaxSubmit"
+                self.log(f"{S.name}: sbatch refused (MaxSubmit) -> no more submissions this pass")
+            elif kind == "dependency":
+                it.update(status="failed", err=err[:300])
+                self.log(f"{S.name}: sbatch dependency error ({err[:120]}) -> recomputed next pass")
+            else:
+                it.update(status="failed", err=err[:300])
+                pn = (self.state.get("pass") or {}).get("n")
+                if st.get("sbatch_err_pass") != pn:                    # once per pass: "N passes in a row"
+                    st["sbatch_err"] = int(st.get("sbatch_err") or 0) + 1
+                    st["sbatch_err_pass"] = pn
+                self.log(f"{S.name}: sbatch failed: {err[:160]}")
+                if st["sbatch_err"] >= RETRY["sbatch"]:
+                    self.halt(S, st, f"sbatch fails {st['sbatch_err']} passes in a row: {err[:200]}", kind="ops")
+            self.write_state()
+            return
+        jid = out.split(";")[0].strip()
+        it.update(status="submitted", job=jid)
+        prog = self.progress(S)
+        for u in us:
+            uss = st["units"][u.key]
+            uss["jobs"].append(dict(id=f"{jid}_{u.idx}" if u.akey is not None else jid, intent=iid, t_sub=self.now,
+                                    epoch=int(st.get("epoch") or 0), mem_gb=mem, disk_gb=u.disk_gb,
+                                    cmd_sha=hashlib_sha(" ".join(u.cmd)), end=None))
+            uss["prog_sub"] = prog
+            self.jobidx[uss["jobs"][-1]["id"]] = (S.name, u.key)
+        if st.get("prog_epoch") is None:
+            st["prog_epoch"] = prog
+        st["sbatch_err"] = 0
+        st["started"] = True
+        st["status"] = "queued"
+        self._count(S, us, bool(deps))
+        tag = f"{jid}[{','.join(str(u.idx) for u in us)}]" if u0.akey is not None else jid
+        self.log(f"{S.name} submit {tag} {u0.akey or u0.key} {'filler' if S.filler else 'crit'}")
+        self.write_state()
+
+    def _count(self, S, us, has_deps=False):
+        n, u0 = len(us), us[0]
+        self.T += n
+        self.total += n
+        if not has_deps:
+            self.EP += n
+        self.CPU += n * u0.c
+        self.GPU += n * u0.gpu
+        if S.filler:
+            self.T_filler += n
+        self.n_sub += n
+
+    # ---------------------------------------------------------------- end of pass
+    def finish(self):
+        self.state["pass"]["t1"] = iso(self.c.clock())
+        self.state["pass"]["submitted_tasks"] = self.n_sub
+        items = list(self.attn)
+        if self.state.get("halted"):
+            items.insert(0, "HALT " + ", ".join(f"{h} (results/STOP_{h}.md)" for h in self.state["halted"]))
+        canc = [n for n, s in self.state["stages"].items() if s.get("status") == "cancelled"]
+        if canc:
+            items.append("cancelled (lead): " + ", ".join(canc))
+        if self.paused:
+            items.append("PIPELINE_PAUSE present: no submissions")
+        if self.state.get("finished"):
+            items.append("finished (STOP_S.md)")
+        self.state["attention"] = items
+        att = f"{self.now} " + (" | ".join(items) if items else "ok") + "\n"
+        if not self.dry:
+            self.flush_log()
+            self.write_state()
+            try:
+                M.write_json(self.c.pdir / "state.prev.json", self.state)     # fallback copy (load_state)
+            except Exception:                                               # noqa: BLE001
+                pass
+            M.write_text(self.c.ctl / "PIPELINE_ATTENTION", att)
+        self.report()
+
+    def report(self):
+        s = self.state["slots"]
+        print(f"[pipeline{' dry' if self.dry else ''}] pass {self.state['pass']['n']} job {self.c.job} {self.now} | squeue "
+              f"total {s['total']} (non-launcher {s['T']}, running {s['running']}, eligible pending "
+              f"{s['eligible_pending']}) CPU {s['CPU']} GPU {s['GPU']} launcher {s['launcher']} | after: total "
+              f"{self.total} eligible pending {self.EP} CPU {self.CPU} GPU {self.GPU} | submitted {self.n_sub} tasks",
+              flush=True)
+        for S in self.reg:
+            st = self.st(S.name)
+            print(f"  {S.name:9s} {st.get('status') or '-':13s} ep{st.get('epoch', 0)} {st.get('why', '')}"[:260], flush=True)
+        for x in self.planned:
+            print(("  would: " if self.dry else "  ") + x, flush=True)
+        for x in self.declines:
+            print(("  DECISION (dry, not written): " if self.dry else "  DECISION: ") + x.rstrip(), flush=True)
+        for x in self.events:
+            print(f"  event: {x}", flush=True)
+        print("  attention: " + (" | ".join(self.state.get("attention") or []) or "ok"), flush=True)
+
+
+def hashlib_sha(s):
+    import hashlib
+    return hashlib.sha1(s.encode()).hexdigest()[:12]
+
+
+# ================================================================ commands
+def cmd_status(ctx):
+    S = json.loads(ctx.state_path.read_text()) if ctx.state_path.is_file() else None
+    if not S:
+        print(f"no state file {ctx.state_path}")
+        return 2
+    try:
+        sq = ctx.slurm.squeue()
+    except SnapshotError as e:
+        print(f"squeue failed: {e}")
+        sq = []
+    owner = {}
+    for name, st in S.get("stages", {}).items():
+        for us in st.get("units", {}).values():
+            for j in us.get("jobs", []):
+                owner[j["id"]] = name
+    cnt = {}
+    for l in sq:
+        n = owner.get(l["id"]) or (l["name"][5:] if l["name"].startswith("mltp_") else None)
+        if n:
+            cnt[n] = cnt.get(n, 0) + 1
+    p = S.get("pass", {})
+    print(f"pass {p.get('n')} {p.get('t0')} job {p.get('job')} | slots {S.get('slots')} | halted {S.get('halted')} | "
+          f"paused {S.get('paused')} | quota {S.get('quota', {}).get('est_free')} GB (stale {S.get('quota', {}).get('stale')})")
+    print(f"squeue now: {len(sq)} tasks, running {sum(l['state'] == 'RUNNING' for l in sq)}, eligible pending "
+          f"{sum(eligible(l) for l in sq if l['name'] != LAUNCH)}, launchers {sum(l['name'] == LAUNCH for l in sq)}")
+    for s in registry():
+        st = S.get("stages", {}).get(s.name, {})
+        print(f"{s.name:9s} {st.get('status') or '-':13s} ep{st.get('epoch', 0)} live {cnt.get(s.name, 0):2d} | "
+              f"{st.get('why', '')}"[:240])
+    print("attention: " + (" | ".join(S.get("attention") or []) or "ok"))
+    return 0
+
+
+def cmd_guard(files, code=None, git=None):
+    """first segment of every launcher job: exit 0 when every file is tracked and equal to HEAD, else exit 4 (the job
+    runs nothing; the launcher resubmits it once the code is committed — exit 4 uses no retry)."""
+    code = Path(code or HERE)
+    g = git or Git(code, readonly=True)
+    bad = []
+    for f in files:
+        p = code / f
+        if not p.is_file():
+            bad.append(f"{f} missing")
+        elif not g.tracked(p):
+            bad.append(f"{f} not committed")
+        elif not g.clean(p):
+            bad.append(f"{f} modified since HEAD")
+    if bad:
+        print(f"[mltp guard] code changed after submission: {'; '.join(bad)} -> exit {EXIT_GUARD} (resubmitted by the "
+              f"launcher once committed)", flush=True)
+        return EXIT_GUARD
+    print(f"[mltp guard] {len(files)} files == HEAD {g.head()}", flush=True)
+    return 0
+
+
+def cmd_lists(ctx):
+    """fold test lists (FT-2), dipole lists (X), the A-3 pilot list (60 per fold, split as evenly as possible over the
+    dipoles present in that fold — folds 0-3 lack a dipole, so not always 12 per dipole; seeded)."""
+    import numpy as np
+    import pandas as pd
+    T = M.targets()
+    cols = ["rxn_id", "job_id", "dipole", "fold_T1", "n_atoms"]
+    out = ctx.lists
+    info = dict(written=iso(time.time()), code=CODE_VERSION, source=str(M.LABELS), n_targets=int(len(T)),
+                n_fold_minus1=int((T.fold_T1 == -1).sum()), files={},
+                rules=dict(f_test="fold_T1 == k (all test reactions of fold k; FT-2 spec 5)",
+                           dip="lodo == d (mlt_common.DIPOLES order; X spec 12)",
+                           a3=f"per fold k (0..4): 60 fold-k test reactions split as evenly as possible over the dipoles "
+                              f"present in that fold (one per dipole in M.DIPOLES order, round-robin), seeded draws "
+                              f"(numpy default_rng({M.SEED} + 3)) = 300 total (A-3 spec 6)"))
+    for k in range(5):
+        S = T[T.fold_T1 == k][cols].sort_values("rxn_id")
+        p = out / f"f{k}_test.csv"
+        M.write_csv(p, S)
+        info["files"][f"f{k}_test"] = dict(path=str(p), n=int(len(S)))
+    for d, dn in enumerate(M.DIPOLES):
+        S = T[T.lodo == d][cols].sort_values("rxn_id")
+        p = out / f"dip{d}.csv"
+        M.write_csv(p, S)
+        info["files"][f"dip{d}"] = dict(path=str(p), n=int(len(S)), dipole=dn)
+    rng = np.random.default_rng(M.SEED + 3)
+    parts = []
+    for k in range(5):
+        avail = {dn: int(((T.fold_T1 == k) & (T.dipole == dn)).sum()) for dn in M.DIPOLES}
+        quota, left = {dn: 0 for dn in M.DIPOLES}, 60
+        while left > 0 and any(quota[d] < avail[d] for d in M.DIPOLES):      # even split over the dipoles present
+            for dn in M.DIPOLES:
+                if left > 0 and quota[dn] < avail[dn]:
+                    quota[dn] += 1
+                    left -= 1
+        for dn in M.DIPOLES:
+            g = T[(T.fold_T1 == k) & (T.dipole == dn)].sort_values("rxn_id")
+            if quota[dn]:
+                parts.append(g.iloc[sorted(rng.choice(len(g), size=quota[dn], replace=False))][cols])
+    A = pd.concat(parts).sort_values(["fold_T1", "rxn_id"])
+    p = out / "a3.csv"
+    M.write_csv(p, A)
+    info["files"]["a3"] = dict(path=str(p), n=int(len(A)), by_fold=A.fold_T1.value_counts().sort_index().to_dict(),
+                               by_fold_dipole={f"{k}/{d}": int(v) for (k, d), v in
+                                               A.groupby(["fold_T1", "dipole"]).size().items()})
+    M.write_json(out / "lists.json", info)
+    print(json.dumps({k: v["n"] for k, v in info["files"].items()}), flush=True)
+    return 0
+
+
+def main(argv=None):
+    a = list(sys.argv[1:] if argv is None else argv)
+    cmd = a[0] if a else ""
+    if cmd == "once":
+        ctx = Ctx()
+        try:
+            return Pass(ctx).run()
+        except Exception as e:                                              # noqa: BLE001
+            traceback.print_exc()
+            try:
+                M.write_text(ctx.ctl / "PIPELINE_ATTENTION", f"{iso(time.time())} pass error: {type(e).__name__}: {e}\n")
+            except Exception:                                               # noqa: BLE001
+                pass
+            return 1
+    if cmd == "dry":
+        return Pass(Ctx(), dry=True).run()
+    if cmd == "status":
+        return cmd_status(Ctx())
+    if cmd == "lists":
+        return cmd_lists(Ctx())
+    if cmd == "guard":
+        return cmd_guard(a[1:])
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
