@@ -531,14 +531,44 @@ def geo_c2(pool, R, rows, keys):
                 hit.setdefault(int(rid[j]), {})["spectrum_rms_A"] = round(float(v[j]), 4)
         for r, h in hit.items():
             hits.append(dict(struct_id=str(sid[k]), kind=str(kind[k]), held_rxn=r,
-                             rxn_ids=sorted(int(x) for x in rxn[k])[:5], **h))
+                             rxn_ids=sorted(int(x) for x in rxn[k])[:5], row=k, **h))
     return dict(applicable=True, rule=DECISIONS["FTF-c2geo"], rmsd_A=TS.C2_RMSD_A, spectrum_A=TS.C2_SPEC_A,
+                hit_jobs=sorted({src_job(h["struct_id"]) for h in hits}),
                 n_held_rxns=len(held), n_held_label_ts=sum(len(v[0]) for v in hts.values()), n_checked=int(len(rows)),
                 n_kabsch_structures=n_k, n_kabsch_calls=n_kabsch,
                 kabsch_prefilter=f"sorted-spectrum RMS <= {kb:.3f} A (= 2 x {TS.C2_RMSD_A} A, exact bound)",
                 n_spectrum_structures=n_s, n_geom_hits=len(hits),
                 n_geom_hits_untagged=sum(1 for h in hits if h["held_rxn"] not in h["rxn_ids"]), geom_hits=hits[:20],
                 wall_s=round(time.time() - t0, 1), pass_=not hits)
+
+
+def src_job(struct_id):
+    """source job of a structure id: 'N:T01620:<file>:<frame>' -> 'N:T01620' (first two ':' fields)."""
+    return ":".join(str(struct_id).split(":")[:2])
+
+
+def geo_drop(pool, R, sets, geo, keys, max_rounds=3):
+    """--geo-c2 drop (lead 11-05 22:1x; user rule 11-05 '누수가 0이 아니면 제거 후 재학습'): remove from train and valid
+    EVERY structure of the source job of each geometric C-2 hit (whole Nurion job, not only the hit frames, so the
+    neighbouring frames of the same trajectory go too), then re-check; up to max_rounds. Returns the final geo dict
+    with a 'dropped' record; pass_ stays False if hits remain (the split is then not written, as with stop)."""
+    jobs_all = pool.P["struct_id"].astype(str).map(src_job).to_numpy()
+    rounds = []
+    for rd in range(max_rounds):
+        if geo.get("pass_") is not False:
+            break
+        hj = set(geo["hit_jobs"])
+        drop = np.flatnonzero(np.isin(jobs_all, list(hj)))
+        n0 = {p: len(sets[p]) for p in ("train", "valid")}
+        for p in ("train", "valid"):
+            sets[p] = sets[p][~sets[p].index.isin(drop)]
+        rounds.append(dict(round=rd, hit_jobs=sorted(hj), n_hits=geo["n_geom_hits"],
+                           n_dropped={p: n0[p] - len(sets[p]) for p in ("train", "valid")}))
+        rows = np.concatenate([sets["train"].index.to_numpy(), sets["valid"].index.to_numpy()])
+        geo = geo_c2(pool, R, rows, keys)
+    geo["dropped"] = dict(rule="--geo-c2 drop: all train/valid structures of each hit's source job removed, re-checked",
+                          rounds=rounds, n_train_after=len(sets["train"]), n_valid_after=len(sets["valid"]))
+    return geo
 
 
 def write_split(R, fp, sets, inv, bm, geo, sdir, store_fp, g4meta, geo_mode):
@@ -657,13 +687,17 @@ def cmd_data(runs, o):
             if keys is not None and R["mode"] != "all":
                 rows = np.concatenate([sets["train"].index.to_numpy(), sets["valid"].index.to_numpy()])
                 geo = geo_c2(pool, R, rows, keys)
+                if geo.get("pass_") is False and o.geo_c2 == "drop":
+                    geo = geo_drop(pool, R, sets, geo, keys)
+                    print(f"[data] {s}: geo-C2 drop {geo['dropped']['rounds']} -> hits {geo.get('n_geom_hits')}",
+                          flush=True)
             else:
                 geo = dict(applicable=R["mode"] != "all", pass_=None if R["mode"] != "all" else True,
                            note="--geo-c2 off" if o.geo_c2 == "off" else "all-data split: nothing is held out")
             print(f"[data] {s}: train {len(sets['train'])} valid {len(sets['valid'])} test {len(sets['test'])} | "
                   f"C-2 pass {bm['leakage_C2']['pass_']} | geo-C2 hits {geo.get('n_geom_hits')} "
                   f"({geo.get('wall_s')} s)", flush=True)
-            if geo.get("pass_") is False and o.geo_c2 == "stop":
+            if geo.get("pass_") is False and o.geo_c2 in ("stop", "drop"):
                 fails[s] = dict(n_geom_hits=geo["n_geom_hits"], first=geo["geom_hits"][:3])
                 for R2 in Rs:
                     if R2["split"] == s:
@@ -1392,7 +1426,7 @@ def main(argv=None):
     a.add_argument("--fmax-cap", dest="fmax_cap", type=float, default=F.FMAX_CAP)
     a.add_argument("--valid-frac", dest="valid_frac", type=float, default=F.VALID_FRAC)
     a.add_argument("--cap-test", dest="cap_test", type=int, default=F.CAP_TEST)
-    a.add_argument("--geo-c2", dest="geo_c2", choices=["stop", "record", "off"], default="stop")
+    a.add_argument("--geo-c2", dest="geo_c2", choices=["stop", "drop", "record", "off"], default="stop")
     a.add_argument("--force", action="store_true")
     a = sub.add_parser("train")
     a.add_argument("run")
