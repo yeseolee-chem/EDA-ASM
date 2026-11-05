@@ -154,3 +154,8 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - 각각 afterok로 FT-2 label 측정이 이어진다: ft2_abl_fw1 1063378, ft2_abl_fw5 1063379(`ts_geom.py run FTabl_AIMNet2_4_<태그> f4_test label $MLT/ft2/FTabl_AIMNet2_4_<태그>/label @I 2`).
     - 더 나은 설정이 나오면 그 설정으로 fold 0–4와 이후 학습(FT-r2 · FT-fin)을 바꿀지 정한다. 사용자 순서 G-4 → 재측정 → MACE는 그대로다. FT 횟수 예산(명세 0-5)보다 2회 많다.
 - 규칙 기록(나, 11-05 12:3x–16:4x): 11-05 login 규칙이 생긴 뒤 commit · push를 하면서 `git push ... 2>&1 | tail -1`(또는 `tail -2`)를 6번 썼다(12029c32 · c7741cb3 · 39b6690c · 0d0cf88d · 041dce34 · f0ddb2ee). 앞으로는 `git push -q`만 쓴다.
+- **사용자 결정 (11-05 17:0x, 자리 비우기 전)**:
+  - (1) FT2-p가 FT-2 (a) 실패로 HALT하면 `RESOLVE: accept`로 G-4 → FT-r2 → FT2-r2로 진행한다("자동 진행").
+  - (2) FT-r2의 힘 가중치는 FT-abl 비교 결과로 자동 선택한다("비교 결과로 자동 선택"). FT-r2는 FT-abl을 기다리고, 그동안 G-4는 진행한다. agent가 구현 중이다.
+  - (3) "본 학습"으로 **전체 반응 최종 모델 FT_all_s0–2를 지금 설정 그대로(G-4 자료 없음, 힘 무게 0.2) 바로 시작**했다("지금 바로 시작"). 자료는 ftall_now_data 1063415(`finetune.py data FT_all_s0 FT_all_s1 FT_all_s2`)가 만들고, 학습은 afterok로 ftall_now_s0–2 1063416–18(`train FT_all_s<i> AIMNet2 ::: ft1`)이 한다. 명세의 최종 모델은 FT-fin의 FT_all_s<i>_al(G-4 자료 포함)이며, 이번 학습은 run 이름이 달라 겹치지 않는다. G-4나 FT-abl이 더 나은 결과를 내면 FT-fin이 다시 학습한다(사용자가 GPU 낭비 가능성을 알고 고름).
+  - 디스크: 분할마다 약 13 GB이므로 3개면 약 40 GB를 쓴다(12:47 du 기준 여유 72 GB).
