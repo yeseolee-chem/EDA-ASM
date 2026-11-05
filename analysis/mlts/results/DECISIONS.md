@@ -184,3 +184,12 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - 명령서의 위치 오차 어림(0.006 Å)은 실측(0.045 Å)에 비해 약 7배 낙관적이었다.
 - **auto FT2-p (11-05 18:03, pipeline)**: lead `RESOLVE: accept 사용자 11-05 17:0x (1) — FT-2 (a) fold 4 실패를 기록하고 FT-d1 → FT-r1 → G4 → FT-d2 → FT-r2 → FT2-r2(능동학습 뒤 재측정)로 진행` 적용 (STOP_FT2-p.md → .resolved.md). <!-- mltp:a2c5a5e8ab -->
 - **auto FT2-f0 (11-05 18:23, pipeline)**: fold 0 FT-2 보고(FT2-f0, 보고용 · 관문 아님 — 1차 관문은 fold 4(FT2-p, 사용자 11-05 15:5x); E/Z 나눔은 사용자 12:0x (2)): FTpilot_AIMNet2_0 · f0_test 1차(FT2-r1, recalc 재측정 없음). (a) 라벨 TS 출발 전체 같은 TS 0.144 · |Δd| 중앙값 0.0413 · 90 % 0.1297 Å · RMSD 0.1277 Å (1874반응); E/Z 형제(f0_test_ez, 1874반응 중 77) 있음 같은 TS 0.052 · |Δd| 중앙값 0.0434 · 90 % 0.0641 Å · RMSD 0.1461 Å (77반응) / 없음 같은 TS 0.148 · |Δd| 중앙값 0.0410 · 90 % 0.1312 Å · RMSD 0.1266 Å (1797반응). (b) G2 TS 출발 전체 같은 TS 0.073 · |Δd| 중앙값 0.0549 · 90 % 0.2487 Å · RMSD 0.3754 Å (1744반응); 있음 같은 TS 0.028 · |Δd| 중앙값 0.0421 · 90 % 0.0628 Å · RMSD 0.1834 Å (72반응) / 없음 같은 TS 0.075 · |Δd| 중앙값 0.0568 · 90 % 0.2549 Å · RMSD 0.3918 Å (1672반응). 라벨 출발 두 무리 차이(같은 TS 0.096, |Δd| 중앙값 0.0025 Å)는 12:0x (2) 기준(같은 TS > 0.05 또는 |Δd| > 0.002 Å)을 넘는다(기록만, 판정에 안 씀). 실패 분류 — label: 1차 실패 1633(not_converged 33 · n_imag 11 · other_saddle 1589) → recalc 5 재측정 0 → 남은 실패 1633(not_converged 33 · n_imag 11 · other_saddle 1589); g2: 1차 실패 1635(not_converged 159 · n_imag 13 · other_saddle 1463) → recalc 5 재측정 0 → 남은 실패 1635(not_converged 159 · n_imag 13 · other_saddle 1463). results/FT2_f0_report.json. <!-- mltp:81a32809a2 -->
+- **A″ 시범 제출 (11-05 18:22)**: 손 job app_pilot 1063580을 냈다(cpu2 64코어 = ORCA 8개 × 8코어, launcher 밖). 스크립트는 analysis/mlts/app_pilot.py와 jobs/app_pilot.slurm이다.
+  - 표본: f4_test에서 seed 42로 dipole마다 10반응, 모두 50반응(results/app_pilot/selection.*). 통과 / 실패로 거르지 않았고, 우연히 MLIP 단독으로 같은 TS인 반응이 3/50이다.
+  - 출발 구조: FT-2 label 1차 기록의 MLIP TS 좌표(pos_A)를 그대로 쓴다(d_opt와 1e-6 Å 안에서 같음).
+  - 첫 Hessian: mlts_bridge.hessian(AIMNet2 중앙 차분 h = 2e-3 Å)을 write_orca_hess로 mlip.hess에 쓴다.
+  - ORCA 입력: D1 OptTS 입력(gen_dft.d1_g3 / partb_text)에서 `Calc_Hess true` 한 줄만 `InHess Read` + `InHessName "mlip.hess"`로 바꿨다. Recalc_Hess 30, Trust −0.1, MaxIter 100, Freq, SMD water는 그대로다.
+  - smoke 시험은 2번 했다(1063564는 agent 쪽 입력 검사 버그, 1063567은 통과: InHess 읽힘, SMD 켜짐, SCF 수렴).
+  - **판정 해석 (결과 전 고정, lead)**:
+    - (i) "라벨 TS로 수렴" = ORCA가 수렴했고 same_ts(RMSD ≤ 0.10 Å · 형성 결합 ≤ 0.02 Å)인 반응이다. 분모는 계획한 50반응 전부다.
+    - (ii) "반응당 비용" = DFT ORCA 단계(OptTS + Recalc Hessian + 마지막 Freq)의 코어시간이다. MLIP 단계는 따로 적는다. 판정은 **중앙값**으로 한다(명세 0-5 A 예산이 반응당 중앙값이므로). 평균도 함께 보고하고, 중앙값과 평균이 1.5 코어시간 기준의 다른 쪽에 있으면 사용자에게 보고한다.
