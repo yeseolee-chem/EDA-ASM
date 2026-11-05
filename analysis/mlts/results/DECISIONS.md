@@ -214,3 +214,8 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - **launcher 자동 제출 중단**: `$MLT/PIPELINE_PAUSE` = `exit`(다음 launcher job은 pass도 후속 job도 없이 끝난다). 이후 작업은 손 sbatch(배열)로 내고, launcher 코드 수정 · 시뮬레이터 시험 · 새 탐색 job은 만들지 않는다.
   - 1–5는 지시 원문대로 한다(전체 데이터 MLIP FT_all_full · FT_k_full · LODO_full, EMA · 힘 MAE 기준, G2 출발 MLIP TS = 배포 TS, X182 · 토큰 · HF EDA, H-1 · C-6 각 1회, C1 · C2, E 판정, 학습 보고, job 집계 1회).
   - 구현: workflow wf_304e7fc1-c29가 학습 코드를 만들고, 독립 검토 2개를 거쳐 고친 뒤 제출한다. 수동 실행 스크립트 준비, H-1 · C-6 각 1회, sacct 집계도 같은 workflow에서 한다. 결과와 job id는 다음 기록에 적는다.
+  - cancel job 1063783 결과(20:58):
+    - app_pilot 1063580은 CANCELLED(2:35:46 동안 실행).
+    - FT-r2 · FT2-r2 job은 없었다.
+    - FT-r2의 자료 단계 mltp_FT-d2 1063748(launcher가 20:3x에 냄, 23분 실행)을 취소했다. 쓰다 만 _al 분할 파일이 남았을 수 있다.
+  - ftall_now_s0–2(1063416–18, FT_all_s0–2, 옛 설정: 상한 200k · fw 0.2)를 취소했다(사용자 21:0x "취소 (권장)", cancel job 1063789). FT_all_full이 대신한다.
