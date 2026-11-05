@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """ez_groups.py — DEPLOY-V2 (MLTS): E/Z (stereo) sibling groups of the fold-k FT-2 test reactions (user 11-05 request
-(2); read by pipeline.decide_ft2p and ts_geom.summarize). Compute nodes only (sbatch jobs/mlt.slurm, MLTENV=mlts; CPU,
-about a minute).
+(2); read by pipeline.decide_ft2p (fold 0), pipeline.decide_ft2r2 (folds 0-4) and ts_geom.summarize (fold 0)).
+Compute nodes only (sbatch jobs/mlt.slurm, MLTENV=mlts; CPU, about a minute).
 
-  python ez_groups.py run [--fold 0] [--out $MLT/pipeline/lists/f<k>_test_ez.csv]
+  python ez_groups.py run [--fold K | --folds all|0,1,2,3,4] [--out <csv> (one fold only)] [--force]
+
+Default --fold 0 -> $MLT/pipeline/lists/f0_test_ez.csv; --folds writes f<k>_test_ez.csv for every listed fold (the
+D1 identities are computed once). Idempotent: a fold whose <out>.csv and <out>.json both exist is skipped (--force
+rewrites it); the pipeline's FT2-r2 stage runs `run --folds 0,1,2,3,4` when a list is missing.
 
 Rule: a fold-k test reaction (mlt_common.targets fold_T1 == k = pipeline list f<k>_test.csv, every reaction FT-2
 measures) is 'with sibling' (ez_sibling_in_train = True) when a training-side D1 core reaction — every D1 target with
@@ -67,13 +71,21 @@ def valid_cores(fold, core_of):
     return sorted(cores), info
 
 
-def cmd_run(fold, out):
+def default_out(fold):
+    return M.MLT / "pipeline" / "lists" / f"f{fold}_test_ez.csv"
+
+
+def out_done(out):
+    out = Path(out)
+    return out.is_file() and out.with_suffix(".json").is_file()
+
+
+def load_common():
+    """the inputs every fold shares: targets, S_folds pairs, the D1 identities (computed once), fold_core per rxn."""
     import pandas as pd
     t0 = time.time()
     T = M.targets()
     Sf = pd.read_csv(M.S_FOLDS)
-    Pk = Sf[Sf["fold_T1"] == fold]
-    A, B = set(Pk["a_rxn"].astype(int)), set(Pk["b_rxn"].astype(int))
     man = pd.read_csv(V.D1_MANIFEST, usecols=["rxn_smiles", "meta_rxn_id"], keep_default_na=False, dtype=str)
     smi_mrx = {int(r): s for r, s in zip(man["meta_rxn_id"], man["rxn_smiles"]) if str(r).strip().isdigit()}
     lab = dict(zip(T["rxn_id"].astype(int), T["rxn_smiles"]))
@@ -81,6 +93,33 @@ def cmd_run(fold, out):
     print(f"[ez] identities of {len(ident)} D1 targets in {time.time() - t0:.0f} s "
           f"({sum(1 for v in ident.values() if not v)} without)", flush=True)
     core_of = dict(zip(T["rxn_id"].astype(int), T["fold_core"]))
+    return dict(T=T, Sf=Sf, ident=ident, core_of=core_of)
+
+
+def cmd_run(folds, out=None, force=False):
+    """write f<k>_test_ez.csv (+ .json) for every fold in `folds`; out only with one fold; existing lists skipped."""
+    folds = [int(k) for k in folds]
+    if out is not None and len(folds) != 1:
+        M.stop("--out needs exactly one fold")
+    outs = {k: Path(out) if out is not None else default_out(k) for k in folds}
+    todo = [k for k in folds if force or not out_done(outs[k])]
+    for k in folds:
+        if k not in todo:
+            print(f"[ez] fold {k}: {outs[k]} (+ .json) exists -> skipped (--force rewrites)", flush=True)
+    if not todo:
+        return 0
+    C = load_common()
+    for k in todo:
+        run_fold(k, outs[k], C)
+    return 0
+
+
+def run_fold(fold, out, C):
+    import pandas as pd
+    t0 = time.time()
+    T, Sf, ident, core_of = C["T"], C["Sf"], C["ident"], C["core_of"]
+    Pk = Sf[Sf["fold_T1"] == fold]
+    A, B = set(Pk["a_rxn"].astype(int)), set(Pk["b_rxn"].astype(int))
     vc, vinfo = valid_cores(fold, core_of)
     vset = set(vc or [])
     test, train = T[T["fold_T1"] == fold], T[T["fold_T1"] != fold]
@@ -154,11 +193,23 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="E/Z sibling groups of the fold-k FT-2 test reactions (module docstring)")
     sp = ap.add_subparsers(dest="cmd", required=True)
     p = sp.add_parser("run")
-    p.add_argument("--fold", type=int, default=0)
-    p.add_argument("--out", default=None)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--fold", type=int, default=None, help="one fold (default 0)")
+    g.add_argument("--folds", default=None, help="'all' (= 0,1,2,3,4) or a comma list, e.g. 0,1,2,3,4")
+    p.add_argument("--out", default=None, help="output csv (one fold only; default $MLT/pipeline/lists/f<k>_test_ez.csv)")
+    p.add_argument("--force", action="store_true", help="rewrite lists that already exist")
     a = ap.parse_args(argv)
-    out = a.out or (M.MLT / "pipeline" / "lists" / f"f{a.fold}_test_ez.csv")
-    return cmd_run(a.fold, out)
+    if a.folds is not None:
+        s = str(a.folds).strip().lower()
+        try:
+            folds = list(range(5)) if s == "all" else [int(x) for x in s.split(",") if x.strip()]
+        except ValueError:
+            M.stop(f"--folds {a.folds!r}: need 'all' or a comma list of fold numbers 0..4")
+        if not folds or any(k not in range(5) for k in folds):
+            M.stop(f"--folds {a.folds!r}: need 'all' or a comma list of fold numbers 0..4")
+    else:
+        folds = [0 if a.fold is None else a.fold]
+    return cmd_run(folds, a.out, a.force)
 
 
 if __name__ == "__main__":

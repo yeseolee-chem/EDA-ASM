@@ -31,7 +31,13 @@ Scenarios (review defect in brackets):
   FT2-p rules (user 11-05): e1 E/Z 'with' / 'without sibling' split (> 0.05 same-TS or > 0.002 A median |dd| -> gate on
   'without' + DEVIATIONS note; list missing -> wait / HALT); e2 failure classes (i)-(iii) + recalc-5 re-measure units
   after the first pass, the gate on the merged records; e3 ts_geom fail_class = pipeline.fail_class, --only-failed,
-  --recalc parsing, summary fail_classes / by_ez_sibling; e4 ts_geom task count (wall 2 h, >= 120 s per reaction)"""
+  --recalc parsing, summary fail_classes / by_ez_sibling; e4 ts_geom task count (wall 2 h, >= 180 s per reaction:
+  f0_test 1,874 -> 4 tasks per start)
+  FT2-r2 rules (user 11-05 (2) / (3), as FT2-p): e5 the E/Z lists f<k>_test_ez.csv made by an `ez_groups.py run --folds
+  0,1,2,3,4` unit when missing (no decision before), per-fold sibling maps pooled over the 5 folds, > threshold -> gate on
+  'without' + DEVIATIONS note; recalc-5 re-measure per (run, start) after its first pass, classes before / after
+  pooled, the gate and FT_geom.csv on the merged records, partial / done wait for the re-measure; e6 FT2-r1 stays first
+  pass only (no re-measure) and reuses the speculative FTpilot_AIMNet2_<k> (r1_run, G-4 --models)"""
 from __future__ import annotations
 
 import json
@@ -299,14 +305,19 @@ def _geom_rows(E, run, start, rows, root="ft2"):
     return d
 
 
-def _ez(E, n, with_ids=()):
-    """the E/Z sibling list (ez_groups.py layout) for rxn 1000000 .. 1000000 + n - 1."""
-    p = E.mlt / "pipeline" / "lists" / "f0_test_ez.csv"
+def _ez(E, n, with_ids=(), k=0):
+    """the fold-k E/Z sibling list (ez_groups.py layout, f<k>_test_ez.csv) for rxn 1000000 .. 1000000 + n - 1."""
+    p = E.mlt / "pipeline" / "lists" / f"f{k}_test_ez.csv"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("rxn_id,role,is_a,is_b,ez_sibling_in_train,matching_train_core\n" + "".join(
         f"{1000000 + i},a,True,False,{i in set(with_ids)},{'nitrile oxide/AppZ' if i in set(with_ids) else ''}\n"
         for i in range(n)))
     return p
+
+
+def _ez_all(E, n, with_ids=(), per_fold=None):
+    """the five lists f0..f4_test_ez.csv (FT2-r2 waits for them); per_fold {k: with_ids} overrides with_ids."""
+    return [_ez(E, n, (per_fold or {}).get(k, with_ids), k) for k in range(5)]
 
 
 # ================================================================ scenarios: the original 13, new policy
@@ -663,6 +674,7 @@ def s9_halt_resolve():
     E.preset(done=upto, params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0",
                                     pilots=["MACE-OMOL-0", "AIMNet2"]))
     E.lists(4)
+    _ez_all(E, 4)
     for k in range(5):
         _ft_done(E, f"FT_{k}_al")
         for s in PL.STARTS:
@@ -935,6 +947,7 @@ def s16_fifo_slots():
     E.preset(done=[n for n in ALL[:ALL.index("FT-d2") + 1]],
              params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0", pilots=["MACE-OMOL-0"]))
     E.lists(4)
+    _ez_all(E, 4)                              # FT2-r2 would otherwise submit its ez_groups CPU unit (not under test)
     for i in range(10):
         E.sl.add(f"22000{i:02d}", "other", "RUNNING", cpus=1)
     E.run()
@@ -1242,6 +1255,7 @@ def s27_halt_log():
     upto = ALL[:ALL.index("FT-d2") + 1] + ["FT-r2"]
     E.preset(done=upto, params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0", pilots=["MACE-OMOL-0"]))
     E.lists(4)
+    _ez_all(E, 4)
     for k in range(5):
         _ft_done(E, f"FT_{k}_al")
         for s in PL.STARTS:
@@ -1392,6 +1406,7 @@ def p9_geom_partial():
     upto = ALL[:ALL.index("FT-d2") + 1] + ["FT-r2"]
     E.preset(done=upto, params=dict(base="MACE-OMOL-0", base_run="FTpilot_MACE-OMOL-0_0", pilots=["MACE-OMOL-0"]))
     E.lists(400)
+    _ez_all(E, 400)
     for k in range(5):
         _ft_done(E, f"FT_{k}_al")
         for s in PL.STARTS:
@@ -1867,6 +1882,10 @@ def e1_ft2p_ez_split():
     check(st["status"] == "halted" and (E.res / "STOP_FT2-p.md").is_file() and _ft2p_numbers(E).get("gate_set") == "all",
           f"C: within the thresholds and median 0.02 > 0.010 -> HALT on all reactions ({st['status']})")
     check(not E.calls("finetune.py data FT_1"), "C: FT-d1 (folds 1-4) not started")
+    txt = (E.res / "STOP_FT2-p.md").read_text() if (E.res / "STOP_FT2-p.md").is_file() else ""
+    check("ft_spec_AIMNet2_1–4" in txt and "FTpilot_AIMNet2_1–4" in txt and "그때가서 수정" in txt
+          and "fold 1 없음" in txt and "MACE-OMOL-0 lr ≤ 1e-4" in txt,
+          "C: the HALT says the speculative fold 1-4 AIMNet2 models (user 13:0x) and their state; options stay the user's")
     E = _ft2p_env("e1d_ez_missing", n)
     E.run()
     st = E.stage("FT2-p")
@@ -2011,8 +2030,8 @@ def e3_ts_geom_rules():
 
 @scenario
 def e4_geom_tasks():
-    """[lead 11-05] ts_geom arrays: n = n_tasks(n_rxn, max(Z wall, 120 s), 14, 4, wall 2 h): f0_test 1,874 reactions
-    with AIMNet2's 4.3 s Z wall -> more than one task per start (3), both starts submitted in one pass."""
+    """[lead 11-05] ts_geom arrays: n = n_tasks(n_rxn, max(Z wall, 180 s), 14, 4, wall 2 h): f0_test 1,874 reactions
+    with AIMNet2's 4.3 s Z wall -> 4 tasks per start (8 GPUs for both starts; 120 s gave 3), both starts in one pass."""
     n = 1874
     E = _ft2p_env("e4_tasks", n, ())
     E.wj("Z_report.json", dict(candidates={"AIMNet2": dict(geometry=dict(wall_median_s=4.3))}))
@@ -2020,11 +2039,162 @@ def e4_geom_tasks():
     c = E.calls("ts_geom.py run FTpilot_AIMNet2_0")
     k = PL.n_tasks(n, PL.GEOM_UNIT_MIN_S / 3600.0, 14, 4, wall=PL.GEOM_WALL_H)
     arr_ = ",".join(str(i) for i in range(k))
-    check(k >= 3 and len(c) == 2 and all(f"--array={arr_}" in x and f"@I {k}" in x for x in c)
-          and not E.calls("--only-failed"),
-          f"f0_test 1,874: {k} tasks per start (formula), label + g2 submitted, no re-measure yet ({[x[:90] for x in c]})")
+    check(PL.GEOM_UNIT_MIN_S == 180.0 and k == 4 and len(c) == 2 and all(f"--array={arr_}" in x and f"@I {k}" in x for x in c)
+          and sum(x.count("--gres=gpu:1") for x in c) == 2 and not E.calls("--only-failed"),
+          f"f0_test 1,874: 4 tasks per start (8 GPUs), label + g2 submitted, no re-measure yet ({k}, "
+          f"{[x[:90] for x in c]})")
+    check(PL.n_tasks(n, 120 / 3600, 14, 4, wall=PL.GEOM_WALL_H) == 3, "the old 120 s floor gave 3 tasks per start")
     check(PL.n_tasks(400, PL.geom_unit_h(PL.Pass(E.ctx(), dry=True), "AIMNet2"), 14, 4, wall=PL.GEOM_WALL_H) == 1
           and PL.n_tasks(10000, 300 / 3600, 14, 4, wall=PL.GEOM_WALL_H) == 4, "small lists 1 task, nmax 4")
+
+
+# ================================================================ FT2-r2 rules (user 11-05 (2) / (3), as FT2-p)
+def _ft2r2_env(name, n, ez=None):
+    """FT2-r2 ready: FT-d2 + FT-r2 done, base AIMNet2, every FT_<k>_al trained; ez None = no E/Z lists, else
+    {k: with_ids} for f<k>_test_ez.csv (k = 0..4)."""
+    E = Env(name)
+    E.preset(done=ALL[:ALL.index("FT-d2") + 1] + ["FT-r2"],
+             params=dict(base="AIMNet2", base_run="FTpilot_AIMNet2_0", pilots=["AIMNet2"]))
+    E.lists(n)
+    for k in range(5):
+        _ft_done(E, f"FT_{k}_al")
+    if ez is not None:
+        _ez_all(E, n, per_fold=ez)
+    return E
+
+
+def _ft2r2_numbers(E):
+    return (E.stage("FT2-r2").get("decision") or {}).get("numbers") or {}
+
+
+@scenario
+def e5_ft2r2_rules():
+    """[user 11-05 (2) / (3)] FT2-r2 applies the FT2-p rules to the pooled round-2 gate: (A) the five E/Z lists are made
+    by one `ez_groups.py run --folds 0,1,2,3,4` CPU unit when missing (no decision before; partial refuses); per-fold
+    sibling maps pooled over the folds; groups differ by > 0.002 A median |dd| -> gate on 'without' + DEVIATIONS note;
+    (B) after the first pass of each (run, start) its failed reactions are re-measured with recalc 5 (only those
+    folders), done / partial wait; classes before / after pooled; the gate, FT_report and FT_geom.csv use the merged
+    records."""
+    n = 20
+    with_ids = set(range(12))
+    # ---- (A) lists missing -> ez unit; fold 1 has no sibling (per-fold maps); split on |dd|
+    E = _ft2r2_env("e5a_ft2r2_ez", n)
+    for k in range(5):
+        for s in PL.STARTS:
+            _geom_rows(E, f"FT_{k}_al", s, [_row(i, dd=0.012 if i in with_ids else 0.004) for i in range(n)])
+    E.run()
+    st = E.stage("FT2-r2")
+    c = E.calls("ez_groups.py run --folds 0,1,2,3,4")
+    check(len(c) == 1 and "MLTENV=mlts" in c[0] and "-p cpu1,cpu2" in c[0] and "--time=48:00:00" in c[0]
+          and "pipeline.py guard" in c[0] and not E.calls("ts_geom.py") and not st.get("decision")
+          and st["status"] in ("queued", "running"),
+          f"A: no E/Z lists -> one `ez_groups.py run --folds 0,1,2,3,4` (CPU, mlts) unit, no ts_geom, no decision "
+          f"({st['status']}: {st['why'][:80]}; {[x[-90:] for x in c]})")
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    ok, txt = PL.partial_ft2r2(P)
+    check(not PL.done_ft2r2(P) and not ok and "E/Z" in txt, f"A: done / partial refuse without the lists ({txt[:80]})")
+    _ez_all(E, n, with_ids, per_fold={1: ()})
+    E.finish(E.job_of("FT2-r2", "ez"))
+    E.run()
+    st, nums = E.stage("FT2-r2"), _ft2r2_numbers(E)
+    ez = nums.get("ez") or {}
+    lab = ez.get("label") or {}
+    dev = (E.res / "DEVIATIONS.md").read_text() if (E.res / "DEVIATIONS.md").is_file() else ""
+    check(st["status"] == "done" and nums.get("gate_set") == "without_sibling" and ez.get("split") is True,
+          f"A: with 0.012 vs without 0.004 median |dd| (> 0.002 A) -> gate on 'without', passes ({st['status']}: "
+          f"{st['why'][:80]}, {nums.get('gate_set')})")
+    check((lab.get("with") or {}).get("n_attempted") == 4 * 12 and (lab.get("without") or {}).get("n_attempted") == 4 * 8 + 20
+          and ((ez.get("g2") or {}).get("with") or {}).get("dd_median_A") == 0.012,
+          f"A: per-fold maps pooled over the 5 folds: with 48 / without 52 (fold 1 lists no sibling), (b) per group "
+          f"({(lab.get('with') or {}).get('n_attempted')}, {(lab.get('without') or {}).get('n_attempted')})")
+    check((nums.get("label") or {}).get("dd_median_A") == 0.012 and (nums.get("pass_") or {}).get("dd_median_A") is True
+          and (nums.get("gate") or {}).get("dd_median_A") == 0.004,
+          "A: all pooled reactions would fail (0.012 > 0.010); the 'without' group (0.004) passes")
+    check("auto FT2-r2" in dev and "형제 없는" in dev and "형제 없는" in E.dec() and "<!-- mltp:" in dev,
+          "A: the decision line and a DEVIATIONS.md note say the gate used 'without sibling' only")
+    R = json.loads((E.res / "FT_report.json").read_text()) if (E.res / "FT_report.json").is_file() else {}
+    g = R.get("gate_round2") or {}
+    check(g.get("pass_all") is True and g.get("gate_set") == "without_sibling" and (g.get("pooled") or {}).get("label"),
+          f"A: FT_report gate_round2 records the gate set, pooled numbers and the verdict ({sorted(g)[:8]})")
+    E.run()
+    check((E.res / "DEVIATIONS.md").read_text().count("auto FT2-r2") == 1, "A: DEVIATIONS note written once")
+    # ---- (B) recalc 5 per (run, start) after its first pass; lists present, groups within the thresholds
+    late = {17, 18, 19}
+    E = _ft2r2_env("e5b_ft2r2_recalc", n, ez={k: late for k in range(5)})
+    cls0 = {**{i: "not_converged" for i in range(6)}, **{i: "n_imag" for i in (6, 7)},
+            **{i: "other_saddle" for i in range(8, 13)}}
+    for k in range(5):
+        for s in PL.STARTS:
+            cl = cls0 if (k, s) == (0, "label") else {0: "n_imag", 1: "n_imag"} if (k, s) == (3, "g2") else {}
+            _geom_rows(E, f"FT_{k}_al", s, [_row(i, cl.get(i)) for i in range(n)])
+    E.run()
+    c = E.calls("--only-failed")
+    od = {x: str(E.mlt / "ft2" / f"FT_{x[0]}_al" / x[1]) for x in ((0, "label"), (3, "g2"))}
+    check(len(c) == 2 and all("--recalc 5 --only-failed" in x and "--gres=gpu:1" in x and "MLTENV=mlts" in x for x in c)
+          and all(any(f"{d}_recalc5 @I 1 --recalc 5 --only-failed {d}" in x for x in c) for d in od.values())
+          and any("comment=mltp:FT2-r2:FT_0_al/label_recalc5[0]" in x for x in c) and not E.calls("ez_groups.py"),
+          f"B: recalc 5 re-measure only for the two folders with failures ({[x[-120:] for x in c]})")
+    st = E.stage("FT2-r2")
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    ok, txt = PL.partial_ft2r2(P)
+    check(not st.get("decision") and not PL.done_ft2r2(P) and not ok and "recalc" in txt,
+          f"B: no decision, not done and no partial acceptance before the re-measure ({st['status']}; {txt[:80]})")
+    _geom_rows(E, "FT_0_al", f"label{PL.RECALC_SUFFIX}", [_row(i, {0: "not_converged", 6: "n_imag"}.get(i))
+                                                          for i in range(13)])
+    _geom_rows(E, "FT_3_al", f"g2{PL.RECALC_SUFFIX}", [_row(i) for i in (0, 1)])
+    for l in E.live():
+        E.finish(l["id"])
+    E.run()
+    st, nums = E.stage("FT2-r2"), _ft2r2_numbers(E)
+    fc = nums.get("fail_classes") or {}
+    first, aft = (fc.get("label") or {}).get("first_pass") or {}, (fc.get("label") or {}).get("after_recalc") or {}
+    check(st["status"] == "done" and nums.get("gate_set") == "all" and (nums.get("ez") or {}).get("split") is False
+          and not (E.res / "DEVIATIONS.md").exists(),
+          f"B: re-measure complete -> done; E/Z groups within the thresholds -> gate on all, no DEVIATIONS note "
+          f"({st['status']}: {st['why'][:80]})")
+    check((first.get("not_converged"), first.get("n_imag"), first.get("other_saddle")) == (6, 2, 5)
+          and (aft.get("not_converged"), aft.get("n_imag"), aft.get("other_saddle")) == (1, 1, 0)
+          and (fc.get("label") or {}).get("n_remeasured") == 13 and (fc.get("label") or {}).get("n_recovered") == 11
+          and ((fc.get("label") or {}).get("by_fold") or {}).get("0", {}).get("n_failed_first_pass") == 13,
+          f"B: label classes pooled over the folds: 6 / 2 / 5 -> 1 / 1 / 0, 11 recovered, per fold ({first}, {aft})")
+    check(((fc.get("g2") or {}).get("first_pass") or {}).get("n_imag") == 2 and (fc.get("g2") or {}).get("n_failed_after") == 0,
+          "B: g2 classes (fold 3: 2 n_imag -> 0)")
+    check((nums.get("label_first_pass") or {}).get("same_ts_frac") == 89 / 100
+          and (nums.get("label") or {}).get("same_ts_frac") == 99 / 100 and (nums.get("pass_") or {}).get("same_ts_frac"),
+          "B: the gate uses the merged records: same TS 0.89 (first pass, would fail) -> 0.99 (passes)")
+    check("recalc 5" in E.dec() and "재측정" in E.dec() and "not_converged" in E.dec() and "FT-2 (2차" in E.dec(),
+          "B: the decision line records the classes before / after the re-measure")
+    rows = PL.read_geom_csv(E.res / "FT_geom.csv")
+    rem = [r for r in rows if r.get("remeasured") == "True"]
+    check(len(rows) == 5 * 2 * n and len(rem) == 15
+          and sum(1 for r in rows if r.get("fail_class")) == 2 and all(r.get("first_pass_fail_class") for r in rem),
+          f"B: FT_geom.csv = merged records, re-measured rows marked ({len(rows)} rows, {len(rem)} re-measured)")
+    n_calls = len(E.calls("ts_geom.py"))
+    E.run()
+    check(len(E.calls("ts_geom.py")) == n_calls, "B: nothing resubmitted after the decision")
+
+
+@scenario
+def e6_ft2r1_first_pass():
+    """FT2-r1 stays first pass only (report for G-4, not a gate): failed reactions are not re-measured; FT_1-4 = the
+    speculative FTpilot_AIMNet2_<k> (user 13:0x, ft_spec_AIMNet2_<k>) through r1_run, also in the G-4 --models."""
+    E = Env("e6_ft2r1")
+    E.preset(done=ALL[:ALL.index("FT2-r1")], params=dict(base="AIMNet2", base_run="FTpilot_AIMNet2_0", pilots=["AIMNet2"]))
+    E.lists(20)
+    for k in range(5):
+        run = f"FTpilot_AIMNet2_{k}"
+        _ft_done(E, run)
+        for s in PL.STARTS:
+            _geom_rows(E, run, s, [_row(i, "not_converged" if i < 3 else None) for i in range(20)])
+    E.run()
+    st = E.stage("FT2-r1")
+    g4 = E.calls("g4_plan")
+    check(st["status"] == "done" and not E.calls("--only-failed") and not E.calls("ts_geom.py"),
+          f"FT2-r1 done on the first pass, no recalc-5 re-measure ({st['status']}: {st['why'][:80]})")
+    check(len(g4) == 1 and "--models " + ",".join(f"FTpilot_AIMNet2_{k}" for k in range(5)) in g4[0],
+          f"G-4 plans with the speculative fold 1-4 models ({[x[-110:] for x in g4]})")
 
 
 # ================================================================ main
