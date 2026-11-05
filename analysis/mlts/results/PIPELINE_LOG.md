@@ -44,3 +44,5 @@
 - 2026-11-05T18:03 p85 j1063528 | FT2-p RESOLVE accept 사용자 11-05 17:0x (1) — FT-2 (a) fold 4 실패를 기록하고 FT-d1 → FT-r1 → G4 → FT-d2 → FT-r2 → FT2-r2(능동학습 뒤 재측정)로 진행 | FT-d1: blocked -> ready | FT2-r1: blocked -> ready
 - 2026-11-05T18:03 p85 j1063528 | commit 908388a1: FT2-p resolve accept | push origin mlts ok | FT-d1 submit 1063541 data crit | FT2-r1 submit 1063542[0,1,2] FTpilot_AIMNet2_0/g2 filler
 - 2026-11-05T18:13 p86 j1063540 | FT-d1 done | FT-r1 done | FT2-r1: queued -> ready | G4: blocked -> ready
+- 2026-11-05T18:13 p86 j1063540 | commit 9c465b1e: FT-d1 done (complete); FT-r1 done (complete) | push origin mlts ok | G4 submit 1063559 plan crit | FT2-r1 submit 1063560[3] FTpilot_AIMNet2_0/g2 filler | FT2-r1 submit 1063561[0,1] FTpilot_AIMNet2_1/label filler
+- 2026-11-05T18:23 p87 j1063558 | FT2-r1: queued -> ready | FT2-f0 done | G4: queued -> ready
