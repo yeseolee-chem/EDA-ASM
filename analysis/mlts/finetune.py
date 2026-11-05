@@ -379,12 +379,15 @@ def parse_run(run, with_al=False):
         mode, val = "all", int(m.group(1))
     elif m := re.fullmatch(r"FT_LODO_([0-4])", base):
         mode, val = "lodo", int(m.group(1))
+    elif m := re.fullmatch(r"FTabl_([^_]+)_([0-4])_([A-Za-z0-9]+)", base):   # lead 11-05: fold-k ablation (FT-abl)
+        mode, val, cand = "fold", int(m.group(2)), canon_cand(m.group(1))
     elif m := re.fullmatch(r"FTpilot_(.+)_([0-4])", base):
         mode, val, cand = "fold", int(m.group(2)), canon_cand(m.group(1))
     elif m := re.fullmatch(r"BENCH_([^_]+)(?:_(.+))?", base):
         mode, val, cand, bench = "fold", 0, canon_cand(m.group(1)), True
     else:
-        raise SystemExit(f"unknown run name {run} (FT_<k>, FT_all_s<i>, FT_LODO_<d>, FTpilot_<cand>_<k>, BENCH_<cand>)")
+        raise SystemExit(f"unknown run name {run} (FT_<k>, FT_all_s<i>, FT_LODO_<d>, FTpilot_<cand>_<k>, "
+                         f"FTabl_<cand>_<k>_<tag>, BENCH_<cand>)")
     split = {"fold": f"fold{val}", "all": f"all_s{val}", "lodo": f"lodo{val}"}[mode] + ("_al" if al else "")
     seed_off = {"fold": 100, "all": 200, "lodo": 300}[mode] + val
     return dict(run=base + ("_al" if al else ""), base=base, mode=mode, val=val, cand=cand, split=split, al=al,
