@@ -228,3 +228,42 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
   - 앞서 lead가 말한 "분할 3개 약 40 GB"는 틀렸다. extxyz 분할 하나는 약 0.9 GB다.
   - 지울 후보: MACE 벤치 · 시범 학습 폴더 BENCH_MACE-* · FTpilot_MACE-OMOL-0_*(7.2 GB), 옛 extxyz 분할 ft/data(8.9 GB), `$MLT/tmp` · `*.stale_*`(1 GB).
   - **사용자 결정 21:1x "다 만들어진 후 지우기"**: 전체 데이터 새 저장소와 첫 학습용 인덱스가 다 만들어진 뒤(자료 job 정상 종료 확인) 이 후보들을 지운다. 매시 점검이 그때 삭제 job을 낸다.
+- **전체 데이터 학습 제출 (11-05 21:4x, workflow wf_304e7fc1-c29)**:
+  - 새 analysis/mlts/ft_full.py(data / train / ft1 / status)와 finetune.py 작은 수정(parse_run `*_full` 이름, `_refuse_full`, build_split `sets_out`)을 만들었다. 학습 루프 · 데이터 두 갈래로 독립 검토했고, 막는 버그 2개(`dict(..., **_jobtag())` 키 중복 TypeError: 첫 시작과 정상 종료)와 major 2개(lock 해제, geo-C2 부분 STOP이 학습 전체를 취소)를 고친 뒤 제출했다.
+  - 자료: ftfull_data 1063833 = `ft_full.py data --all`.
+    - Pool을 한 번 거쳐 압축 저장소 `$MLT/ft/store/store_<fp>/`를 만든다(npy 조각 65,536구조씩, 약 1.3 GB, 약 130만 구조).
+    - 13개 분할 인덱스는 `$MLT/ft/full/<split>/`에 쓴다.
+    - train 상한 없음, valid = core 단위 10 %(상한 없음, all 약 8.2만), test 상한 20,000.
+    - 수준 · LEAK_DROP_KINDS · fmax · D0 holdout · C-2는 그대로 둔다. fold · LODO 분할에는 기하 C-2를 더했고, 걸린 분할만 STOP한다.
+    - G-4는 완료 보고가 있으면 넣는다.
+  - 학습 6개: ftfull_FT_all_full 1063834, ftfull_FT_0_full … FT_4_full 1063835–39(afterok:1063833, GPU 1 · 8c · 32G).
+    - EMA 0.99(한 step마다; 검증 · 내보내기에 씀).
+    - 기준 = EMA 검증 힘 MAE. ReduceLROnPlateau(0.8, patience 10, threshold 0)와 best 선택 · 조기 종료가 모두 이 기준을 쓴다.
+    - warmup 3 epoch 1e-5 → 1e-4.
+    - 종료: lr < 1e-6, 또는 100 epoch 개선 없음. 상한 1,000 epoch / 150 GPU-h.
+    - ew 1 · batch 64 · clip 0.4(값 자르기, 기존과 같음) · D3 B3LYP.
+    - 매 epoch checkpoint(EMA 포함)를 남기고, 48 h 벽에서 다시 내면 이어서 학습한다.
+  - 남은 학습 7개(FT_all_full_s1 · s2 → FT_LODO_0–4_full)는 칸이 비면 매시 점검이 낸다.
+- **FT-abl 판정 (11-05 21:5x, lead, 사전 규칙)**:
+  - label 출발 1차 같은 TS(f4_test 2,195반응): 기준 fw 0.2 = 0.113, fw1 = 0.167, fw5 = 0.200.
+  - 두 ablation 모두 기준보다 0.02 넘게 높고, fw5 − fw1 = 0.033 > 0.02이므로 **fw 5.0**을 고른다.
+  - FT-1 TS 근처 검증 힘 MAE: fw1 0.497, fw5 0.439 kcal/mol/Å.
+  - `$MLT/pipeline/ft_abl_choice.json`({"choice":"fw5","fw":5.0})을 학습 6개가 시작하기 전에 썼다. 학습은 첫 시작 때 fw를 고정한다.
+- **필수 검사 (각 1회, 배포 root `MC_ROOT=full`: `$MLT/full`, results/full)**:
+  - H-1(= C-5, `inputs_mlts.py h1`, 1063803): 라벨 TS 50반응을 같은 코드에 넣으면 LADDER dft 입력이 재현된다. **통과**(meta · X182 · 토큰 · HF 입력 250/250 바이트 같음 · 표, 최대 차 0).
+  - C-6(`predict_c1.py atoms/xgb dft` + `c6`, 1063804–06): LADDER dft 단위 40개 = L_predictions 재현. **통과**(최대 |Δŷ| 3.0e-6 kcal/mol, XGB 정확히 같음).
+- **수동 체인 (2–5단계, launcher 밖)**:
+  - analysis/mlts/manual_chain.py와 jobs/manual_chain.slurm을 만들었다. 명령은 `$MLT/full/cmds/*.sh`에 있다.
+  - 순서: fold k마다 ts_geom FT_k_full label · g2(GPU 4 + 4 task) → assemble(g2 MLIP TS → A-2 배치) → h3a(xTB Freq · HF EDA). 모두 모이면 h3b(finalize … x182 · tokens · hf_build · d3 · build · h2) → prereg(`--allow-partial`) → C1(train_k c1pred) · C2(train_k plan / c2 / select) → E(eval_v2).
+- **틈 처리 (추천안, 기록)**:
+  - (1) G2 출발이 없는 반응은 시험 461 / 8,886과 anchor 189 / 380으로, 모두 650이다. 배포 경로 실패로 세고 범위를 보고한다. 라벨 출발 TS(DFT 유래)로 대신하지 않는다. lf도 G2 기반이라 E 공통 집합에서 이미 빠진다.
+  - (2) g2 출발 OptTS가 수렴하지 않은 반응은 배포 TS 없음으로 둔다(assemble 기본 converged). 개수를 보고한다.
+  - (3) fold −1 anchor 380개는 모든 FT_k_full이 학습에 쓴다. 기존 start_a4 규칙대로 FT_0_full g2 출발로 TS를 만들고, C2 학습 쪽 입력으로만 쓴다(표본 안; E는 이들을 평가하지 않음).
+  - (4) K plan은 전체 180 단위(C2 · C2_s1 · C2_s2 · C3 · C1v)를 코드 수정 없이 돌린다(C2 먼저). select와 E가 전체를 요구하기 때문이다.
+  - (5) 반응물 기준은 G2 xTB 최소점이다(MLIP 반응물 최적화 코드 없음). 그래서 d1 · d2는 MLIP TS와 xTB 최소점이 섞인다. 보고에 적는다.
+  - (6) D0는 2–5단계에 쓰지 않는다. FT_all_full이 생기면 보고용 d0_eval을 선택적으로 돌린다.
+- **job 집계 (1회, results/JOB_ACCOUNTING.md, 11-04 00:00 – 11-05 21:25, sacct 388행)**:
+  - 본 계산: 135 job · 9,187 core-h · 76.0 GPU-h.
+  - 검사 · 시험 · dry-run · 시뮬레이터: 65 job · 395 core-h · 10.7 GPU-h. 대부분 sandbox 3개로 358 core-h다.
+  - launcher: 117 job · 0.1 core-h.
+  - 분류 안 됨: 71 job · 31 core-h · 4.2 GPU-h(이름 목록은 표 안).

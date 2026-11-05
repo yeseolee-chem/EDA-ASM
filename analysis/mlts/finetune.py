@@ -9,6 +9,8 @@ Runs (data split in brackets; suffix _al = + G-4 active-learning data, also set 
   FT_LODO_<d>       d = 0..4   [lodo<d>]   drop every structure with DIPOLES[d] in dipoles(tag)   (Phase X)
   FTpilot_<cand>_<k>           [fold<k>]   Z pilot (spec 4: fold-0 fine-tune of the top-2 Z candidates)
   BENCH_<cand>[_<tag>]         [fold0]     timing / smoke runs (--subset), never used downstream
+  FT_<k>_full / FT_all_full[_s<i>] / FT_LODO_<d>_full   [full_<split>]   uncapped (user 11-05 20:5x): parse_run only
+                               here; data / train / ft1 live in ft_full.py (binary store, EMA trainer)
 Candidates: MACE-OMOL-0 (default; mace-torch 0.3.16 ships only the extra-large 1024-channel OMOL model),
   MACE-MH-1-omol (smaller multi-head MACE, omol head; optional size alternative), AIMNet2 (aimnet2_wb97m_d3_0),
   MACE-OFF23-medium / MACE-OFF24-medium (no Si: refused, see CAND_NOTES).
@@ -372,8 +374,16 @@ def parse_run(run, with_al=False):
     al = r.endswith("_al")
     base = r[:-3] if al else r
     al = al or bool(with_al)
-    cand, bench = None, False
-    if m := re.fullmatch(r"FT_([0-4])", base):
+    cand, bench, full = None, False, False
+    # *_full runs (user 11-05 20:5x, ft_full.py): the FT_<k> / FT_all_s<i> / FT_LODO_<d> membership and seeds without
+    # the FT-cap train / valid caps; FT_all_full = all_s0, FT_all_full_s<i> = all_s<i>. Trained only by ft_full.py.
+    if m := re.fullmatch(r"FT_([0-4])_full", base):
+        mode, val, full = "fold", int(m.group(1)), True
+    elif m := re.fullmatch(r"FT_all_full(?:_s(\d+))?", base):
+        mode, val, full = "all", int(m.group(1) or 0), True
+    elif m := re.fullmatch(r"FT_LODO_([0-4])_full", base):
+        mode, val, full = "lodo", int(m.group(1)), True
+    elif m := re.fullmatch(r"FT_([0-4])", base):
         mode, val = "fold", int(m.group(1))
     elif m := re.fullmatch(r"FT_all_s(\d+)", base):
         mode, val = "all", int(m.group(1))
@@ -387,12 +397,22 @@ def parse_run(run, with_al=False):
         mode, val, cand, bench = "fold", 0, canon_cand(m.group(1)), True
     else:
         raise SystemExit(f"unknown run name {run} (FT_<k>, FT_all_s<i>, FT_LODO_<d>, FTpilot_<cand>_<k>, "
-                         f"FTabl_<cand>_<k>_<tag>, BENCH_<cand>)")
+                         f"FTabl_<cand>_<k>_<tag>, BENCH_<cand>, FT_<k>_full, FT_all_full[_s<i>], FT_LODO_<d>_full)")
+    if full:                                             # ft_full decides G-4 use itself (no _al suffix, no --with-al)
+        al = False
     split = {"fold": f"fold{val}", "all": f"all_s{val}", "lodo": f"lodo{val}"}[mode] + ("_al" if al else "")
+    if full:
+        split = "full_" + split
     seed_off = {"fold": 100, "all": 200, "lodo": 300}[mode] + val
     return dict(run=base + ("_al" if al else ""), base=base, mode=mode, val=val, cand=cand, split=split, al=al,
-                bench=bench, valid_seed=M.SEED + seed_off, train_seed=M.SEED + (val if mode == "all" else 0),
+                bench=bench, full=full, valid_seed=M.SEED + seed_off, train_seed=M.SEED + (val if mode == "all" else 0),
                 cap_seed=M.SEED + CAP_SEED_OFF + seed_off)
+
+
+def _refuse_full(R, what):
+    if R.get("full"):
+        raise SystemExit(f"{R['run']} is a *_full run: use `ft_full.py {what} {R['run']}` (finetune.py {what} handles "
+                         f"the capped extxyz splits only)")
 
 
 def _wtorch(obj, path):
@@ -1015,8 +1035,9 @@ class Pool:
                    f"{bad_cls[:5]}")
 
 
-def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params, write=True):
-    """write False (data --dry): the same drop / validation / cap / C-2 leakage logic, nothing written."""
+def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params, write=True, sets_out=None):
+    """write False (data --dry): the same drop / validation / cap / C-2 leakage logic, nothing written.
+    sets_out (ft_full.py): a dict that receives the capped train / valid / test DataFrames (pool.P rows)."""
     P, T = pool.P, pool.T
     if not R["al"]:
         P = P[P.input != "G4"]
@@ -1063,6 +1084,8 @@ def build_split(pool, split_name, R, valid_frac, fp, st, complete, gmeta, params
     train, cap_tr = cap_set(train, cp.get("train", 0), R["cap_seed"], 0, frac2)
     valid, cap_va = cap_set(valid, cp.get("valid", 0), R["cap_seed"], 1, frac2)
     test, cap_te = cap_set(test, cp.get("test", 0), R["cap_seed"], 2, frac2)
+    if sets_out is not None:
+        sets_out.update(train=train, valid=valid, test=test)
     if write and (not len(valid) or not len(train)):
         M.not_ready(f"{split_name}: empty train ({len(train)}) or validation ({len(valid)}) set")
     # C-2 leakage check (independent of the drop code: targets() folds / dipoles of every used rxn_id)
@@ -1253,6 +1276,8 @@ def cmd_data(runs, all_, with_al, fmax_cap, valid_frac, force, dry=False, caps=N
     Rs = [parse_run(r, with_al) for r in runs] + ([parse_run(r, with_al) for r in ALL_RUNS] if all_ else [])
     if not Rs:
         raise SystemExit("data: give run names or --all")
+    for R in Rs:
+        _refuse_full(R, "data")
     t_data = time.time()
     any_al = any(R["al"] for R in Rs)
     st, complete, gmeta = inputs_state(any_al)
@@ -2071,6 +2096,7 @@ def model_path(R, C):
 
 def cmd_train(run, cand, o):
     R = parse_run(run, o.with_al)
+    _refuse_full(R, "train")
     cand = canon_cand(cand)
     if R["cand"] and R["cand"] != cand:
         raise SystemExit(f"run {R['run']} is for candidate {R['cand']}, not {cand}")
@@ -2178,6 +2204,7 @@ def cmd_ft1(run, o):
     import torch
     _guard_imports()
     R = parse_run(run, o.with_al)
+    _refuse_full(R, "ft1")
     sd = FT_DATA / R["split"]
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     if o.foundation:
