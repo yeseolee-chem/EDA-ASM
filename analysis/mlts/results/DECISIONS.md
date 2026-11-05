@@ -182,3 +182,4 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - 수치: |Δd| 중앙값 0.045 Å, 같은 TS 0.113. 재측정(recalc 5) 뒤에도 실패 1,968 / 2,195이고, 대부분 다른 안장점이다.
     - 원인: TS 근처 MLIP PES 정확도다. 기준 TS 확인을 마쳤다: 라벨 TS는 학습 수준과 같고 그 수준의 정지점이다(Newton 이동 1e-4 Å; results/refcheck/).
     - 명령서의 위치 오차 어림(0.006 Å)은 실측(0.045 Å)에 비해 약 7배 낙관적이었다.
+- **auto FT2-p (11-05 18:03, pipeline)**: lead `RESOLVE: accept 사용자 11-05 17:0x (1) — FT-2 (a) fold 4 실패를 기록하고 FT-d1 → FT-r1 → G4 → FT-d2 → FT-r2 → FT2-r2(능동학습 뒤 재측정)로 진행` 적용 (STOP_FT2-p.md → .resolved.md). <!-- mltp:a2c5a5e8ab -->
