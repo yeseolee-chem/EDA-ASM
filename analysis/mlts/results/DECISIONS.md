@@ -153,3 +153,4 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - ft_abl_fw5 1063377: `--fw 5.0`.
     - 각각 afterok로 FT-2 label 측정이 이어진다: ft2_abl_fw1 1063378, ft2_abl_fw5 1063379(`ts_geom.py run FTabl_AIMNet2_4_<태그> f4_test label $MLT/ft2/FTabl_AIMNet2_4_<태그>/label @I 2`).
     - 더 나은 설정이 나오면 그 설정으로 fold 0–4와 이후 학습(FT-r2 · FT-fin)을 바꿀지 정한다. 사용자 순서 G-4 → 재측정 → MACE는 그대로다. FT 횟수 예산(명세 0-5)보다 2회 많다.
+- 규칙 기록(나, 11-05 12:3x–16:4x): 11-05 login 규칙이 생긴 뒤 commit · push를 하면서 `git push ... 2>&1 | tail -1`(또는 `tail -2`)를 6번 썼다(12029c32 · c7741cb3 · 39b6690c · 0d0cf88d · 041dce34 · f0ddb2ee). 앞으로는 `git push -q`만 쓴다.
