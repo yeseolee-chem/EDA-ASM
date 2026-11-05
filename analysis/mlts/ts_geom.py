@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ts_geom.py — shared TS-optimisation geometry evaluator (DEPLOY-V2 Phase Z now, FT-2 (spec 5) later).
 
-  python ts_geom.py run <spec> <list.csv> <label|g2> <out_dir> [i n]
+  python ts_geom.py run <spec> <list.csv> <label|g2> <out_dir> [i n] [--recalc K] [--only-failed <prev_out_dir>]
   python ts_geom.py summarize <out_dir>
   python ts_geom.py x_report [--root $MLT/x] [--run-tmpl FT_LODO_{d}_al] [--dir-tmpl {root}/{run}/{start}]
                              [--ref-root $MLT/ft2] [--ref-tmpl FT_{k}_al] [--lists <lists.json>] [--out <json>]
@@ -19,10 +19,24 @@ run: one GPU job = one MLTS server (mlts_bridge.start_server, this job's GPU) + 
   Workers stop claiming when less than MLT_RESERVE_H (2) h of the MLT_WALL_H (48) h wall are left (MLT_JOB_T0).
   Env: MLT_WORKERS (default: allocated CPUs - 2 for MLIPs, all for xtb), MLTS_RECALC (mlts_bridge.RECALC_DEFAULT),
   MLT_KEEP_OUT=1 keeps every ORCA .out.gz (default: failures only, <out_dir>/fail/).
+  --recalc K (user 11-05 (3), FT2-p re-measure): a new MLIP Hessian every K OptTS cycles (mlts_bridge recalc
+  'analytic:K', ORCA restarted with InHess Read); 1 <= K <= RECALC_MAX = 30 = the D1 config_run.yaml orca_optts_block
+  (Calc_Hess true, Recalc_Hess 30), i.e. never less frequent than the D1 label OptTS; the pipeline uses K = 5 (the
+  G2 / G3L block Recalc_Hess 5). Default (no option): mlts_bridge.RECALC_DEFAULT = analytic:30.
+  --only-failed <prev_out_dir>: run only the list reactions whose record in <prev_out_dir>/recs fails the per-reaction
+  criterion (fail_class below), from the same start; the [i n] slicing applies to that subset (sorted in list order).
+  Each record carries rerun_of {out_dir, fail_class}. FT2-p writes these to <run>/<start>_recalc5/.
+Per-reaction criterion (FT2-p failure classes, user 11-05 (3)): attempted = status not in no_start / no_label /
+  not_covered; a reaction passes when converged AND n_imag == 1 (MLIP-Hessian modes below -50 cm-1) AND same_ts AND
+  |Δd| <= DD_CUT_A = 0.030 A (= the FT-2 (a) 90th-percentile bound). Failures: (i) not_converged (not converged, incl.
+  ORCA errors / timeouts), (ii) n_imag (converged, n_imag != 1 or no finite Hessian), (iii) other_saddle (converged,
+  n_imag == 1, not the same TS or |Δd| > 0.030 A). pipeline.fail_class is the same rule on geom.csv rows.
 summarize: <out_dir>/geom.csv (one row per reaction) and <out_dir>/summary.json = the FT-2 table: median / 90th
   percentile |Δd|, median heavy-atom RMSD, same-TS fraction, n_imag == 1 fraction, convergence, cycles, wall, GPU-s;
   for g2 starts also split by the g1 shape class (analysis/d1_g2/results/C_compare.csv same_ts_g1: True = same,
-  False = different, blank = none) and by dipole.
+  False = different, blank = none) and by dipole; fail_classes (the counts of the classes above); by_ez_sibling
+  {with, without}: the table split by the E/Z sibling list $MLT/pipeline/lists/f0_test_ez.csv (ez_groups.py; only the
+  records whose rxn_id it lists, i.e. fold-0 test reactions).
 x_report (spec 12 Phase X, report only; MLTENV=mlts or reactot, CPU): per left-out dipole d the FT-2 table of
   FT_LODO_<d>_al on dipole d's reactions ($MLT/x/FT_LODO_<d>_al/{label,g2}/recs, read only), pass_a = FT-2 (a) on the
   label start, the g2 start split by g1 class, and the in-domain reference (FT_<k>_al fold-k tests, same dipole) ->
@@ -63,6 +77,115 @@ RESERVE_H = float(os.environ.get("MLT_RESERVE_H", "2"))
 T_START = time.time()
 FT2 = dict(dd_median_A=0.010, dd_p90_A=0.030, rmsd_median_A=0.02, same_ts_frac=0.90, nimag1_frac=0.95)  # spec 5
 MAX_PIPELINE_ERR = 20
+DD_CUT_A = 0.030              # per-reaction |Δd| cut of the failure classes (= FT-2 (a) dd_p90_A); = pipeline.FT2_DD_CUT_A
+FAIL_CLASSES = ("not_converged", "n_imag", "other_saddle")      # (i) / (ii) / (iii), user 11-05 (3); = pipeline
+NOT_ATTEMPTED = ("no_start", "no_label", "not_covered")
+RECALC_MAX = 30               # D1 config_run.yaml orca_optts_block Recalc_Hess 30: --recalc is never less frequent
+EZ_LIST = C.MLT / "pipeline" / "lists" / "f0_test_ez.csv"       # ez_groups.py (E/Z sibling groups of the fold-0 tests)
+
+
+def _truthy(v):
+    return v is True or (isinstance(v, (bool, np.bool_)) and bool(v)) or str(v).strip().lower() == "true"
+
+
+def _fnum(v):
+    try:
+        x = float(v)
+        return x if np.isfinite(x) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def fail_class(rec):
+    """per-reaction FT-2 criterion (module docstring): None = passes or not attempted; else 'not_converged' (i),
+    'n_imag' (ii) or 'other_saddle' (iii). Works on record dicts and on geom.csv rows (strings)."""
+    if str(rec.get("status")) in NOT_ATTEMPTED:
+        return None
+    if not _truthy(rec.get("converged")):
+        return "not_converged"
+    ni = _fnum(rec.get("n_imag"))
+    if ni is None or int(round(ni)) != 1:
+        return "n_imag"
+    dd = _fnum(rec.get("dd_max"))
+    if not _truthy(rec.get("same_ts")) or dd is None or dd > DD_CUT_A:
+        return "other_saddle"
+    return None
+
+
+def read_recs(out_dir):
+    out = {}
+    for p in sorted((Path(out_dir) / "recs").glob("*.json")):
+        try:
+            r = json.loads(p.read_text())
+            out[int(r["rxn_id"])] = r
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def failed_ids(prev_dir):
+    """{rxn_id: fail class} of the records in <prev_dir>/recs that fail the per-reaction criterion."""
+    return {rx: c for rx, c in ((rx, fail_class(r)) for rx, r in read_recs(prev_dir).items()) if c}
+
+
+def recalc_spec(k):
+    """--recalc value -> mlts_bridge recalc string: 'K' or 'analytic:K' with 1 <= K <= RECALC_MAX (never less frequent
+    than the D1 OptTS Recalc_Hess 30); anything else = STOP."""
+    s = str(k if k is not None else "").strip().lower()
+    m, _, v = s.rpartition(":") if ":" in s else ("analytic", "", s)
+    try:
+        n = int(v)
+    except ValueError:
+        n = -1
+    if m != "analytic" or not 1 <= n <= RECALC_MAX:
+        C.stop(f"--recalc {k!r}: need an integer 1..{RECALC_MAX} (analytic MLIP Hessian every K cycles; D1 Recalc_Hess "
+               f"{RECALC_MAX} is the least frequent allowed)")
+    return f"analytic:{n}"
+
+
+def parse_run_argv(a):
+    """['run', spec, list, start, out_dir, [i, n], [--recalc K], [--only-failed DIR]] -> dict, or None (usage)."""
+    pos, opt, it = [], dict(recalc=None, only_failed=None), iter(list(a)[1:])
+    for t in it:
+        if t == "--recalc":
+            opt["recalc"] = recalc_spec(next(it, None))
+        elif t == "--only-failed":
+            v = next(it, None)
+            if not v:
+                C.stop("--only-failed needs the first-pass out_dir")
+            opt["only_failed"] = v
+        else:
+            pos.append(t)
+    if len(pos) not in (4, 6):
+        return None
+    d = dict(spec=pos[0], lst=pos[1], start=pos[2], out_dir=pos[3], i=None, n=None, **opt)
+    if len(pos) == 6:
+        d["i"], d["n"] = pos[4], int(pos[5])
+    return d
+
+
+def select_rxns(rx, i=None, n=None, only_failed=None):
+    """the list reactions of this task: --only-failed keeps the failed ones of the first pass (list order), then the
+    k % n == i slicing. -> (rxns, {rxn: fail class} or None)."""
+    fails = None
+    if only_failed:
+        if not (Path(only_failed) / "recs").is_dir():
+            C.not_ready(f"--only-failed {only_failed}: no recs/ (first pass not run)")
+        fails = failed_ids(only_failed)
+        rx = [r for r in rx if int(r) in fails]
+    if n:
+        rx = [r for k, r in enumerate(rx) if k % int(n) == int(i)]
+    return rx, fails
+
+
+def read_ez(path=None):
+    """{rxn_id: True (E/Z sibling on the training side) | False} from the ez_groups.py list; {} if absent."""
+    p = Path(path or EZ_LIST)
+    if not p.is_file():
+        return {}
+    import pandas as pd
+    L = pd.read_csv(p, usecols=["rxn_id", "ez_sibling_in_train"], dtype=str, keep_default_na=False)
+    return {int(r): _truthy(v) for r, v in zip(L.rxn_id, L.ez_sibling_in_train) if str(r).strip()}
 
 
 def tight_kw(v):
@@ -112,10 +235,12 @@ def rec_path(out_dir, rxn):
     return Path(out_dir) / "recs" / f"{int(rxn)}.json"
 
 
-def evaluate_one(rxn, row, spec, start, sock, out_dir, work_root, cls=None, tight=False, lab=None, sp=None):
+def evaluate_one(rxn, row, spec, start, sock, out_dir, work_root, cls=None, tight=False, lab=None, sp=None,
+                 recalc=None):
     """optimise one reaction's TS and compare with the label TS -> record dict (also written to recs/). tight: the
     optimize_ts convergence (decision TSG-tight); lab / sp: explicit label / start TS files (G-4 D0 reactions, whose
-    label TS is the Coley TS and start the G2c xTB TS) instead of the D1 paths."""
+    label TS is the Coley TS and start the G2c xTB TS) instead of the D1 paths; recalc: the optimize_ts Hessian
+    recalculation ('analytic:K'; None = mlts_bridge.RECALC_DEFAULT analytic:30)."""
     t0 = time.time()
     rec = dict(rxn_id=int(rxn), job_id=row["job_id"], dipole=row["dipole"], fold_T1=row["fold_T1"],
                n_atoms=row["n_atoms"], start=start, model=B.spec_name(spec), g1_class=(cls or {}).get(int(rxn), "none"),
@@ -147,7 +272,7 @@ def evaluate_one(rxn, row, spec, start, sock, out_dir, work_root, cls=None, tigh
     work = Path(work_root) / str(int(rxn))
     shutil.rmtree(work, ignore_errors=True)
     try:
-        r = B.optimize_ts(spec, ls, spos, pairs, work, sock, tight=tight)
+        r = B.optimize_ts(spec, ls, spos, pairs, work, sock, tight=tight, recalc=recalc)
         po = np.asarray(r["pos_A"], float)
         d_opt = B.dists(po, pairs)
         dd = list(np.subtract(d_opt, d_lab))
@@ -188,9 +313,12 @@ class Ctx:
         self.counts = {}
 
 
-def run_list(spec, rxns, start, out_dir, workers=None, sock=None, rows=None, log=print, tight=False):
+def run_list(spec, rxns, start, out_dir, workers=None, sock=None, rows=None, log=print, tight=False, recalc=None,
+             rerun=None):
     """evaluate every reaction in rxns that has no record yet; returns run info. Starts (and stops) a server for
-    MLIP specs unless sock is given. tight: optimize_ts convergence (the `run` CLI passes TIGHT_RUN)."""
+    MLIP specs unless sock is given. tight: optimize_ts convergence (the `run` CLI passes TIGHT_RUN); recalc: the
+    Hessian recalculation (None = mlts_bridge.RECALC_DEFAULT); rerun: {'out_dir': first pass, 'fails': {rxn: class}}
+    (--only-failed: stored per record as rerun_of)."""
     spec = B.resolve_spec(spec)
     out_dir = C.assert_write_ok(Path(out_dir))
     (out_dir / "recs").mkdir(parents=True, exist_ok=True)
@@ -198,7 +326,8 @@ def run_list(spec, rxns, start, out_dir, workers=None, sock=None, rows=None, log
     cls = g1_classes()
     todo = [int(r) for r in rxns if not rec_path(out_dir, r).is_file()]
     info = dict(model=B.spec_name(spec), spec=spec, start=start, n_list=len(rxns), n_todo=len(todo), host=os.uname().nodename,
-                job=B.jobtag(), started=C.now(), recalc=B.RECALC_DEFAULT, tight=tight)
+                job=B.jobtag(), started=C.now(), recalc=recalc or B.RECALC_DEFAULT, tight=tight,
+                rerun_of=(rerun or {}).get("out_dir"))
     if not todo:
         info["note"] = "all records exist"
         return info
@@ -233,7 +362,10 @@ def run_list(spec, rxns, start, out_dir, workers=None, sock=None, rows=None, log
             try:
                 if rec_path(out_dir, rx).is_file():
                     continue
-                rec = evaluate_one(rx, rows[rx], spec, start, sock, out_dir, work_root, cls, tight=tight)
+                rec = evaluate_one(rx, rows[rx], spec, start, sock, out_dir, work_root, cls, tight=tight, recalc=recalc)
+                if rerun:
+                    rec["rerun_of"] = dict(out_dir=str(rerun.get("out_dir")),
+                                           fail_class=(rerun.get("fails") or {}).get(int(rx)))
                 C.write_text(rec_path(out_dir, rx), json.dumps(rec, default=C._json_default) + "\n")   # compact
                 with ctx.mu:
                     ctx.counts[rec["status"]] = ctx.counts.get(rec["status"], 0) + 1
@@ -323,7 +455,35 @@ def load_records(out_dir):
     return df
 
 
-def summarize(out_dir):
+def fail_counts(df):
+    """counts of the per-reaction failure classes over the attempted records (+ n_attempted, n_pass)."""
+    out = dict(n_attempted=0, n_pass=0, **{c: 0 for c in FAIL_CLASSES})
+    for r in df.to_dict("records"):
+        if str(r.get("status")) in NOT_ATTEMPTED:
+            continue
+        out["n_attempted"] += 1
+        c = fail_class(r)
+        out[c or "n_pass"] += 1
+    return out
+
+
+def ez_tables(df, ez_list=None):
+    """{'with': table, 'without': table, ...} over the records listed in the E/Z sibling list (None if none are)."""
+    ez = read_ez(ez_list)
+    if not ez or df.empty or "rxn_id" not in df:
+        return None
+    grp = df.rxn_id.map(lambda r: ez.get(int(r)) if str(r).strip().lstrip("-").isdigit() else None)
+    known = grp.notna()
+    if not known.any():
+        return None
+    out = dict(ez_list=str(Path(ez_list or EZ_LIST)), n_listed=int(known.sum()), n_unlisted=int((~known).sum()))
+    for lab, val in (("with", True), ("without", False)):
+        sel = known & (grp == val)
+        out[lab] = dict(table(df[sel]), fail_classes=fail_counts(df[sel])) if sel.any() else dict(n_attempted=0)
+    return out
+
+
+def summarize(out_dir, ez_list=None):
     df = load_records(out_dir)
     if df.empty:
         C.not_ready(f"no records in {out_dir}/recs")
@@ -336,9 +496,17 @@ def summarize(out_dir):
     S = dict(out_dir=str(out_dir), models=sorted(df.model.dropna().unique().tolist()),
              starts=sorted(df.start.dropna().unique().tolist()), time=C.now(), thresholds_ft2_a=FT2,
              tight=sorted({str(x) for x in df.tight}) if "tight" in df else ["False (pre-TSG-tight records)"],
-             all=table(df), by_dipole={d: table(g) for d, g in df.groupby("dipole")})
+             all=table(df), by_dipole={d: table(g) for d, g in df.groupby("dipole")},
+             fail_classes=dict(fail_counts(df), dd_cut_A=DD_CUT_A,
+                               rule="pass = converged and n_imag == 1 and same TS and |dd| <= 0.030 A; (i) not_converged, "
+                                    "(ii) n_imag != 1, (iii) other_saddle (converged, n_imag == 1, not the same TS or "
+                                    "|dd| > 0.030 A)"),
+             recalc=sorted({str(x) for x in df.recalc.dropna()}) if "recalc" in df else None)
     if (df.start == "g2").any():
         S["by_g1_class"] = {c: table(g) for c, g in df.groupby("g1_class")}
+    ezt = ez_tables(df, ez_list)
+    if ezt:
+        S["by_ez_sibling"] = ezt
     C.write_json(Path(out_dir) / "summary.json", S)
     return S
 
@@ -703,20 +871,27 @@ def main(argv=None):
         return 0 if R["complete"] else 2
     if a[0] == "summarize":
         S = summarize(a[1])
-        print(json.dumps(dict(all=S["all"], by_g1_class=S.get("by_g1_class")), indent=1, default=C._json_default))
+        print(json.dumps(dict(all=S["all"], by_g1_class=S.get("by_g1_class"), fail_classes=S.get("fail_classes"),
+                              by_ez_sibling=S.get("by_ez_sibling")), indent=1, default=C._json_default))
         return 0
-    if len(a) not in (5, 7):
+    o = parse_run_argv(a)
+    if o is None:
         print(__doc__)
         return 2
-    spec, lst, start, out_dir = a[1], a[2], a[3], a[4]
+    spec, lst, start, out_dir = o["spec"], o["lst"], o["start"], o["out_dir"]
     if start not in ("label", "g2"):
         C.stop(f"start must be label or g2, not {start!r}")
-    rx = read_list(lst)
-    if len(a) == 7:
-        i, n = C.array_task(a[5]), int(a[6])
-        rx = [r for k, r in enumerate(rx) if k % n == i]
-    info = run_list(spec, rx, start, out_dir, tight=TIGHT_RUN)
+    i = C.array_task(o["i"]) if o["n"] else None
+    rx, fails = select_rxns(read_list(lst), i, o["n"], o["only_failed"])
+    rerun = dict(out_dir=o["only_failed"], fails=fails) if o["only_failed"] else None
+    info = run_list(spec, rx, start, out_dir, tight=TIGHT_RUN, recalc=o["recalc"], rerun=rerun)
+    if fails is not None:
+        info["n_failed_first_pass"] = len(fails)
     C.write_json(Path(out_dir) / f"run_{B.jobtag()}.json", info)
+    if not rx and not any((Path(out_dir) / "recs").glob("*.json")):
+        print(json.dumps(dict(run={k: v for k, v in info.items() if k != "spec"}, note="nothing to do in this slice"),
+                         default=C._json_default))
+        return 0
     S = summarize(out_dir)
     print(json.dumps(dict(run={k: v for k, v in info.items() if k not in ("spec",)}, all=S["all"]), indent=1,
                      default=C._json_default))

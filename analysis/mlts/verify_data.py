@@ -25,7 +25,9 @@ Sources of the fold0 training data (finetune.py inputs; FT-cap tiers = finetune.
                     'Edisp' + 'DISPERSION GRADIENT' and simple-dftd3 (two-body), float32 / float64 -> part_d3.json
   leak [--workers]  check 2: reactant-pair identity of the fold-0 test reactions (S_folds fold_T1 == 0: a_rxn + b_rxn)
                     vs every fold0 train / valid structure -> part_leak.json (+ $MLT/audit/leak_remove.json if any
-                    reaction-pair overlap)
+                    reaction-pair overlap); both criteria (stereo removed / stereo kept) are reported per set and, per
+                    user 11-05 (1), per role (a = a_rxn, b = the reference b_rxn): by_role of the reaction-pair,
+                    molecule and product overlaps (structures hit, distinct test reactions hit)
   ft1src            (GPU) FT-1 of FTpilot_AIMNet2_0 by source on fold0 valid / test (+ D0 holdout TS rows) -> part_ft1
   c1opt             (GPU) tests_c1 (ii) optimizer parity (ORCA ExtOpt OptTS vs Sella) with the fine-tuned AIMNet2
                     (exported to $MLT/audit/models when the pilot has not exported yet) -> part_c1.json
@@ -1198,6 +1200,36 @@ def cmd_leak(workers):
         except Exception:                                                      # noqa: BLE001
             fi = None
         return stereo_class(fi, want, TS)
+    # per role of the fold-0 test pairs (user 11-05 (1)): a = a_rxn (the evaluated reaction), b = b_rxn (the pair's
+    # reference reaction); both criteria: stereo removed (smiles_pair | inchi_pair | geometry_pair) and stereo kept
+    # (smiles_pair_iso | inchi_pair_iso | geometry_pair with the same stereo InChIs); per set (train / valid)
+    ROLES = (("a", A), ("b", B_))
+    role_acc = {kind: {role: dict(n_free=Counter(), n_iso=Counter(), n_unres=Counter(), rx_free=defaultdict(set),
+                                  rx_iso=defaultdict(set)) for role, _R in ROLES} for kind in ("pair", "mol", "prod")}
+
+    def role_hit(kind, nm, trx, trx_i, unresolved=False):
+        for role, R in ROLES:
+            acc = role_acc[kind][role]
+            x, y = set(trx) & R, set(trx_i) & R
+            if x:
+                acc["n_free"][nm] += 1
+                acc["rx_free"][nm] |= x
+                if unresolved and not y:
+                    acc["n_unres"][nm] += 1
+            if y:
+                acc["n_iso"][nm] += 1
+                acc["rx_iso"][nm] |= y
+
+    def role_out(kind):
+        out = {}
+        for role, R in ROLES:
+            acc = role_acc[kind][role]
+            out[role] = dict(n_test_rxns=len(R), **{
+                crit: {s: dict(n_structures=int(acc[nk][s]), n_test_rxns_hit=len(acc[rk][s])) for s in ("train", "valid")}
+                for crit, nk, rk in (("stereo_removed", "n_free", "rx_free"), ("stereo_kept", "n_iso", "rx_iso"))})
+            if kind == "pair":
+                out[role]["stereo_unresolved_geometry_only"] = {s: int(acc["n_unres"][s]) for s in ("train", "valid")}
+        return out
     stats = defaultdict(Counter)
     hits, mol_hits, prod_hits, kinds_hit = [], [], [], defaultdict(Counter)
     kinds_hit_iso = defaultdict(Counter)
@@ -1237,6 +1269,7 @@ def cmd_leak(workers):
                         sc, _sx = sclass(al[int(r.i)], "prod")
                         st["geom_product_hit"] += 1
                         st[f"geom_product_hit_{sc}"] += 1
+                        role_hit("prod", nm, TS["prod_graph"][fr[0]], _sx)
                         prod_hits.append(dict(struct_id=sid, set=nm, src=r.src, kind=kind, stereo=sc,
                                               test_rxns=sorted(TS["prod_graph"][fr[0]])[:10]))
                 elif fr is not None:
@@ -1260,11 +1293,13 @@ def cmd_leak(workers):
                         st[f"pair_hit_{e}"] += 1
                     if trx & test_pm:
                         st["pair_hit_P_main_rxn"] += 1
+                    unres_g = (not ev_i and gsc in ("undetermined", "inchi_mismatch")
+                               and not any(e in ev for e in ("smiles_pair", "inchi_pair")))
+                    role_hit("pair", nm, trx, trx_i, unresolved=unres_g)
                     if ev_i:
                         st["pair_hit_isomeric"] += 1
                         kinds_hit_iso[f"{nm}|{r.src}"][kind] += 1
-                    elif gsc in ("undetermined", "inchi_mismatch") and not any(e in ev for e in ("smiles_pair",
-                                                                                               "inchi_pair")):
+                    elif unres_g:
                         st["pair_hit_geometry_only_stereo_unresolved"] += 1
                     kinds_hit[f"{nm}|{r.src}"][kind] += 1
                     hits.append(dict(struct_id=sid, set=nm, src=r.src, kind=kind, input=inp, evidence=ev,
@@ -1281,6 +1316,7 @@ def cmd_leak(workers):
                         sc, sx = sclass(al[int(r.i)], cls)
                         st["geom_molecule_hit"] += 1
                         st[f"geom_molecule_hit_{sc}"] += 1
+                        role_hit(cls, nm, tgt[fr[0]], sx)
                         rec = dict(struct_id=sid, set=nm, src=r.src, kind=kind, stereo=sc, n_test_rxns=len(tgt[fr[0]]),
                                    test_rxns=sorted(tgt[fr[0]])[:10], test_rxns_same_stereo=sorted(sx)[:10])
                         if cls == "mol":
@@ -1311,10 +1347,19 @@ def cmd_leak(workers):
     by_set = {s: dict(stereo_free=sum(1 for h in hits if h["set"] == s),
                       isomeric=sum(1 for h in hits_iso if h["set"] == s),
                       geometry_only_stereo_unresolved=sum(1 for h in unres if h["set"] == s)) for s in ("train", "valid")}
+    by_role = dict(pair=role_out("pair"), mol=role_out("mol"), prod=role_out("prod"))
+    role_def = ("a = S_folds a_rxn of the fold-0 test pairs (the evaluated reaction), b = b_rxn (the pair's reference "
+                "reaction; a reaction can be both); per set (train / valid) the number of structures whose identity hits "
+                "a test reaction of that role and the number of distinct test reactions of that role hit. stereo_removed "
+                "= smiles_pair (stereo-free canonical SMILES pair) | inchi_pair (gen_d0.pair_ident) | geometry_pair "
+                "(connectivity of the two fragments); stereo_kept = smiles_pair_iso (isomeric canonical SMILES pair) | "
+                "inchi_pair_iso (stereo InChI pair) | geometry_pair with the fragments' stereo InChIs equal to the test "
+                "pair's. mol / prod: molecule / product graph hits (stereo_kept = same stereo InChI from the geometry)")
     rem = None
     if n_pair:
         M.write_json(LEAK_REMOVE, dict(
             code=CODE, written=M.now(), split="fold0", n=n_pair, n_isomeric=len(hits_iso), by_set=by_set,
+            by_role=by_role["pair"], by_role_definition=role_def,
             remove=[h["struct_id"] for h in hits], remove_isomeric=[h["struct_id"] for h in hits_iso],
             review_geometry_stereo_unresolved=[h["struct_id"] for h in unres], detail=hits,
             rule="reaction-pair overlap with the fold-0 test reactions (a_rxn + b_rxn of S_folds fold_T1 == 0). "
@@ -1361,23 +1406,31 @@ def cmd_leak(workers):
                                           prod=list(PROD_KINDS))),
                geometry_method_check_on_test_label_ts=dict(geo_chk),
                counts=dict(stats), totals=dict(tot), identity_sources=dict(id_src),
+               by_role_definition=role_def,
                reaction_pair_overlap=dict(n_structures=n_pair, n_structures_isomeric=len(hits_iso), by_set=by_set,
+                                          by_role=by_role["pair"],
                                           by_set_src_kind={k: dict(v) for k, v in kinds_hit.items()},
                                           by_set_src_kind_isomeric={k: dict(v) for k, v in kinds_hit_iso.items()},
                                           examples=hits[:60], examples_isomeric=hits_iso[:60],
                                           geometry_stereo_unresolved=unres[:60], leak_remove=rem),
                cross_fold_stereo_siblings=cross_fold,
                molecule_overlap=dict(n_structures=len(mol_hits), n_unique_molecules=len(mol_u), unique=mol_u[:100],
-                                     examples=mol_hits[:50],
+                                     by_role=by_role["mol"], examples=mol_hits[:50],
                                      note="molecule rows whose geometry graph equals a reactant of a fold-0 test "
                                           "reaction (reported separately, not part of the reaction-pair rule)"),
-               product_overlap=dict(n_structures=len(prod_hits), examples=prod_hits[:50],
+               product_overlap=dict(n_structures=len(prod_hits), by_role=by_role["prod"], examples=prod_hits[:50],
                                     note="product-graph matches (1-fragment reaction rows or product optimisations) "
                                          "with a fold-0 test reaction product (reported separately)"),
                seconds=round(time.time() - t0, 1))
     print(f"[leak] reaction-pair overlap {n_pair} structures (isomeric {len(hits_iso)}, by set {by_set}); molecule "
           f"overlap {len(mol_hits)}; product overlap {len(prod_hits)}; cross-fold {cross_fold['counts']}; totals "
           f"{dict(tot)}", flush=True)
+    for kind in ("pair", "mol", "prod"):
+        for role, v in by_role[kind].items():
+            print(f"[leak] by role {kind}/{role} ({v['n_test_rxns']} test reactions): " + "; ".join(
+                f"{crit} " + ", ".join(f"{s} {v[crit][s]['n_structures']} structures / {v[crit][s]['n_test_rxns_hit']} "
+                                       f"reactions" for s in ("train", "valid"))
+                for crit in ("stereo_removed", "stereo_kept")), flush=True)
     _write_part("leak", res)
     return 0
 
@@ -1582,6 +1635,8 @@ def cmd_report():
                                       reaction_pair_overlap_isomeric=(lk.get("reaction_pair_overlap") or {}).get(
                                           "n_structures_isomeric"),
                                       by_set=(lk.get("reaction_pair_overlap") or {}).get("by_set"),
+                                      by_role=(lk.get("reaction_pair_overlap") or {}).get("by_role"),
+                                      by_role_definition=lk.get("by_role_definition"),
                                       molecule_overlap=(lk.get("molecule_overlap") or {}).get("n_structures"),
                                       product_overlap=(lk.get("product_overlap") or {}).get("n_structures"),
                                       leak_remove=(lk.get("reaction_pair_overlap") or {}).get("leak_remove")),

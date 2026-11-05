@@ -27,7 +27,11 @@ Scenarios (review defect in brackets):
   retry of the 5,000-era HALT); n1 A-3 / A-4 progress folders + GPU job size; n2 R commit gate (md + json, sha);
   n3 K-C1 c1pred refs + C-agg decision; n4 A2-smoke completeness / decision HALT; n5 D1 G-2 user stop at 317 / 400
   (decision Nurion); n6 the lead's D0 jobs adopted (d0p_plan, D0G1 / D0G3 / D0G2 arrays, helpers, @I 3 retry);
-  n7 N-scan per uploaded Nurion tar + collect + re-arm, FT-dp gate ('N partial ok'); n8 D0-eval (after FT-fin, S waits)"""
+  n7 N-scan per uploaded Nurion tar + collect + re-arm, FT-dp gate ('N partial ok'); n8 D0-eval (after FT-fin, S waits)
+  FT2-p rules (user 11-05): e1 E/Z 'with' / 'without sibling' split (> 0.05 same-TS or > 0.002 A median |dd| -> gate on
+  'without' + DEVIATIONS note; list missing -> wait / HALT); e2 failure classes (i)-(iii) + recalc-5 re-measure units
+  after the first pass, the gate on the merged records; e3 ts_geom fail_class = pipeline.fail_class, --only-failed,
+  --recalc parsing, summary fail_classes / by_ez_sibling; e4 ts_geom task count (wall 2 h, >= 120 s per reaction)"""
 from __future__ import annotations
 
 import json
@@ -265,9 +269,44 @@ def _geom(E, root, run, start, n, dd, cov=None):
     cov = n if cov is None else cov
     E.wj(d / "summary.json", dict(all=dict(status_counts=dict(ok=cov), same_ts_frac=1.0, dd_median_A=dd, dd_p90_A=dd,
                                            n_attempted=cov, rmsd_median_A=0.01)))
-    rows = "rxn_id,status,dd_max,rmsd_heavy,same_ts,n_imag\n" + "".join(f"{1000000 + i},ok,{dd},0.01,True,1.0\n"
-                                                                         for i in range(cov))
+    rows = "rxn_id,status,converged,dd_max,rmsd_heavy,same_ts,n_imag\n" + "".join(
+        f"{1000000 + i},ok,True,{dd},0.01,True,1.0\n" for i in range(cov))
     (d / "geom.csv").write_text(rows)
+
+
+GEOM_COLS = ("rxn_id", "status", "converged", "dd_max", "rmsd_heavy", "same_ts", "n_imag")
+
+
+def _row(i, cls=None, dd=0.004):
+    """one geom.csv row: passing, or failing in class (i) not_converged / (ii) n_imag / (iii) other_saddle."""
+    r = dict(rxn_id=1000000 + i, status="ok", converged=True, dd_max=dd, rmsd_heavy=0.01, same_ts=True, n_imag=1.0)
+    if cls == "not_converged":
+        r.update(status="not_converged", converged=False, dd_max=0.2, same_ts=False)
+    elif cls == "n_imag":
+        r.update(n_imag=2.0)
+    elif cls == "other_saddle":
+        r.update(same_ts=False, dd_max=0.25, rmsd_heavy=0.3)
+    return r
+
+
+def _geom_rows(E, run, start, rows, root="ft2"):
+    """geom.csv from per-reaction rows (+ a summary.json whose status counts cover them)."""
+    d = E.mlt / root / run / start
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "geom.csv").write_text(",".join(GEOM_COLS) + "\n" + "".join(",".join(str(r.get(c, "")) for c in GEOM_COLS) + "\n"
+                                                                     for r in rows))
+    E.wj(d / "summary.json", dict(all=dict(status_counts=dict(ok=len(rows)), n_attempted=len(rows))))
+    return d
+
+
+def _ez(E, n, with_ids=()):
+    """the E/Z sibling list (ez_groups.py layout) for rxn 1000000 .. 1000000 + n - 1."""
+    p = E.mlt / "pipeline" / "lists" / "f0_test_ez.csv"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("rxn_id,role,is_a,is_b,ez_sibling_in_train,matching_train_core\n" + "".join(
+        f"{1000000 + i},a,True,False,{i in set(with_ids)},{'nitrile oxide/AppZ' if i in set(with_ids) else ''}\n"
+        for i in range(n)))
+    return p
 
 
 # ================================================================ scenarios: the original 13, new policy
@@ -1127,6 +1166,7 @@ def s23_speed():
     E = Env("s23_speed")
     E.preset(done=ALL[:ALL.index("FT2-p")], params=dict(pilots=["MACE-OMOL-0", "AIMNet2"]))
     E.lists(4)
+    _ez(E, 4)
     for c in ("MACE-OMOL-0", "AIMNet2"):
         _geom(E, "ft2", f"FTpilot_{c}_0", "label", 4, 0.005)
         _geom(E, "ft2", f"FTpilot_{c}_0", "g2", 4, 0.005)
@@ -1762,6 +1802,229 @@ def p13_git_remote():
     except Exception as e:                                              # noqa: BLE001
         info(f"git ls-remote failed: {type(e).__name__}: {e}")
     check(True, "informational")
+
+
+# ================================================================ FT2-p rules (user 11-05 (2) E/Z, (3) recalc 5)
+def _ft2p_env(name, n, ez_with=None, pilots=("AIMNet2",)):
+    E = Env(name)
+    E.preset(done=ALL[:ALL.index("FT2-p")], params=dict(pilots=list(pilots)))
+    E.lists(n)
+    if ez_with is not None:
+        _ez(E, n, ez_with)
+    return E
+
+
+def _ft2p_numbers(E):
+    return (E.stage("FT2-p").get("decision") or {}).get("numbers") or {}
+
+
+@scenario
+def e1_ft2p_ez_split():
+    """[user 11-05 (2)] FT2-p reports FT-2 (a) / (b) for the E/Z 'with' / 'without sibling' groups; groups differing by
+    > 0.002 A median |dd| (A) or > 0.05 same-TS (E) -> the fold-0 gate on 'without' only (decision line + DEVIATIONS
+    note); within the thresholds -> all reactions (B pass, C HALT); no E/Z list -> FT2-p waits (D) / HALT at the
+    decision (D2)."""
+    n, run = 20, "FTpilot_AIMNet2_0"
+    with_ids = set(range(12))
+
+    def go(name, dd_with, dd_without, cls_with=None):
+        E = _ft2p_env(name, n, with_ids)
+        for s in PL.STARTS:
+            _geom_rows(E, run, s, [_row(i, (cls_with or {}).get(i), dd=dd_with if i in with_ids else dd_without)
+                                   for i in range(n)])
+        return E
+    E = go("e1a_ez_split_dd", 0.012, 0.004)
+    E.run()
+    st, nums = E.stage("FT2-p"), _ft2p_numbers(E)
+    ez = nums.get("ez") or {}
+    dev = (E.res / "DEVIATIONS.md").read_text() if (E.res / "DEVIATIONS.md").is_file() else ""
+    check(st["status"] == "done" and nums.get("gate_set") == "without_sibling" and ez.get("split") is True,
+          f"A: median |dd| 0.012 (with) vs 0.004 (without) > 0.002 A -> gate on 'without' only, passes "
+          f"({st['status']}, {nums.get('gate_set')})")
+    check(nums.get("label", {}).get("dd_median_A") == 0.012 and nums.get("pass_", {}).get("dd_median_A") is True,
+          "A: all reactions would fail (median 0.012 > 0.010); the 'without' group (0.004) passes")
+    check((ez.get("label") or {}).get("with", {}).get("n_attempted") == 12
+          and (ez.get("label") or {}).get("without", {}).get("n_attempted") == 8
+          and (ez.get("g2") or {}).get("with", {}).get("dd_median_A") == 0.012,
+          "A: (a) label and (b) G2 numbers reported per group (12 with / 8 without)")
+    check("형제 없는" in E.dec() and "형제 없는" in dev and "auto FT2-p" in dev and "<!-- mltp:" in dev,
+          "A: the decision line and a DEVIATIONS.md note say the gate used 'without sibling' only")
+    check(any(p.endswith("DEVIATIONS.md") for c in E.git.commits for p in c["paths"]), "A: DEVIATIONS.md committed")
+    check(E.state()["params"].get("base") == "AIMNet2", "A: base MLIP AIMNet2")
+    E.run()
+    dev2 = (E.res / "DEVIATIONS.md").read_text()
+    check(dev2.count("auto FT2-p") == 1, "A: DEVIATIONS note written once")
+    E = go("e1b_ez_same", 0.005, 0.004)
+    E.run()
+    st, nums = E.stage("FT2-p"), _ft2p_numbers(E)
+    check(st["status"] == "done" and nums.get("gate_set") == "all" and (nums.get("ez") or {}).get("split") is False
+          and not (E.res / "DEVIATIONS.md").exists(),
+          f"B: 0.005 vs 0.004 (diff 0.001 <= 0.002) -> gate on all reactions, no DEVIATIONS note ({st['status']})")
+    check("관문은 fold 0 시험 전체" in E.dec(), "B: decision line says the gate used all fold-0 test reactions")
+    E = go("e1c_ez_same_fail", 0.020, 0.019)
+    E.run()
+    st = E.stage("FT2-p")
+    check(st["status"] == "halted" and (E.res / "STOP_FT2-p.md").is_file() and _ft2p_numbers(E).get("gate_set") == "all",
+          f"C: within the thresholds and median 0.02 > 0.010 -> HALT on all reactions ({st['status']})")
+    check(not E.calls("finetune.py data FT_1"), "C: FT-d1 (folds 1-4) not started")
+    E = _ft2p_env("e1d_ez_missing", n)
+    E.run()
+    st = E.stage("FT2-p")
+    check(st["status"] == "blocked" and "E/Z" in st["why"] and not E.calls("ts_geom.py"),
+          f"D: no E/Z list -> FT2-p waits, nothing submitted ({st['status']}: {st['why'][:90]})")
+    E = _ft2p_env("e1d2_ez_missing_done", n)
+    for s in PL.STARTS:
+        _geom_rows(E, run, s, [_row(i) for i in range(n)])
+    E.run()
+    st = E.stage("FT2-p")
+    check(st["status"] == "halted" and "ez_groups.py" in (E.res / "STOP_FT2-p.md").read_text(),
+          f"D2: outputs complete but no E/Z list -> decision HALT naming ez_groups.py ({st['status']})")
+    E = go("e1e_ez_split_same", 0.004, 0.004, cls_with={0: "other_saddle", 1: "other_saddle"})
+    for s in PL.STARTS:                                 # both re-measured already, still other saddles
+        _geom_rows(E, run, f"{s}{PL.RECALC_SUFFIX}", [_row(i, "other_saddle") for i in (0, 1)])
+    E.run()
+    st, nums = E.stage("FT2-p"), _ft2p_numbers(E)
+    ez = nums.get("ez") or {}
+    check(not E.calls("--only-failed") and st["status"] == "done" and nums.get("gate_set") == "without_sibling"
+          and abs((ez.get("diff_same") or 0) - (1.0 - 10 / 12)) < 1e-9,
+          f"E: re-measure already complete (no recalc job); same TS 10/12 (with) vs 8/8 -> diff 0.167 > 0.05 -> "
+          f"'without' only ({st['status']}, {nums.get('gate_set')}, {ez.get('diff_same')})")
+
+
+@scenario
+def e2_ft2p_recalc():
+    """[user 11-05 (3)] FT2-p: first-pass failures classified (i) not_converged / (ii) n_imag / (iii) other_saddle per
+    start; after the first pass the failed reactions are run again with `ts_geom.py run ... --recalc 5 --only-failed
+    <out_dir>` -> <start>_recalc5; the gate uses the re-measured record per reaction (fails only if it fails again)."""
+    n, run = 40, "FTpilot_AIMNet2_0"
+    cls = {**{i: "not_converged" for i in range(4)}, **{i: "n_imag" for i in range(4, 7)},
+           **{i: "other_saddle" for i in range(7, 10)}}
+    E = _ft2p_env("e2_recalc", n, ())
+    for s in PL.STARTS:
+        _geom_rows(E, run, s, [_row(i, cls.get(i)) for i in range(n)])
+    E.run()
+    c = E.calls("--only-failed")
+    od = {s: str(E.mlt / "ft2" / run / s) for s in PL.STARTS}
+    check(len(c) == 2 and all("--recalc 5 --only-failed" in x and "--gres=gpu:1" in x and "MLTENV=mlts" in x for x in c)
+          and any(f"{od['label']}_recalc5 @I 1 --recalc 5 --only-failed {od['label']}" in x for x in c)
+          and any(f"{od['g2']}_recalc5 @I 1 --recalc 5 --only-failed {od['g2']}" in x for x in c),
+          f"recalc 5 re-measure submitted for both starts after the first pass ({[x[-160:] for x in c]})")
+    check(E.stage("FT2-p")["status"] in ("queued", "running") and not E.stage("FT2-p").get("decision"),
+          "no decision before the re-measure")
+    check(any("comment=mltp:FT2-p:FTpilot_AIMNet2_0/label_recalc5[0]" in x for x in c), "unit key <run>/<start>_recalc5")
+    for s in PL.STARTS:
+        _geom_rows(E, run, f"{s}{PL.RECALC_SUFFIX}", [_row(i, {0: "not_converged", 4: "n_imag"}.get(i))
+                                                      for i in range(10)])
+    for l in E.live():
+        E.finish(l["id"])
+    E.run()
+    st, nums = E.stage("FT2-p"), _ft2p_numbers(E)
+    fc = (nums.get("fail_classes") or {}).get("label") or {}
+    first, aft = fc.get("first_pass") or {}, fc.get("after_recalc") or {}
+    check(st["status"] == "done", f"re-measure complete -> FT2-p done ({st['status']}: {st['why'][:100]})")
+    check((first.get("not_converged"), first.get("n_imag"), first.get("other_saddle")) == (4, 3, 3)
+          and (aft.get("not_converged"), aft.get("n_imag"), aft.get("other_saddle")) == (1, 1, 0)
+          and fc.get("n_recovered") == 8 and fc.get("n_remeasured") == 10,
+          f"classes first pass 4 / 3 / 3 -> after recalc 5: 1 / 1 / 0, 8 recovered ({first}, {aft})")
+    check(((nums.get("fail_classes") or {}).get("g2") or {}).get("n_failed_after") == 2, "classes per start (g2 too)")
+    check((nums.get("label_first_pass") or {}).get("same_ts_frac") == 33 / 40
+          and (nums.get("label") or {}).get("same_ts_frac") == 39 / 40,
+          "the gate uses the merged records: same TS 0.825 (first pass, would fail) -> 0.975 (passes)")
+    check("recalc 5" in E.dec() and "재측정" in E.dec() and "not_converged" in E.dec(),
+          "the decision line records the classes and the re-measure rule")
+    n_calls = len(E.calls("ts_geom.py"))
+    E.run()
+    check(len(E.calls("ts_geom.py")) == n_calls, "nothing resubmitted after the decision")
+    # the first pass is not final while a first-pass task is in squeue (>= 99.5 % recorded)
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    P.live = {"777_0": {}}
+    st0 = dict(units={f"{run}/label[0]": dict(jobs=[dict(id="777_0")])})
+    d = E.mlt / "ft2" / run / "label"
+    E.wj(d / "summary.json", dict(all=dict(status_counts=dict(ok=399))))
+    check(not PL.first_pass_final(P, st0, d, 400, f"{run}/label") and
+          PL.first_pass_final(P, dict(units={}), d, 400, f"{run}/label") and
+          not PL.first_pass_final(P, dict(units={}), d, 410, f"{run}/label"),
+          "first pass final: 399/400 and no live first-pass task; not with a live task; not below 99.5 %")
+
+
+@scenario
+def e3_ts_geom_rules():
+    """[user 11-05 (3)] ts_geom: fail_class = pipeline.fail_class (records and the geom.csv summarize writes);
+    --only-failed selection + slicing; --recalc parsing (1..30, analytic); summary fail_classes and by_ez_sibling."""
+    import ts_geom as TG
+    d = ROOT / "e3_ts_geom"
+    if d.exists():
+        shutil.rmtree(d)
+    prev = d / "prev"
+    (prev / "recs").mkdir(parents=True)
+    base = dict(model="FTpilot_AIMNet2_0", start="label", dipole="nitrone", fold_T1=0, wall_s=10.0, n_cycles=12,
+                rmsd_heavy=0.01, tight="tight", recalc="analytic:30")
+    cases = [(dict(status="ok", converged=True, n_imag=1, same_ts=True, dd_max=0.004), None),
+             (dict(status="ok", converged=True, n_imag=1, same_ts=True, dd_max=0.030), None),
+             (dict(status="ok", converged=True, n_imag=1, same_ts=True, dd_max=0.031), "other_saddle"),
+             (dict(status="ok", converged=True, n_imag=1, same_ts=False, dd_max=0.01), "other_saddle"),
+             (dict(status="ok", converged=True, n_imag=1, same_ts=None, dd_max=None), "other_saddle"),
+             (dict(status="ok", converged=True, n_imag=2, same_ts=True, dd_max=0.004), "n_imag"),
+             (dict(status="ok", converged=True, n_imag=0, same_ts=True, dd_max=0.004), "n_imag"),
+             (dict(status="ok", converged=True, n_imag=None, same_ts=True, dd_max=0.004), "n_imag"),
+             (dict(status="not_converged", converged=False, n_imag=1, same_ts=True, dd_max=0.004), "not_converged"),
+             (dict(status="orca_error", converged=False, n_imag=None, same_ts=False, dd_max=0.5), "not_converged"),
+             (dict(status="no_start"), None), (dict(status="not_covered"), None)]
+    for k, (r, _c) in enumerate(cases):
+        rec = dict(base, rxn_id=1000000 + k, **r)
+        (prev / "recs" / f"{1000000 + k}.json").write_text(json.dumps(rec))
+    want = {1000000 + k: c for k, (_r, c) in enumerate(cases) if c}
+    got = TG.failed_ids(prev)
+    check(got == want, f"ts_geom.failed_ids on records ({got})")
+    ezp = d / "ez.csv"
+    ezp.write_text("rxn_id,ez_sibling_in_train\n" + "".join(f"{1000000 + k},{k < 4}\n" for k in range(len(cases))))
+    S = TG.summarize(prev, ez_list=ezp)
+    rows = PL.read_geom_csv(prev / "geom.csv")
+    pl = {int(r["rxn_id"]): PL.fail_class(r) for r in rows}
+    check({k: v for k, v in pl.items() if v} == want, f"pipeline.fail_class on the geom.csv summarize wrote ({pl})")
+    fc = S.get("fail_classes") or {}
+    check((fc.get("n_attempted"), fc.get("n_pass"), fc.get("not_converged"), fc.get("n_imag"), fc.get("other_saddle"))
+          == (10, 2, 2, 3, 3), f"summary fail_classes ({fc})")
+    ezt = S.get("by_ez_sibling") or {}
+    check(ezt.get("with", {}).get("n_attempted") == 4 and ezt.get("without", {}).get("n_attempted") == 6
+          and ezt.get("n_listed") == len(cases), f"summary by_ez_sibling with 4 / without 6 attempted ({ezt.keys()})")
+    lst = [1000000 + k for k in range(len(cases))]
+    r0, f0 = TG.select_rxns(lst, 0, 2, str(prev))
+    r1, _f1 = TG.select_rxns(lst, 1, 2, str(prev))
+    fl = [x for x in lst if x in want]
+    check(sorted(r0 + r1) == fl and r0 == fl[0::2] and f0 == want, f"--only-failed: failed subset sliced k % n ({r0}, {r1})")
+    o = TG.parse_run_argv(["run", "FTpilot_AIMNet2_0", "l.csv", "label", "out", "@I", "3", "--recalc", "5",
+                           "--only-failed", str(prev)])
+    check(o and o["recalc"] == "analytic:5" and o["only_failed"] == str(prev) and o["n"] == 3 and o["i"] == "@I",
+          f"run argv with --recalc 5 --only-failed ({o})")
+    check(TG.parse_run_argv(["run", "x", "l.csv", "label", "out"])["recalc"] is None, "no --recalc: default (analytic:30)")
+    bad = []
+    for v in ("31", "0", "numeric:5", "x"):
+        try:
+            TG.recalc_spec(v)
+            bad.append(v)
+        except SystemExit:
+            pass
+    check(not bad and TG.recalc_spec("analytic:30") == "analytic:30", f"--recalc outside 1..30 / not analytic -> STOP {bad}")
+
+
+@scenario
+def e4_geom_tasks():
+    """[lead 11-05] ts_geom arrays: n = n_tasks(n_rxn, max(Z wall, 120 s), 14, 4, wall 2 h): f0_test 1,874 reactions
+    with AIMNet2's 4.3 s Z wall -> more than one task per start (3), both starts submitted in one pass."""
+    n = 1874
+    E = _ft2p_env("e4_tasks", n, ())
+    E.wj("Z_report.json", dict(candidates={"AIMNet2": dict(geometry=dict(wall_median_s=4.3))}))
+    E.run()
+    c = E.calls("ts_geom.py run FTpilot_AIMNet2_0")
+    k = PL.n_tasks(n, PL.GEOM_UNIT_MIN_S / 3600.0, 14, 4, wall=PL.GEOM_WALL_H)
+    arr_ = ",".join(str(i) for i in range(k))
+    check(k >= 3 and len(c) == 2 and all(f"--array={arr_}" in x and f"@I {k}" in x for x in c)
+          and not E.calls("--only-failed"),
+          f"f0_test 1,874: {k} tasks per start (formula), label + g2 submitted, no re-measure yet ({[x[:90] for x in c]})")
+    check(PL.n_tasks(400, PL.geom_unit_h(PL.Pass(E.ctx(), dry=True), "AIMNet2"), 14, 4, wall=PL.GEOM_WALL_H) == 1
+          and PL.n_tasks(10000, 300 / 3600, 14, 4, wall=PL.GEOM_WALL_H) == 4, "small lists 1 task, nmax 4")
 
 
 # ================================================================ main

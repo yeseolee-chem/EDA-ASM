@@ -23,6 +23,17 @@
 - 기반 MLIP = AIMNet2로 **조건부 확정**한다(fold 0 FT-2 (a) 통과가 조건).
 - 실패 시 순서(사용자 요청 5): G-4 능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 실패면 STOP.
 
+## FT2-p — fold 0 FT-2 판정 규칙: 실패 분류 · recalc 5 재측정 · E/Z 형제 나눔 (2026-11-05, 사용자 요청 (1)–(3))
+
+FT-2 결과를 보기 전에 정했다(`pipeline.decide_ft2p` docstring, `ts_geom.py` · `ez_groups.py` docstring).
+
+- **반응별 기준과 실패 분류**: 수렴 · 허수 1개(MLIP Hessian −50 cm⁻¹ 아래, 전과 같음) · 같은 TS · |Δd| ≤ 0.030 Å(FT-2 (a) 90 % 기준값)이면 통과. 실패는 (i) 수렴 안 함, (ii) n_imag ≠ 1, (iii) 다른 안장점(수렴 · 허수 1개인데 같은 TS가 아니거나 |Δd| > 0.030 Å)으로 나눠 출발(label · g2)별로 센다.
+- **recalc 5 재측정**: 1차는 `analytic:30`(D1 config_run.yaml `Recalc_Hess 30`과 같은 빈도)이다. 1차에서 실패한 반응은 PES 실패로 보기 전에 같은 출발에서 MLIP Hessian을 5 cycle마다 새로 넣어(`analytic:5`, G2 · G3L식) 다시 잰다(`ts_geom.py run ... --recalc 5 --only-failed <1차 폴더>` → `<출발>_recalc5/`, FT2-p 단계 안). 판정은 반응마다 재측정 기록이 있으면 그것을 쓴다. 즉 recalc 5에서도 실패해야 실패다. 재측정 기록이 없는 실패 반응은 1차 실패 그대로 센다.
+  - 명령서 5절은 한 번의 최적화로 FT-2를 잰다. 실패 반응만 Hessian을 더 자주 바꿔 다시 재는 것은 명령서에 없는 단계다. 이유: 수렴 실패 · 허수 개수 차이 중 일부는 PES가 아니라 30 cycle 동안 낡은 Hessian 때문일 수 있다.
+- **E/Z 형제 나눔**: fold 0 시험 반응 가운데 학습 쪽 D1 core 반응(fold ≠ 0, fold −1 anchor core와 fold 0 검증 core 포함)과 입체를 지운 반응물 쌍은 같고 입체를 지킨 쌍은 다른 것(예: nitrile oxide AppE 시험 ↔ AppZ 검증 core)을 '형제 있음'으로 둔다(`$MLT/pipeline/lists/f0_test_ez.csv`, `ez_groups.py`). 11-05 목록: 1,874반응 중 형제 있음 77(a 75 · b 2), 없음 1,797(a 1,716 · b 51 · 짝 없음 31). 형제는 모두 `nitrile oxide/AppZ`(fold 2, fold 0 검증 core)다. 입체까지 같은 쌍은 학습 쪽에 0, InChI 확인 1,874/1,874 일치.
+  - FT-2 (a)(라벨 출발) · (b)(G2 출발)를 두 무리로 따로 보고한다. **기준**: 라벨 출발 두 무리의 같은 TS 비율 차 > 0.05 **또는** |Δd| 중앙값 차 > 0.002 Å이면 fold 0 FT-2 (a) 관문은 '형제 없음' 무리만으로 판정한다. 그때 판정 줄과 이 파일 아래(auto 줄)에 적는다. 기준 안이면 fold 0 시험 전체로 판정한다(명령서대로).
+- **누수 재검사 (요청 (1))**: `verify_data.py leak`가 두 기준(입체 제거 · 입체 유지)을 a_rxn과 참조 b_rxn으로 나눠 보고한다(`part_leak.json` `by_role`). 재분할(mlts-ft-6) 뒤 1063008: 반응 쌍 겹침 a — 입체 제거 학습 0 · 검증 1,277구조(75반응), 입체 유지 0 · 0; b — 입체 제거 학습 0 · 검증 33구조(2반응), 입체 유지 0 · 0. 검증 겹침은 위 형제 77반응과 같다.
+
 ## FT — fold 1–4 순서 (2026-11-05, 사용자 요청 2)
 
 - fold 1–4 학습은 fold 0 FT-2 (a)(라벨 TS 출발)가 통과한 뒤 시작한다. 이에 따라 앞서 낸 미리 돌리기(FT-spec) 8개를 취소했다.
