@@ -219,3 +219,12 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - FT-r2 · FT2-r2 job은 없었다.
     - FT-r2의 자료 단계 mltp_FT-d2 1063748(launcher가 20:3x에 냄, 23분 실행)을 취소했다. 쓰다 만 _al 분할 파일이 남았을 수 있다.
   - ftall_now_s0–2(1063416–18, FT_all_s0–2, 옛 설정: 상한 200k · fw 0.2)를 취소했다(사용자 21:0x "취소 (권장)", cancel job 1063789). FT_all_full이 대신한다.
+- **A″ 삭제 (11-05 21:04, 사용자 "a''에 관련된 것들 모두 삭제해서 용량 확보")**:
+  - scratch: `$MLT/app_pilot`(120 MB, 353개 파일)와 로그 3개를 지웠다(delete job 1063791). `$MLT/app`(launcher A″ 갈래)는 원래 없었다.
+  - 저장소: app_pilot.py · jobs/app_pilot.slurm · results/app_pilot/를 git rm했다. 내용은 git 기록에 남는다.
+  - 확보한 용량은 120 MB뿐이다(시범 job이 계산 중간 파일을 그때그때 지웠음).
+- **디스크 조사 (du job 1063794, 21:05)**:
+  - MLTS scratch는 모두 약 29 GB다(ft 17.0 · dft 10.9 · tmp 0.8 GB). 홈은 70 GB다.
+  - 앞서 lead가 말한 "분할 3개 약 40 GB"는 틀렸다. extxyz 분할 하나는 약 0.9 GB다.
+  - 지울 후보: MACE 벤치 · 시범 학습 폴더 BENCH_MACE-* · FTpilot_MACE-OMOL-0_*(7.2 GB), 옛 extxyz 분할 ft/data(8.9 GB), `$MLT/tmp` · `*.stale_*`(1 GB).
+  - **사용자 결정 21:1x "다 만들어진 후 지우기"**: 전체 데이터 새 저장소와 첫 학습용 인덱스가 다 만들어진 뒤(자료 job 정상 종료 확인) 이 후보들을 지운다. 매시 점검이 그때 삭제 job을 낸다.
