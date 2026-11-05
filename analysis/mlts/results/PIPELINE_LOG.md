@@ -42,3 +42,5 @@
 - 2026-11-05T17:53 p84 j1063517 | FT2-p done | FT2-p HALT: FT-2 (a) 라벨 TS 출발(관문 fold 4 시험 f4_test — 사용자 11-05 15:5x '바꿔줘'로 fold 0에서 바꿈(FT-2 수치를 보기 전, fold 4 모델이 먼저 학습 끝); recalc 5 재측정 반영): AIMNet2 같은 TS 0.113 · |Δd| 중앙값 0.0446 Å · RMSD 0.1267 Å (2195반응), E+F 9.3 ms. 실패 분류 — label: 1차 실패 1970(not_converged 58 · n_imag 11 · other_saddle 1901) → re
 - 2026-11-05T17:53 p84 j1063517 | commit 94e4cf82: FT2-p halted | push origin mlts ok
 - 2026-11-05T18:03 p85 j1063528 | FT2-p RESOLVE accept 사용자 11-05 17:0x (1) — FT-2 (a) fold 4 실패를 기록하고 FT-d1 → FT-r1 → G4 → FT-d2 → FT-r2 → FT2-r2(능동학습 뒤 재측정)로 진행 | FT-d1: blocked -> ready | FT2-r1: blocked -> ready
+- 2026-11-05T18:03 p85 j1063528 | commit 908388a1: FT2-p resolve accept | push origin mlts ok | FT-d1 submit 1063541 data crit | FT2-r1 submit 1063542[0,1,2] FTpilot_AIMNet2_0/g2 filler
+- 2026-11-05T18:13 p86 j1063540 | FT-d1 done | FT-r1 done | FT2-r1: queued -> ready | G4: blocked -> ready
