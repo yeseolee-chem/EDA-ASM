@@ -203,3 +203,14 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - 허수 1개 18/18.
   - 비용 어림: 반응당 약 6 코어시간 × 9,266 ≈ 5.6만 코어시간이다. 계정 상한 640코어를 다 써도 약 3.6일이 걸린다.
 - **auto G4 (11-05 20:34, pipeline)**: G-4 능동학습 끝: G 전체 실측 7,637 core-h ≤ 8,000 (G_report.json 3,292, G_report_d0.json 4,236, G4_report.json 108). <!-- mltp:77bfc611c2 -->
+- **사용자 통합 지시 (11-05 20:5x; 18:0x 이후의 모든 지시를 대체)**:
+  - 0. 방침과 정리:
+    - 배포 경로에 DFT를 쓰지 않는다(HF까지만 허용).
+    - **A″는 라벨 수준 DFT OptTS라 배포 목표와 맞지 않아 폐기한다. 시범 결과는 라벨 출발이라 판정에 쓰지 않는다.** app_pilot 1063580을 취소했고(cancel job 1063783), A″ 본 실행은 준비한 것이 없다.
+    - 18:0x의 결정 규칙(MLIP 단독 대 A″)과 20:2x의 비용 기준 변경은 폐기한다.
+    - FT-r2 · FT2-r2는 취소하고 FT_k_full로 대신한다. 아직 제출 전이어서, FT-d2와 함께 mltp_FT-r2 · mltp_FT2-r2 · mltp_FT-d2 이름의 job이 있으면 취소하도록 했다.
+    - FT-abl은 끝나는 대로 결과만 쓴다. launcher가 멈췄으므로 같은 사전 규칙으로 lead가 판정한다.
+    - G-4는 20:34에 끝났다(G4_report 108 core-h). 그 구조를 전체 데이터 학습에 넣는다.
+    - **launcher 자동 제출 중단**: `$MLT/PIPELINE_PAUSE` = `exit`(다음 launcher job은 pass도 후속 job도 없이 끝난다). 이후 작업은 손 sbatch(배열)로 내고, launcher 코드 수정 · 시뮬레이터 시험 · 새 탐색 job은 만들지 않는다.
+  - 1–5는 지시 원문대로 한다(전체 데이터 MLIP FT_all_full · FT_k_full · LODO_full, EMA · 힘 MAE 기준, G2 출발 MLIP TS = 배포 TS, X182 · 토큰 · HF EDA, H-1 · C-6 각 1회, C1 · C2, E 판정, 학습 보고, job 집계 1회).
+  - 구현: workflow wf_304e7fc1-c29가 학습 코드를 만들고, 독립 검토 2개를 거쳐 고친 뒤 제출한다. 수동 실행 스크립트 준비, H-1 · C-6 각 1회, sacct 집계도 같은 workflow에서 한다. 결과와 job id는 다음 기록에 적는다.
