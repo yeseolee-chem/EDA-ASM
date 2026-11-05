@@ -123,8 +123,15 @@ RECALC_K = 5                    # re-measure of the failed reactions: ts_geom --
 RECALC_SUFFIX = f"_recalc{RECALC_K}"   # never less frequent than D1 config_run.yaml Recalc_Hess 30) -> <start>_recalc5/
 RECALC_WALL_X = 2.0             # wall per re-measured reaction ~ 2 x the Z wall (more Hessians, harder reactions)
 EZ_SAME_DIFF, EZ_DD_DIFF_A = 0.05, 0.002    # E/Z rule: 'with' vs 'without sibling' differ by > 0.05 same-TS fraction OR
-EZ_LIST_NAME = "f0_test_ez"                 # > 0.002 A median |dd| (label start) -> gate on 'without' only
+                                            # > 0.002 A median |dd| (label start) -> gate on 'without' only
 EZ_LIST_TMPL = "f{k}_test_ez"               # fold k (FT2-r2: k = 0..4, made by ez_groups.py run --folds 0,1,2,3,4)
+GATE_FOLD = 4                               # FT2-p gate fold: user 11-05 15:5x "바꿔줘" (fold 0 -> 4, before any FT-2
+                                            # number was seen): FTpilot_<c>_4 trained first, FT-p (fold 0) still trains
+GATE_LIST = f"f{GATE_FOLD}_test"            # its test list (2,195 reactions)
+EZ_LIST_NAME = EZ_LIST_TMPL.format(k=GATE_FOLD)   # its E/Z sibling list (f4_test_ez: 0 'with sibling' of 2,195)
+FT2_SPEC_RX = rf"ft2_spec_f{GATE_FOLD}_(?P<s>label|g2)"   # the lead's manual FT-2 arrays of the gate fold (1063318 /
+FT2_SPEC_CAND = "AIMNet2"                   # 1063319, --array=0-1, `ts_geom.py run FTpilot_AIMNet2_4 ... @I 2`): adopted
+F0_REPORT = "FT2_f0_report.json"            # FT2-f0: the fold-0 FT-2 numbers split by f0_test_ez (report only)
 TIE_SAME, TIE_DD = 0.025, 0.002
 GEOM_PARTIAL = 0.995            # coverage accepted after 2 rounds without progress (records missing = pipeline errors)
 Z_TOL = 0.01                    # Z: up to 1 % of the list without a record counts as finished
@@ -947,6 +954,26 @@ def spec_live(P, cand, k):
     return any(j.get("name") == name for j in (getattr(P, "sq", None) or []))
 
 
+def gate_run(c):
+    """the FT2-p gate model of pilot c = FTpilot_<c>_<GATE_FOLD> (fold 4, user 11-05 15:5x). FTpilot_<c>_0 keeps its
+    fold-0 meaning: FT-p trains it, params base_run = FT_0 = r1_run(0), G-4 --models, C-1 (tests.py)."""
+    return f"FTpilot_{c}_{GATE_FOLD}"
+
+
+def gate_trained(P):
+    """every pilot's gate-fold model trained (FT2-p need; FT2-p does not wait for FT-p / fold 0)."""
+    p = pilots(P)
+    return bool(p) and all(train_done(P, gate_run(c)) for c in p)
+
+
+def geom_spec_live(P, k, s):
+    """a manual FT-2 array of fold k / start s (job name ft2_spec_f<k>_<s>: the lead's 1063318 / 1063319) is queued or
+    running. FT2-p adopts it (FT2_SPEC_RX); while it is in squeue the start gets no unit at all (neither its first pass
+    nor its recalc-5 re-measure is submitted beside it)."""
+    name = f"ft2_spec_f{k}_{s}"
+    return any(j.get("name") == name for j in (getattr(P, "sq", None) or []))
+
+
 def z_wall_h(P, cand):
     Z = P.rj("Z_report.json") or {}
     g = ((Z.get("candidates") or {}).get(FT2Z.get(cand, cand)) or {}).get("geometry") or {}
@@ -959,18 +986,20 @@ def geom_unit_h(P, cand):
     return max(z_wall_h(P, cand), GEOM_UNIT_MIN_S / 3600.0)
 
 
-def geom_units(P, st, run, cand, list_name, out_root, akey_prefix=""):
-    """ts_geom array units for both starts of one model (skips a start whose summary covers the list); tasks n =
+def geom_units(P, st, run, cand, list_name, out_root, akey_prefix="", starts=STARTS):
+    """ts_geom array units for the starts of one model (skips a start whose summary covers the list); tasks n =
     n_tasks(n_rxn, max(Z wall, GEOM_UNIT_MIN_S = 180 s), 14 workers, nmax 4, wall GEOM_WALL_H = 2 h) (lead 11-05:
-    f0_test 1,874 -> 4 per start)."""
+    f0_test 1,874 -> 4 per start), fixed at first use; an adopted manual array of this key fixes n to its size instead
+    (adopted_n: ft2_spec_f4_<start> has n = 2), so a retried task keeps the manual `@I n` slicing."""
     nl = n_list(P, list_name)
     out = []
-    for s in STARTS:
+    for s in starts:
         od = out_root / run / s
         if geom_done(P, od, nl):
             continue
         ak = f"{akey_prefix}{run}/{s}"
-        n = fixed_n(P, st, ak, lambda: n_tasks(nl, geom_unit_h(P, cand), 14, 4, wall=GEOM_WALL_H))
+        n = fixed_n(P, st, ak, lambda: adopted_n(st, ak) or n_tasks(nl, geom_unit_h(P, cand), 14, 4,
+                                                                    wall=GEOM_WALL_H))
         out += arr(ak, ["ts_geom.py", "run", run, str(P.c.list_path(list_name)), s, str(od), "@I", str(n)], n,
                    env="mlts", part="GA", c=16, mem=64, gpu=1, disk_gb=0.3)
     return out
@@ -1579,11 +1608,46 @@ def recalc_dir(od):
     return od.parent / f"{od.name}{RECALC_SUFFIX}"
 
 
-def recalc_state(od):
+GEOM_KEEP = ("rxn_id", "status", "converged", "dd_max", "rmsd_heavy", "rmsd_direct", "same_ts", "n_imag", "n_cycles",
+             "wall_s", "dipole", "g1_class", "fold_T1", "start", "model", "recalc", "tight")
+
+
+def geom_rows(od, P=None):
+    """per-reaction rows of a ts_geom out_dir from its atomic records <od>/recs/*.json (authoritative: geom.csv /
+    summary.json are rewritten by whichever task summarizes last, and a manual run's committed ts_geom may split its
+    summary by another fold's E/Z list — never read for the numbers); <od>/geom.csv when there is no recs/ folder
+    (older layouts, simulator). Cached per pass by the recs/ folder mtime."""
+    od = Path(od)
+    rd = od / "recs"
+    try:
+        m = rd.stat().st_mtime
+    except OSError:
+        return read_geom_csv(od / "geom.csv")
+    cache = getattr(P, "_rows", None)
+    if cache is not None and str(rd) in cache and cache[str(rd)][0] == m:
+        return cache[str(rd)][1]
+    rows = []
+    try:
+        names = sorted(n for n in os.listdir(rd) if n.endswith(".json"))
+    except OSError:
+        names = []
+    for n in names:
+        try:
+            r = json.loads((rd / n).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(r, dict) and row_id(r) is not None:
+            rows.append({c: r.get(c) for c in GEOM_KEEP if c in r})
+    if cache is not None:
+        cache[str(rd)] = (m, rows)
+    return rows
+
+
+def recalc_state(od, P=None):
     """(first-pass rxn ids failing the per-reaction criterion, re-measure rows, failed ids without a re-measure row)
-    of a ts_geom out_dir (geom.csv of the first pass and of <out_dir>_recalc5)."""
-    fails = [row_id(r) for r in read_geom_csv(Path(od) / "geom.csv") if fail_class(r)]
-    rows = read_geom_csv(recalc_dir(od) / "geom.csv")
+    of a ts_geom out_dir (records of the first pass and of <out_dir>_recalc5, geom_rows)."""
+    fails = [row_id(r) for r in geom_rows(od, P) if fail_class(r)]
+    rows = geom_rows(recalc_dir(od), P)
     have = {row_id(r) for r in rows}
     return fails, rows, [x for x in fails if x not in have]
 
@@ -1596,23 +1660,24 @@ def akey_live(P, st, akey):
 
 
 def first_pass_final(P, st, od, nl, akey):
-    """the first ts_geom pass of one (run, start) is final: every list reaction recorded, or >= 99.5 % recorded and no
-    first-pass task in squeue (the reactions left raise pipeline errors; Stage.partial)."""
-    if geom_done(P, od, nl):
-        return True
-    return nl > 0 and geom_cov(P, od) >= math.ceil(GEOM_PARTIAL * nl) and not akey_live(P, st, akey)
+    """the first ts_geom pass of one (run, start) is final: no first-pass task of the stage in squeue (adopted manual
+    tasks included, e.g. the gate fold's ft2_spec_f4_<start>), and every list reaction recorded or >= 99.5 % recorded
+    (the reactions left raise pipeline errors; Stage.partial)."""
+    if nl <= 0 or akey_live(P, st, akey):
+        return False
+    return geom_done(P, od, nl) or geom_cov(P, od) >= math.ceil(GEOM_PARTIAL * nl)
 
 
-def recalc_units(P, st, run, cand, list_name, out_root):
+def recalc_units(P, st, run, cand, list_name, out_root, starts=STARTS):
     """user 11-05 (3): after the first pass of a start is final, its reactions that fail the per-reaction criterion are
     run again with a new MLIP Hessian every RECALC_K = 5 cycles (`ts_geom.py run ... --recalc 5 --only-failed
     <out_dir>` -> <out_dir>_recalc5/); a start whose failed reactions all have a re-measure row is skipped."""
     nl, out = n_list(P, list_name), []
-    for s in STARTS:
+    for s in starts:
         od = out_root / run / s
         if not first_pass_final(P, st, od, nl, f"{run}/{s}"):
             continue
-        fails, _rows, miss = recalc_state(od)
+        fails, _rows, miss = recalc_state(od, P)
         if not miss:
             continue
         ak = f"{run}/{s}{RECALC_SUFFIX}"
@@ -1625,21 +1690,29 @@ def recalc_units(P, st, run, cand, list_name, out_root):
 
 
 def units_ft2p(P, S, st):
-    out = []
+    """FT2-p on the gate fold (GATE_FOLD = 4): per pilot c with FTpilot_<c>_4 trained, the first pass of both starts on
+    f4_test and, once a start's first pass is final, its recalc-5 re-measure. A start whose manual array
+    ft2_spec_f4_<start> is in squeue gets no unit (adopted by name; nothing is submitted beside it)."""
+    out, root = [], P.c.mlt / "ft2"
+    starts = [s for s in STARTS if not geom_spec_live(P, GATE_FOLD, s)]
     for c in pilots(P):
-        out += geom_units(P, st, f"FTpilot_{c}_0", c, "f0_test", P.c.mlt / "ft2")
-        out += recalc_units(P, st, f"FTpilot_{c}_0", c, "f0_test", P.c.mlt / "ft2")
+        run = gate_run(c)
+        if not train_done(P, run):
+            continue
+        out += geom_units(P, st, run, c, GATE_LIST, root, starts=starts)
+        out += recalc_units(P, st, run, c, GATE_LIST, root, starts=starts)
     return out
 
 
 def ft2p_dirs(P):
-    return [P.c.mlt / "ft2" / f"FTpilot_{c}_0" / s for c in pilots(P) for s in STARTS]
+    return [P.c.mlt / "ft2" / gate_run(c) / s for c in pilots(P) for s in STARTS]
 
 
 def done_ft2p(P):
-    """first pass complete for both starts of every pilot, and every failed reaction re-measured (recalc 5)."""
-    p, nl = pilots(P), n_list(P, "f0_test")
-    return bool(p) and all(geom_done(P, od, nl) and not recalc_state(od)[2] for od in ft2p_dirs(P))
+    """first pass complete for both starts of every pilot's gate-fold model FTpilot_<c>_4 on f4_test, and every failed
+    reaction re-measured (recalc 5)."""
+    p, nl = pilots(P), n_list(P, GATE_LIST)
+    return bool(p) and all(geom_done(P, od, nl) and not recalc_state(od, P)[2] for od in ft2p_dirs(P))
 
 
 def recalc_partial(P, runs_lists):
@@ -1654,7 +1727,7 @@ def recalc_partial(P, runs_lists):
     rows = []
     for r, _ln in rl:
         for s in STARTS:
-            fails, _r, miss = recalc_state(P.c.mlt / "ft2" / r / s)
+            fails, _r, miss = recalc_state(P.c.mlt / "ft2" / r / s, P)
             rows.append((r, s, len(fails), len(miss)))
     bad = [x for x in rows if x[3] > max(1, x[2] - math.ceil(GEOM_PARTIAL * x[2]))]
     if bad:
@@ -1665,8 +1738,8 @@ def recalc_partial(P, runs_lists):
 
 
 def partial_ft2p(P):
-    """Stage.partial of FT2-p: recalc_partial over FTpilot_<c>_0 x f0_test."""
-    return recalc_partial(P, [(f"FTpilot_{c}_0", "f0_test") for c in pilots(P)])
+    """Stage.partial of FT2-p: recalc_partial over FTpilot_<c>_4 x f4_test (gate fold)."""
+    return recalc_partial(P, [(gate_run(c), GATE_LIST) for c in pilots(P)])
 
 
 def prog_recalc(P, runs):
@@ -1677,7 +1750,7 @@ def prog_recalc(P, runs):
 
 
 def prog_ft2p(P):
-    return prog_recalc(P, [f"FTpilot_{c}_0" for c in pilots(P)])
+    return prog_recalc(P, [gate_run(c) for c in pilots(P)])
 
 
 def pilot_speeds(P, cands):
@@ -1720,8 +1793,8 @@ def ft2p_rows(P, run, s):
     recalc-5 row when the first pass failed and a re-measure row exists, else the first-pass row (user 11-05 (3): a
     reaction fails only if it also fails with recalc 5)."""
     od = P.c.mlt / "ft2" / run / s
-    base = read_geom_csv(od / "geom.csv")
-    rc = {row_id(r): r for r in read_geom_csv(recalc_dir(od) / "geom.csv") if str(r.get("status")) not in NOT_ATTEMPTED}
+    base = geom_rows(od, P)
+    rc = {row_id(r): r for r in geom_rows(recalc_dir(od), P) if str(r.get("status")) not in NOT_ATTEMPTED}
     merged, n_fail, n_re = [], 0, 0
     for r in base:
         if fail_class(r):
@@ -1795,18 +1868,46 @@ FT2P_RULE = ("per-reaction criterion = converged, n_imag == 1 (MLIP modes below 
              f"analytic:{RECALC_K} (ts_geom --recalc {RECALC_K} --only-failed, <start>{RECALC_SUFFIX}/) and the "
              f"re-measured record replaces it, so a reaction fails only if it also fails with recalc {RECALC_K}; E/Z: if "
              f"the label-start 'with sibling' and 'without sibling' groups differ by > {EZ_SAME_DIFF} same-TS fraction "
-             f"or > {EZ_DD_DIFF_A} A median |dd|, the fold-0 FT-2 (a) gate is judged on 'without sibling' only, else on "
-             f"all fold-0 test reactions (user 11-05, fixed before the FT-2 results)")
+             f"or > {EZ_DD_DIFF_A} A median |dd|, the FT-2 (a) gate is judged on 'without sibling' only, else on all "
+             f"test reactions of the gate fold; an empty group never splits (user 11-05, fixed before the FT-2 results); "
+             f"gate fold {GATE_FOLD}: FTpilot_<c>_{GATE_FOLD} on {GATE_LIST} with {EZ_LIST_NAME} (user 11-05 15:5x, "
+             f"changed from fold 0 before any FT-2 number was seen); numbers from the per-reaction records (recs/*.json)")
+
+
+def ez_grp_txt(x):
+    """one E/Z group as decision-line text; an empty group says so."""
+    return ft2_txt(x) if (x or {}).get("n_attempted") else "0반응(무리 비어 있음)"
+
+
+def fold_model_state(P, cand, k):
+    """'학습 끝' / '학습 중' / '없음' of the first-round model FTpilot_<cand>_<k> (fold 0: the FT-p job; folds 1-4: the
+    manual ft_spec_<cand>_<k>)."""
+    if train_done(P, f"FTpilot_{cand}_{k}"):
+        return "학습 끝"
+    if k == 0:
+        S = P.by.get("FT-p") if hasattr(P, "by") else None
+        return "학습 중(FT-p)" if S is not None and P.stage_live(S) else "없음"
+    return "학습 중" if spec_live(P, cand, k) else "없음"
 
 
 def decide_ft2p(P, S, st):
-    """FT2-p (fold 0, round 1): base MLIP + the fold-0 FT-2 (a) gate (user 11-05 (5); HALT on failure). Fold 1-4
+    """FT2-p (round 1): base MLIP + the FT-2 (a) gate on the GATE FOLD = 4 (user 11-05 (5) gate; HALT on failure).
+    Gate fold: the user's 10:4x instruction judged fold 0; at 11-05 15:5x the user changed it to fold 4 ("바꿔줘")
+    before any FT-2 number was seen: FTpilot_<c>_4 (ft_spec_AIMNet2_4) finished training first and its FT-2
+    measurement already runs as the lead's manual arrays ft2_spec_f4_label / ft2_spec_f4_g2 (adopted unit by unit,
+    n = 2), while the fold-0 model FTpilot_<c>_0 (FT-p) still trains. So FT2-p comes after Z-rep + lists and needs
+    FTpilot_<c>_4 trained, not FT-p. The base MLIP is ranked on the gate-fold numbers; the fold-0 meaning of
+    FTpilot_<base>_0 is kept: params base_run = FTpilot_<base>_0 = FT_0 = r1_run(0) (G-4 waits for FT-p and FT-r1),
+    params gate_run = FTpilot_<base>_4. FT2-r1 (report only) measures fold 0 and folds 1-3 (fold 4 is measured here);
+    FT2-f0 (report only) writes the fold-0 numbers split by f0_test_ez once fold 0's first pass is final. The numbers
+    are recomputed from the per-reaction records (geom_rows: recs/*.json), never from a summary.json. Fold 1-4
     order: the user changed it at 11-05 13:0x ("지금미리 시작하고 FT-A 실패하면 그때가서 수정") — the fold 1-4 AIMNet2
     models no longer wait for this gate; they train speculatively now as the manual jobs ft_spec_AIMNet2_1..4 (runs
     FTpilot_AIMNet2_<k>, DECISIONS 'fold 1–4 미리 학습') and r1_run reuses them as FT_<k>. The stages FT-d1 / FT-r1 /
-    FT2-r1 still come after FT2-p, so a HALT here stops them; the HALT names the speculative models and their state and
-    leaves the next step to the user (earlier user sequence: G-4 (fold 0) -> re-measure -> MACE-OMOL-0 lr <= 1e-4 fold
-    0 only -> STOP; the user said to fix it then). Rules fixed before any FT-2 number was seen (user 11-05 (2) / (3)):
+    FT2-r1 / FT2-f0 / G4 still come after FT2-p, so a HALT here stops them (FT-p keeps training fold 0); the HALT names
+    the first-round models and their state and leaves the next step to the user (earlier user sequence: G-4 (fold 0)
+    -> re-measure -> MACE-OMOL-0 lr <= 1e-4 fold 0 only -> STOP; the user said to fix it then). Rules fixed before any
+    FT-2 number was seen (user 11-05 (2) / (3)):
       re-measure — a reaction passes when converged, n_imag == 1 (MLIP-Hessian modes below -50 cm-1, as before), same TS
         and |dd| <= FT2_DD_CUT_A = 0.030 A; first-pass failures are classified (i) not_converged, (ii) n_imag != 1,
         (iii) other_saddle (converged, n_imag == 1, other TS or |dd| > 0.030 A), per start. BEFORE a failure counts
@@ -1814,25 +1915,28 @@ def decide_ft2p(P, S, st):
         first pass uses analytic:30 = the D1 config_run.yaml Recalc_Hess 30; never less frequent), as part of this
         stage (recalc_units, <start>_recalc5/); the gate uses per reaction the re-measured record when it exists, so
         a reaction fails only if it also fails with recalc 5 (a failure without a re-measure record stays a failure).
-      E/Z siblings — $MLT/pipeline/lists/f0_test_ez.csv (ez_groups.py): a fold-0 test reaction is 'with sibling' when
-        a training-side D1 core reaction (fold != 0, incl. the -1 anchor-only cores and the fold-0 validation cores)
-        has the same stereo-free but a different stereo-kept reactant-pair identity. FT-2 (a) (label start) and (b)
-        (G2 start) are reported for 'with' and 'without'. THRESHOLD: if the label-start groups differ by more than
-        EZ_SAME_DIFF = 0.05 in the same-TS fraction OR more than EZ_DD_DIFF_A = 0.002 A in the median |dd|, the
-        fold-0 FT-2 (a) gate is judged on the 'without sibling' group only (the decision line says so and a note is
-        appended to results/DEVIATIONS.md); otherwise on all fold-0 test reactions.
-    The base MLIP is ranked on the merged label-start numbers of all fold-0 test reactions (rank_key_cmp)."""
+      E/Z siblings — $MLT/pipeline/lists/f4_test_ez.csv (ez_groups.py, the gate fold's own list): a fold-4 test
+        reaction is 'with sibling' when a training-side D1 core reaction (fold != 4, incl. the -1 anchor-only cores and
+        the fold-4 validation cores) has the same stereo-free but a different stereo-kept reactant-pair identity. FT-2
+        (a) (label start) and (b) (G2 start) are reported for 'with' and 'without'. THRESHOLD: if the label-start
+        groups differ by more than EZ_SAME_DIFF = 0.05 in the same-TS fraction OR more than EZ_DD_DIFF_A = 0.002 A in
+        the median |dd|, the FT-2 (a) gate is judged on the 'without sibling' group only (the decision line says so and
+        a note is appended to results/DEVIATIONS.md); otherwise on all fold-4 test reactions. An empty group (f4_test_ez
+        lists 0 'with sibling' of 2,195) never splits: no comparison is made and the decision line says which group is
+        empty; the gate uses all fold-4 test reactions.
+    The base MLIP is ranked on the merged label-start numbers of all gate-fold test reactions (rank_key_cmp)."""
     from functools import cmp_to_key
+    k = GATE_FOLD
     speeds, src = pilot_speeds(P, pilots(P))
-    ids0, ez = list_ids(P, "f0_test"), ez_map(P)
+    ids_g, ez = list_ids(P, GATE_LIST), ez_map(P, k)
     data, rows = {}, []
     for c in pilots(P):
-        run = f"FTpilot_{c}_0"
+        run = gate_run(c)
         d = {}
         for s in STARTS:
             base, merged, n_fail, n_re = ft2p_rows(P, run, s)
             have = {row_id(r) for r in base}
-            miss = [x for x in ids0 if x not in have]
+            miss = [x for x in ids_g if x not in have]
             d[s] = dict(base=base, merged=merged, miss=miss, n_fail=n_fail, n_re=n_re, all=pooled(merged, len(miss)),
                         first=pooled(base, len(miss)))
         data[c] = d
@@ -1841,69 +1945,86 @@ def decide_ft2p(P, S, st):
                          n=g.get("n_attempted"), rmsd=g.get("rmsd_median_A")))
     order = sorted(rows, key=cmp_to_key(rank_key_cmp))
     b = order[0]
-    P.state.setdefault("params", {}).update(base=b["cand"], base_run=b["run"])
+    bc, base_run = b["cand"], f"FTpilot_{b['cand']}_0"
+    P.state.setdefault("params", {}).update(base=bc, base_run=base_run, gate_run=b["run"], gate_fold=k)
     desc = "; ".join(f"{r['cand']} 같은 TS {fmt(r['same'])} · |Δd| 중앙값 {fmt(r['dd'], 4)} Å · RMSD {fmt(r['rmsd'], 4)} Å "
                      f"({r['n']}반응), E+F {fmt(r['ef'], 1)} ms" for r in rows)
-    D = data[b["cand"]]
+    D = data[bc]
     a, g2 = D["label"]["all"], D["g2"]["all"]
     cls = {s: fail_summary(D[s]["base"], D[s]["merged"], D[s]["n_fail"], D[s]["n_re"], len(D[s]["miss"]))
            for s in STARTS}
     cls_txt = fail_txt(cls)
     base_nums = dict(rows=rows, label=a, g2=g2, label_first_pass=D["label"]["first"], g2_first_pass=D["g2"]["first"],
                      fail_classes=cls, thresholds=FT2_A, dd_cut_A=FT2_DD_CUT_A, recalc=f"analytic:{RECALC_K}",
-                     speed_source=src, rule=FT2P_RULE)
+                     speed_source=src, rule=FT2P_RULE, gate_fold=k, gate_list=GATE_LIST, ez_list=EZ_LIST_NAME,
+                     gate_run=b["run"], base_run=base_run)
     if not ez:
-        return dict(key=f"base {b['cand']} E/Z list missing", numbers=base_nums,
-                    halt=f"FT2-p 판정에 필요한 E/Z 형제 목록 $MLT/pipeline/lists/{EZ_LIST_NAME}.csv가 없다(사용자 11-05 (2) 규칙)",
-                    options=["`retry` — `ez_groups.py run`(MLTENV=mlts, CPU)으로 목록을 만든 뒤 다시 판정",
+        return dict(key=f"base {bc} E/Z list missing", numbers=base_nums,
+                    halt=f"FT2-p 판정에 필요한 관문 fold {k}의 E/Z 형제 목록 $MLT/pipeline/lists/{EZ_LIST_NAME}.csv가 없다"
+                         f"(사용자 11-05 (2) 규칙)",
+                    options=[f"`retry` — `ez_groups.py run --folds {k}`(MLTENV=mlts, CPU)으로 목록을 만든 뒤 다시 판정",
                              "`accept` — E/Z 나눔 없이 진행 (사용자 승인 필요)"])
     sp = {s: ft2_split(D[s]["merged"], D[s]["miss"], ez) for s in STARTS}
     split, ds, ddd = ez_rule(sp["label"])
+    empty = [g_ for g_ in ("with", "without") if not (sp["label"][g_].get("n_attempted") or 0)]
     gate = sp["label"]["without"] if split else a
-    chk = {k: (gate.get(k) is not None and (gate[k] <= v if not k.startswith("same") else gate[k] >= v))
-           for k, v in FT2_A.items()}
-    m = ft2_txt
-    ez_txt = (f"E/Z 형제 있음 {m(sp['label']['with'])} / 없음 {m(sp['label']['without'])}; G2 TS 출발(b) 있음 "
-              f"{m(sp['g2']['with'])} / 없음 {m(sp['g2']['without'])}")
-    gate_txt = (f"두 무리 차이(같은 TS {fmt(ds)}, |Δd| 중앙값 {fmt(ddd, 4)} Å)가 미리 정한 기준(같은 TS > {EZ_SAME_DIFF} 또는 "
-                f"|Δd| > {EZ_DD_DIFF_A} Å)을 넘어 fold 0 FT-2 (a) 관문은 **E/Z 형제 없는 {gate.get('n_attempted')}반응만**으로 "
-                f"판정한다(DEVIATIONS.md에 적음)" if split else
-                f"두 무리 차이(같은 TS {fmt(ds)}, |Δd| 중앙값 {fmt(ddd, 4)} Å)가 기준(같은 TS > {EZ_SAME_DIFF} 또는 |Δd| > "
-                f"{EZ_DD_DIFF_A} Å) 안이라 관문은 fold 0 시험 전체 {a.get('n_attempted')}반응으로 판정한다")
+    chk = {x: (gate.get(x) is not None and (gate[x] <= v if not x.startswith("same") else gate[x] >= v))
+           for x, v in FT2_A.items()}
+    m, gt = ft2_txt, ez_grp_txt
+    n_with = sum(1 for v in ez.values() if v)
+    ez_txt = (f"E/Z 형제(fold {k} 목록 {EZ_LIST_NAME}) 있음 {gt(sp['label']['with'])} / 없음 {gt(sp['label']['without'])}; "
+              f"G2 TS 출발(b) 있음 {gt(sp['g2']['with'])} / 없음 {gt(sp['g2']['without'])}")
+    if empty:
+        nm = " · ".join("'형제 있음'" if g_ == "with" else "'형제 없음'" for g_ in empty)
+        gate_txt = (f"E/Z {nm} 무리가 비어 있어(fold {k} 목록 {len(ez)}반응 중 형제 있음 {n_with}) 두 무리를 비교하지 않고 "
+                    f"관문은 fold {k} 시험 전체 {a.get('n_attempted')}반응으로 판정한다")
+    elif split:
+        gate_txt = (f"두 무리 차이(같은 TS {fmt(ds)}, |Δd| 중앙값 {fmt(ddd, 4)} Å)가 미리 정한 기준(같은 TS > {EZ_SAME_DIFF} "
+                    f"또는 |Δd| > {EZ_DD_DIFF_A} Å)을 넘어 fold {k} FT-2 (a) 관문은 **E/Z 형제 없는 "
+                    f"{gate.get('n_attempted')}반응만**으로 판정한다(DEVIATIONS.md에 적음)")
+    else:
+        gate_txt = (f"두 무리 차이(같은 TS {fmt(ds)}, |Δd| 중앙값 {fmt(ddd, 4)} Å)가 기준(같은 TS > {EZ_SAME_DIFF} 또는 |Δd| > "
+                    f"{EZ_DD_DIFF_A} Å) 안이라 관문은 fold {k} 시험 전체 {a.get('n_attempted')}반응으로 판정한다")
     rule_txt = (f"규칙(결과 전 고정, 사용자 11-05): 반응별 기준 = 수렴 · 허수 1개(−50 cm⁻¹ 아래) · 같은 TS · |Δd| ≤ "
                 f"{FT2_DD_CUT_A} Å; 1차(analytic:30 = D1 Recalc_Hess 30)에서 실패한 반응은 PES 실패로 보기 전에 같은 출발에서 "
                 f"새 MLIP Hessian {RECALC_K} cycle마다(analytic:{RECALC_K}, G2 · G3L식)로 다시 재고, 반응마다 재측정 결과를 "
                 f"쓴다(recalc {RECALC_K}에서도 실패해야 실패)")
     nums = dict(base_nums, ez=dict(label=sp["label"], g2=sp["g2"], split=split, diff_same=ds, diff_dd_A=ddd,
-                                   thresholds=dict(same_ts_frac=EZ_SAME_DIFF, dd_median_A=EZ_DD_DIFF_A), n_listed=len(ez)),
+                                   empty_groups=empty, thresholds=dict(same_ts_frac=EZ_SAME_DIFF, dd_median_A=EZ_DD_DIFF_A),
+                                   n_listed=len(ez), n_with_listed=n_with),
                 gate_set="without_sibling" if split else "all", gate=gate, pass_=chk)
     ok = all(chk.values())
     if split:
-        P.deviation(S.name, f"fold 0 FT-2 (a) 관문(FT2-p, {b['run']}): {gate_txt}. 명령서 5절 · 사용자 11-05 (5)의 관문은 "
+        P.deviation(S.name, f"fold {k} FT-2 (a) 관문(FT2-p, {b['run']}): {gate_txt}. 명령서 5절 · 사용자 11-05 (5)의 관문은 "
                             f"fold 시험 전체이지만, 사용자 11-05 (2) 규칙(E/Z 형제 무리 차이가 기준을 넘으면 형제 없는 무리만)을 "
                             f"적용했다. 전체 수치(참고): {m(a)}; {ez_txt}. 판정 {'통과' if ok else '실패'}.",
                     key=f"ez:{st.get('epoch')}:{b['run']}")
-    head = (f"FT-2 (a) 라벨 TS 출발(fold 0 시험, recalc {RECALC_K} 재측정 반영): {desc}. 실패 분류 — {cls_txt}. {ez_txt}. "
-            f"{gate_txt}. {rule_txt}")
+    head = (f"FT-2 (a) 라벨 TS 출발(관문 fold {k} 시험 {GATE_LIST} — 사용자 11-05 15:5x '바꿔줘'로 fold 0에서 바꿈(FT-2 수치를 "
+            f"보기 전, fold {k} 모델이 먼저 학습 끝); recalc {RECALC_K} 재측정 반영): {desc}. 실패 분류 — {cls_txt}. "
+            f"{ez_txt}. {gate_txt}. {rule_txt}")
+    others = ", ".join(str(x) for x in range(5) if x != k)
     if not ok:
-        bc = b["cand"]
-        spec = ", ".join(f"fold {k} " + ("학습 끝" if train_done(P, f"FTpilot_{bc}_{k}") else
-                                         "학습 중" if spec_live(P, bc, k) else "없음") for k in range(1, 5))
-        return dict(key=f"base {b['cand']} FT-2(a) fold0 fail", numbers=nums,
-                    halt=f"{head} → FT-2 (a) fold 0 실패({', '.join(k for k, v in chk.items() if not v)}; 판정 무리 "
-                         f"{nums['gate_set']}). fold 1–4 {bc} 모델은 사용자 11-05 13:0x 지시('지금미리 시작하고 FT-A "
-                         f"실패하면 그때가서 수정')로 이 관문을 기다리지 않고 미리 학습한다(손 job ft_spec_{bc}_1–4 → "
-                         f"FTpilot_{bc}_1–4, r1_run이 FT_1–4로 재사용; {spec}). HALT 동안 FT-d1 · FT-r1 · FT2-r1은 시작하지 "
-                         f"않는다. 다음 단계는 사용자가 정한다(사용자: 'FT-A 실패하면 그때가서 수정'; 앞선 사용자 11-05 순서: "
-                         f"G-4 능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 "
-                         f"실패면 STOP)",
-                    options=["`retry` — G-4(fold 0) 능동학습 · FT_0 재학습을 lead가 준비한 뒤 다시 잰다 (사용자 순서 1단계)",
-                             "`param ...` — MACE-OMOL-0 lr ≤ 1e-4 fold 0 재시도 (2단계)", "`accept` — 실패를 기록하고 진행 (사용자 승인 필요)"])
-    return dict(key=f"base {b['cand']}", numbers=nums,
-                line=f"{head} → 통과 → 기반 MLIP = {b['cand']} (규칙: 같은 TS 비율 → 차이 {TIE_SAME} 안이면 |Δd| → "
-                     f"{TIE_DD} Å 안이면 빠른 쪽, '같으면 빠른 쪽'; 속도 출처 {src}). FT_0 = {b['run']} 재사용(같은 fold0 분할, "
-                     f"약 12 GPU-h 절약). 1차 FT_1–FT_4 = 미리 학습한 FTpilot_{b['cand']}_1–4(사용자 11-05 13:0x, "
-                     f"r1_run 재사용); 끝나지도 돌고 있지도 않은 fold만 FT_k를 {b['cand']}로 새로 학습한다.")
+        states = ", ".join(f"fold {x} {fold_model_state(P, bc, x)}" for x in range(5) if x != k)
+        return dict(key=f"base {bc} FT-2(a) fold{k} fail", numbers=nums,
+                    halt=f"{head} → FT-2 (a) fold {k} 실패({', '.join(x for x, v in chk.items() if not v)}; 판정 무리 "
+                         f"{nums['gate_set']}). 1차 모델 상태: {states} (fold 0 = {base_run}, FT-p). fold 1–4 {bc} 모델은 "
+                         f"사용자 11-05 13:0x 지시('지금미리 시작하고 FT-A 실패하면 그때가서 수정')로 이 관문을 기다리지 "
+                         f"않고 미리 학습한다(손 job ft_spec_{bc}_1–4 → FTpilot_{bc}_1–4, r1_run이 FT_1–4로 재사용). HALT "
+                         f"동안 FT-d1 · FT-r1 · FT2-r1 · FT2-f0 · G4는 시작하지 않는다(FT-p의 fold 0 학습은 계속). 다음 "
+                         f"단계는 사용자가 정한다(사용자: 'FT-A 실패하면 그때가서 수정'; 앞선 사용자 11-05 순서: G-4 "
+                         f"능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 "
+                         f"실패면 STOP; 관문 fold는 사용자 15:5x 결정으로 {k})",
+                    options=["`retry` — G-4 능동학습 · 재학습을 lead가 준비한 뒤 다시 잰다 (사용자 순서 1단계)",
+                             "`param ...` — MACE-OMOL-0 lr ≤ 1e-4 재시도 (2단계; 사용자 원문은 fold 0)",
+                             "`accept` — 실패를 기록하고 진행 (사용자 승인 필요)"])
+    f0 = "학습 끝" if train_done(P, base_run) else "FT-p에서 학습 중"
+    return dict(key=f"base {bc}", numbers=nums,
+                line=f"{head} → 통과 → 기반 MLIP = {bc} (규칙: 같은 TS 비율 → 차이 {TIE_SAME} 안이면 |Δd| → {TIE_DD} Å 안이면 "
+                     f"빠른 쪽, '같으면 빠른 쪽'; 속도 출처 {src}). FT_0 = {base_run} 재사용(fold 0 분할, {f0}; G-4는 FT-r1과 "
+                     f"FT-p를 기다림). 1차 FT_1–FT_4 = 미리 학습한 FTpilot_{bc}_1–4(사용자 11-05 13:0x, r1_run 재사용; fold "
+                     f"{k}는 이 관문 모델); 끝나지도 돌고 있지도 않은 fold만 FT_k를 {bc}로 새로 학습한다. FT2-r1(보고용)은 "
+                     f"fold {others}만 재고, fold 0 FT-2를 E/Z(f0_test_ez)로 나눈 수치는 FT2-f0가 fold 0 1차가 끝나면 "
+                     f"results/{F0_REPORT}에 적는다.")
 
 
 def units_ftd1(P, S, st):
@@ -1920,19 +2041,97 @@ def units_ftr1(P, S, st):
     return out
 
 
+def ft2r1_runs(P):
+    """[(k, run)] measured by FT2-r1 (report only, first pass): the first-round model r1_run(k) of every fold (fold 0 =
+    FT_0 = FTpilot_<base>_0), except the gate fold when its model is the FT2-p gate model FTpilot_<base>_4 (FT2-p
+    measured it, first pass + recalc 5)."""
+    b = base_cand(P)
+    return [(k, r1_run(P, k)) for k in range(5) if not (k == GATE_FOLD and b and r1_run(P, k) == gate_run(b))]
+
+
 def units_ft2r1(P, S, st):
     b = base_cand(P)
     out = []
-    for k in range(5):
-        run = r1_run(P, k)
+    for k, run in ft2r1_runs(P):
         if run and train_done(P, run):
             out += geom_units(P, st, run, b, f"f{k}_test", P.c.mlt / "ft2")
     return out
 
 
 def done_ft2r1(P):
-    return all(r1_run(P, k) and geom_done(P, P.c.mlt / "ft2" / r1_run(P, k) / s, n_list(P, f"f{k}_test"))
-               for k in range(5) for s in STARTS)
+    return all(run and geom_done(P, P.c.mlt / "ft2" / run / s, n_list(P, f"f{k}_test"))
+               for k, run in ft2r1_runs(P) for s in STARTS)
+
+
+def gate_ft2f0(P):
+    """FT2-f0 readiness (no jobs): FT_0 = r1_run(0) = FTpilot_<base>_0 has a final FT2-r1 first pass on f0_test for
+    both starts (first_pass_final: every reaction recorded or >= 99.5 %, and no first-pass task in squeue) and
+    f0_test_ez.csv is readable -> 'pass' (decide_ft2f0 writes the report); else 'wait'."""
+    try:
+        run = r1_run(P, 0)
+        if not run:
+            return "wait", "no params base_run yet (FT2-p decides it)", {}
+        nl, st = n_list(P, "f0_test"), P.st("FT2-r1")
+        todo = [s for s in STARTS if not first_pass_final(P, st, P.c.mlt / "ft2" / run / s, nl, f"{run}/{s}")]
+        if todo:
+            return "wait", (f"fold 0 first pass of {run} on f0_test not final ({', '.join(todo)}; FT2-r1 measures it once "
+                            f"FT-p has trained it)"), {}
+        if not ez_map(P, 0):
+            return "wait", f"needs $MLT/pipeline/lists/{EZ_LIST_TMPL.format(k=0)}.csv (ez_groups.py run)", {}
+        return "pass", "", {}
+    except Exception as e:                                                  # noqa: BLE001
+        return "wait", f"gate(): {type(e).__name__}: {e}"[:200], {}
+
+
+def decide_ft2f0(P, S, st):
+    """FT2-f0 (report only, never a gate; user 11-05 12:0x (2), kept after the gate moved to fold 4 at 15:5x): the
+    fold-0 FT-2 numbers of FT_0 = FTpilot_<base>_0 on f0_test, (a) label start and (b) G2 start, for all reactions and
+    split by the fold-0 E/Z sibling list f0_test_ez.csv ('with' / 'without sibling'), with the failure classes and the
+    E/Z rule numbers (would the 0.05 / 0.002 A rule split? recorded only), from the per-reaction records of FT2-r1's
+    first pass (FT2-r1 does not re-measure; recalc-5 records would be merged if they existed) ->
+    results/FT2_f0_report.json (never in dry mode) + one DECISIONS line."""
+    run, ez = r1_run(P, 0), ez_map(P, 0)
+    ids = list_ids(P, "f0_test")
+    per, cls = {}, {}
+    for s in STARTS:
+        base, merged, nf, nr = ft2p_rows(P, run, s)
+        have = {row_id(r) for r in base}
+        miss = [x for x in ids if x not in have]
+        sp = ft2_split(merged, miss, ez)
+        per[s] = dict(all=pooled(merged, len(miss)), first_pass=pooled(base, len(miss)), with_sibling=sp["with"],
+                      without_sibling=sp["without"], n_unlisted=sp["n_unlisted"])
+        cls[s] = fail_summary(base, merged, nf, nr, len(miss))
+    lab, g2 = per["label"], per["g2"]
+    split, ds, ddd = ez_rule({"with": lab["with_sibling"], "without": lab["without_sibling"]})
+    a = lab["all"]
+    chk = {x: (a.get(x) is not None and (a[x] <= v if not x.startswith("same") else a[x] >= v)) for x, v in FT2_A.items()}
+    n_with = sum(1 for v in ez.values() if v)
+    rule = dict(would_split=split, diff_same=ds, diff_dd_A=ddd,
+                thresholds=dict(same_ts_frac=EZ_SAME_DIFF, dd_median_A=EZ_DD_DIFF_A))
+    rep = dict(stage="FT2-f0", written=P.now, writer="pipeline.py (FT2-f0, report only)", run=run, fold=0,
+               list="f0_test", ez_list=EZ_LIST_TMPL.format(k=0), n_listed=len(ez), n_with_listed=n_with,
+               label=lab, g2=g2, fail_classes=cls, ez_rule=rule, ft2_a_thresholds=FT2_A, ft2_a_all_reference=chk,
+               gate_fold=GATE_FOLD,
+               note=(f"report only: the round-1 FT-2 (a) gate is fold {GATE_FOLD} (FT2-p, user 11-05 15:5x); these are "
+                     f"the fold-0 numbers of FT_0 split by the fold-0 E/Z sibling list (user 11-05 12:0x (2)); FT2-r1 is "
+                     f"first pass only (analytic:30, no recalc-5 re-measure); missing records count as attempted "
+                     f"failures"))
+    if P.dry:
+        P.planned.append(f"(dry) would write results/{F0_REPORT}")
+    else:
+        M.write_json(P.c.res / F0_REPORT, rep)
+    gt = ez_grp_txt
+    line = (f"fold 0 FT-2 보고(FT2-f0, 보고용 · 관문 아님 — 1차 관문은 fold {GATE_FOLD}(FT2-p, 사용자 11-05 15:5x); E/Z 나눔은 "
+            f"사용자 12:0x (2)): {run} · f0_test 1차(FT2-r1, recalc 재측정 없음). (a) 라벨 TS 출발 전체 {ft2_txt(a)}; E/Z "
+            f"형제(f0_test_ez, {len(ez)}반응 중 {n_with}) 있음 {gt(lab['with_sibling'])} / 없음 {gt(lab['without_sibling'])}. "
+            f"(b) G2 TS 출발 전체 {ft2_txt(g2['all'])}; 있음 {gt(g2['with_sibling'])} / 없음 {gt(g2['without_sibling'])}. "
+            f"라벨 출발 두 무리 차이(같은 TS {fmt(ds)}, |Δd| 중앙값 {fmt(ddd, 4)} Å)는 12:0x (2) 기준(같은 TS > "
+            f"{EZ_SAME_DIFF} 또는 |Δd| > {EZ_DD_DIFF_A} Å)을 {'넘는다' if split else '넘지 않는다'}(기록만, 판정에 안 씀). "
+            f"실패 분류 — {fail_txt(cls)}. results/{F0_REPORT}.")
+    return dict(key="fold0 report", line=line,
+                numbers=dict(run=run, report=F0_REPORT, ez_rule=rule, n_listed=len(ez), n_with_listed=n_with,
+                             label={x: lab[x] for x in ("all", "with_sibling", "without_sibling")},
+                             g2={x: g2[x] for x in ("all", "with_sibling", "without_sibling")}))
 
 
 def models_r1(P):
@@ -2047,7 +2246,7 @@ def units_ft2r2(P, S, st):
 def done_ft2r2(P):
     """the five E/Z lists present, the first pass complete for both starts of every FT_<k>_al, and every failed
     reaction re-measured (recalc 5)."""
-    return ez_lists_done(P) and all(geom_done(P, od, n_list(P, ln)) and not recalc_state(od)[2]
+    return ez_lists_done(P) and all(geom_done(P, od, n_list(P, ln)) and not recalc_state(od, P)[2]
                                     for run, ln in FT2R2_RUNS for od in (P.c.mlt / "ft2" / run / s for s in STARTS))
 
 
@@ -2824,15 +3023,21 @@ def registry():
                    results=["ft/FTpilot_*_train.json", "ft/FTpilot_*_ft1.json"],
                    summary="finetune train FTpilot_<c>_0 <c> ::: ft1 (MACE G24 96G, AIMNet2 GA 64G)"))
     ft2root, xroot = (lambda P: P.c.mlt / "ft2"), (lambda P: P.c.mlt / "x")
-    S.append(Stage("FT2-p", "FT", 32, units_ft2p, after=["FT-p", "lists"], code=[("ts_geom.py", "run", r"--only-failed")],
-                   need=[(f"the E/Z sibling list $MLT/pipeline/lists/{EZ_LIST_NAME}.csv (ez_groups.py run)",
-                          lambda P: bool(ez_map(P)))],
+    S.append(Stage("FT2-p", "FT", 32, units_ft2p, after=["Z-rep", "lists"], code=[("ts_geom.py", "run", r"--only-failed")],
+                   need=[(f"the gate-fold models FTpilot_<c>_{GATE_FOLD} trained (finetune.py train ::: ft1; FT2-p does not "
+                          f"wait for FT-p / fold 0)", gate_trained),
+                         (f"the E/Z sibling list $MLT/pipeline/lists/{EZ_LIST_NAME}.csv (ez_groups.py run --folds "
+                          f"{GATE_FOLD})", lambda P: bool(ez_map(P, GATE_FOLD)))],
+                   adopt=[(FT2_SPEC_RX, lambda m, i: f"{gate_run(FT2_SPEC_CAND)}/{m.group('s')}[{i}]")],
                    done=done_ft2p, decide=decide_ft2p, partial=partial_ft2p, progress=prog_ft2p,
                    results=["DEVIATIONS.md"],
-                   summary="ts_geom run FTpilot_<c>_0 f0_test label|g2 -> failed reactions again with --recalc 5 "
-                           "--only-failed (<start>_recalc5) -> base MLIP (FT_0 := FTpilot_<base>_0) + fold-0 FT-2 (a) "
-                           "gate on the merged records, E/Z 'with' / 'without sibling' split (> 0.05 same-TS or > "
-                           "0.002 A median |dd| -> 'without' only)"))
+                   summary=f"gate fold {GATE_FOLD} (user 11-05 15:5x '바꿔줘', was fold 0; FTpilot_<c>_{GATE_FOLD} trained "
+                           f"first): ts_geom run FTpilot_<c>_{GATE_FOLD} {GATE_LIST} label|g2 (the lead's arrays "
+                           f"ft2_spec_f{GATE_FOLD}_<start> adopted, n = 2; a start whose array is live gets no unit) -> "
+                           "failed reactions again with --recalc 5 --only-failed (<start>_recalc5) -> base MLIP ranked "
+                           f"on fold {GATE_FOLD} (base_run = FT_0 := FTpilot_<base>_0, fold 0) + the FT-2 (a) gate on the "
+                           f"merged records (recs/*.json), E/Z split by {EZ_LIST_NAME} (> 0.05 same-TS or > 0.002 A "
+                           "median |dd| -> 'without' only; an empty group -> all); after Z-rep + lists, not FT-p"))
     S.append(Stage("FT-d1", "FT", 33, units_ftd1, after=["FT2-p"], code=[("finetune.py", "data")], need=[N_NEED],
                    done=lambda P: all(data_ok(P, f"FT_{k}") for k in range(1, 5)), results=["ft/FT_[1-4]_data.json"],
                    summary="finetune data FT_1 FT_2 FT_3 FT_4"))
@@ -2843,16 +3048,23 @@ def registry():
                    summary="train FT_<k> <base> ::: ft1 FT_<k>, k = 1..4"))
     S.append(Stage("FT2-r1", "FT", 35, units_ft2r1, after=["FT2-p", "lists"], code=[("ts_geom.py", "run")],
                    done=done_ft2r1, filler=True,
-                   partial=geom_partial(geom_dirs(lambda P: [(r1_run(P, k), f"f{k}_test") for k in range(5)], ft2root)),
-                   progress=lambda P: geom_progress(P, [r1_run(P, k) or "_" for k in range(5)], P.c.mlt / "ft2"),
-                   summary="filler: ts_geom on FT_k (round 1), fold k, both starts (report only)"))
-    S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1"],
+                   partial=geom_partial(geom_dirs(lambda P: [(run, f"f{k}_test") for k, run in ft2r1_runs(P)], ft2root)),
+                   progress=lambda P: geom_progress(P, [run or "_" for _k, run in ft2r1_runs(P)], P.c.mlt / "ft2"),
+                   summary="filler: ts_geom on FT_k (round 1), fold k, both starts (report only): fold 0 (FT_0 = "
+                           f"FTpilot_<base>_0) and folds 1-3; fold {GATE_FOLD} skipped (the FT2-p gate model)"))
+    S.append(Stage("FT2-f0", "FT", 36, None, after=["FT2-p"], gate=gate_ft2f0, decide=decide_ft2f0, halt_scope="local",
+                   results=[F0_REPORT],
+                   summary="report only, no jobs: once FT2-r1's fold-0 first pass of FT_0 = FTpilot_<base>_0 on f0_test is "
+                           "final (both starts), the fold-0 FT-2 (a) / (b) numbers split by f0_test_ez.csv (user 12:0x "
+                           f"(2)) -> results/{F0_REPORT} + one DECISIONS line (the gate is fold {GATE_FOLD}, FT2-p)"))
+    S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1", "FT-p"],
                    code=[("g4_al.py", "g4_plan"), ("g4_al.py", "g4_opt"), ("g4_al.py", "run", r"G4"),
                          ("g4_al.py", "collect", r"--g4")],
                    done=done_g4, decide=decide_g4, guard=guard_g4,
                    results=["G4_plan.json", "G4_report.json"],
-                   summary="g4_al g4_plan (1,000 D1 + 500 D0 training-side reactions) -> g4_opt @I n (GPU) -> "
-                           "run G4 @I n -> collect --g4"))
+                   summary="after FT-r1 and FT-p (all five first-round models, FT_0 = FTpilot_<base>_0): g4_al g4_plan "
+                           "(1,000 D1 + 500 D0 training-side reactions) -> g4_opt @I n (GPU) -> run G4 @I n -> collect "
+                           "--g4"))
     S.append(Stage("FT-d2", "FT", 41, units_ftd2, after=["G4"], code=[("finetune.py", "data")], need=[N_NEED],
                    done=done_ftd2, results=["ft/*_al_data.json"], summary="finetune data --all --with-al"))
     S.append(Stage("FT-r2", "FT", 42, units_ftr2, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
@@ -3042,6 +3254,7 @@ class Pass:
         self.events, self.declines, self.planned, self.attn = [], [], [], []
         self.to_commit = []
         self._json, self._mt, self._prog, self._code, self._git = {}, {}, {}, {}, {}
+        self._rows = {}                     # geom_rows cache (ts_geom recs/ folders, per pass)
         self.stop_submit = None
         self.n_sub = 0
         self.locked = False

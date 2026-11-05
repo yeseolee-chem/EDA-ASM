@@ -20,7 +20,7 @@
 
 - `FTpilot_MACE-OMOL-0_0`: 학습률 1e-3, 5,180만 매개변수 전체 미세조정(float32)에서 epoch 0 뒤 검증 손실 NaN(시작 전 검증 힘 MAE 200 meV/Å는 정상) → **설정 실패, 보류**(탈락 아님).
 - 두 후보의 PES 품질은 비교하지 않았다.
-- 기반 MLIP = AIMNet2로 **조건부 확정**한다(fold 0 FT-2 (a) 통과가 조건).
+- 기반 MLIP = AIMNet2로 **조건부 확정**한다(fold 0 FT-2 (a) 통과가 조건; 11-05 15:5x부터 관문은 fold 4, 아래 'FT2-p — 1차 관문 fold 0 → fold 4' 절).
 - 실패 시 순서(사용자 요청 5): G-4 능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 실패면 STOP.
 
 ## FT2-p — fold 0 FT-2 판정 규칙: 실패 분류 · recalc 5 재측정 · E/Z 형제 나눔 (2026-11-05, 사용자 요청 (1)–(3))
@@ -32,6 +32,7 @@ FT-2 결과를 보기 전에 정했다(`pipeline.decide_ft2p` docstring, `ts_geo
   - 명령서 5절은 한 번의 최적화로 FT-2를 잰다. 실패 반응만 Hessian을 더 자주 바꿔 다시 재는 것은 명령서에 없는 단계다. 이유: 수렴 실패 · 허수 개수 차이 중 일부는 PES가 아니라 30 cycle 동안 낡은 Hessian 때문일 수 있다.
 - **E/Z 형제 나눔**: fold 0 시험 반응 가운데 학습 쪽 D1 core 반응(fold ≠ 0, fold −1 anchor core와 fold 0 검증 core 포함)과 입체를 지운 반응물 쌍은 같고 입체를 지킨 쌍은 다른 것(예: nitrile oxide AppE 시험 ↔ AppZ 검증 core)을 '형제 있음'으로 둔다(`$MLT/pipeline/lists/f0_test_ez.csv`, `ez_groups.py`). 11-05 목록: 1,874반응 중 형제 있음 77(a 75 · b 2), 없음 1,797(a 1,716 · b 51 · 짝 없음 31). 형제는 모두 `nitrile oxide/AppZ`(fold 2, fold 0 검증 core)다. 입체까지 같은 쌍은 학습 쪽에 0, InChI 확인 1,874/1,874 일치.
   - FT-2 (a)(라벨 출발) · (b)(G2 출발)를 두 무리로 따로 보고한다. **기준**: 라벨 출발 두 무리의 같은 TS 비율 차 > 0.05 **또는** |Δd| 중앙값 차 > 0.002 Å이면 fold 0 FT-2 (a) 관문은 '형제 없음' 무리만으로 판정한다. 그때 판정 줄과 이 파일 아래(auto 줄)에 적는다. 기준 안이면 fold 0 시험 전체로 판정한다(명령서대로).
+- **바뀜 (11-05 15:5x, 사용자 "바꿔줘")**: 위의 관문 fold는 0이 아니라 **4**다(규칙은 그대로, 아래 'FT2-p — 1차 관문 fold 0 → fold 4' 절).
 - **누수 재검사 (요청 (1))**: `verify_data.py leak`가 두 기준(입체 제거 · 입체 유지)을 a_rxn과 참조 b_rxn으로 나눠 보고한다(`part_leak.json` `by_role`). 재분할(mlts-ft-6) 뒤 1063008: 반응 쌍 겹침 a — 입체 제거 학습 0 · 검증 1,277구조(75반응), 입체 유지 0 · 0; b — 입체 제거 학습 0 · 검증 33구조(2반응), 입체 유지 0 · 0. 검증 겹침은 위 형제 77반응과 같다.
 
 ## FT2-r2 — 2차 FT-2 관문에도 같은 규칙: 실패 분류 · recalc 5 재측정 · E/Z 형제 나눔 (2026-11-05, 사용자 요청 (2) · (3))
@@ -47,6 +48,16 @@ FT-2 결과를 보기 전에 정했다(`pipeline.decide_ft2p` docstring, `ts_geo
 - fold 1–4 학습은 fold 0 FT-2 (a)(라벨 TS 출발)가 통과한 뒤 시작한다. 이에 따라 앞서 낸 미리 돌리기(FT-spec) 8개를 취소했다.
 - 명령서 5절은 2차 미세조정 뒤에만 FT-2 (a) 관문을 두지만, 사용자 결정으로 fold 0 1차에도 관문을 둔다.
 - **바뀜 (11-05 13:0x, 사용자 "지금미리 시작하고 FT-A 실패하면 그때가서 수정")**: 위 첫 줄의 순서를 사용자가 바꿨다. fold 1–4 AIMNet2 1차 미세조정은 관문을 기다리지 않고 손 job `ft_spec_AIMNet2_1–4`(run `FTpilot_AIMNet2_<k>`)로 미리 돌린다. FT2-p가 AIMNet2를 확정하면 `r1_run`이 FT_k로 재사용한다. fold 0 관문(FT2-p)은 그대로 두며, 실패하면 HALT가 이 모델들과 상태(fold마다 학습 끝 / 중 / 없음)를 적고 다음 단계는 사용자가 그때 정한다(`decide_ft2p` docstring · HALT 문구). 실패하면 최대 약 48 GPU-h를 버린다.
+- **바뀜 (11-05 15:5x, 사용자 "바꿔줘")**: 관문 fold를 0에서 4로 옮겼다(아래 절). HALT는 이제 fold 0 모델(FT-p)을 포함한 다른 네 fold 모델의 상태를 적는다.
+
+## FT2-p — 1차 관문 fold 0 → fold 4 (2026-11-05 15:5x, 사용자 "바꿔줘")
+
+- **바뀐 것**: 사용자 10:4x 지시 (2)는 1차 FT-2 (a) 관문을 fold 0 시험(`FTpilot_<c>_0`, f0_test)으로 정했다. 15:5x에 사용자가 관문 fold를 **4**로 바꿨다(`FTpilot_<c>_4`, f4_test 2,195반응, `pipeline.GATE_FOLD`). FT-2 수치를 하나도 보기 전에 바꿨다.
+- **이유**: fold 4 AIMNet2 모델(ft_spec_AIMNet2_4)이 먼저 학습을 끝냈고, 그 FT-2 측정이 이미 손 배열 ft2_spec_f4_label · ft2_spec_f4_g2로 돌고 있다. fold 0 모델(ft_p_AIMNet2)은 아직 학습 중이다. FT2-p는 이제 fold 0 학습(FT-p)을 기다리지 않는다.
+- **그대로인 것**: 반응별 기준 · 실패 분류 · recalc 5 재측정 · E/Z 기준(0.05 / 0.002 Å)은 바꾸지 않고 fold만 바꾼다. 기반 MLIP는 fold 4 수치로 고른다. FT_0은 여전히 `FTpilot_<base>_0`(fold 0)이고, G-4는 fold 0 학습(FT-p)까지 기다린다.
+- **E/Z**: 관문은 fold 4 자기 목록 `f4_test_ez.csv`로 나눈다. 형제 있음이 0/2,195라 무리 하나가 비므로 나누지 않고 fold 4 전체로 판정한다(빈 무리는 나누지 않는다는 규칙; 판정 줄에 적음).
+- **fold 0 수치**: FT2-r1(보고용, 1차만)이 FT_0을 f0_test로 재고, 보고용 단계 FT2-f0가 fold 0 (a) · (b)를 `f0_test_ez.csv`로 나눠 `results/FT2_f0_report.json`과 DECISIONS 한 줄에 적는다(사용자 12:0x (2)). 관문으로 쓰지 않는다. FT2-r1은 fold 4를 다시 재지 않는다.
+- 위 'FT2-p' 절과 'FT — fold 1–4 순서' 절의 "fold 0 관문"은 이 결정으로 "fold 4 관문"이 된다.
 
 ## FT — 감사 결과와 누수 조치 (2026-11-05, 사용자 요청 ①②③, results/AUDIT_REPORT.md)
 

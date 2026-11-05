@@ -35,8 +35,10 @@ summarize: <out_dir>/geom.csv (one row per reaction) and <out_dir>/summary.json 
   percentile |Δd|, median heavy-atom RMSD, same-TS fraction, n_imag == 1 fraction, convergence, cycles, wall, GPU-s;
   for g2 starts also split by the g1 shape class (analysis/d1_g2/results/C_compare.csv same_ts_g1: True = same,
   False = different, blank = none) and by dipole; fail_classes (the counts of the classes above); by_ez_sibling
-  {with, without}: the table split by the E/Z sibling list $MLT/pipeline/lists/f0_test_ez.csv (ez_groups.py; only the
-  records whose rxn_id it lists, i.e. fold-0 test reactions).
+  {with, without}: the table split by the E/Z sibling list that matches the measured list (ez_list_for: `run` on
+  f<k>_test.csv -> f<k>_test_ez.csv beside it, ez_groups.py --folds; `summarize <out_dir>` -> the records' single T1
+  fold k -> $MLT/pipeline/lists/f<k>_test_ez.csv); no matching list (dipole / A-3 / D0 lists, mixed folds) -> no
+  split (2026-11-05: the FT2-p gate fold is 4, so a fixed fold-0 list would split nothing or the wrong fold).
 x_report (spec 12 Phase X, report only; MLTENV=mlts or reactot, CPU): per left-out dipole d the FT-2 table of
   FT_LODO_<d>_al on dipole d's reactions ($MLT/x/FT_LODO_<d>_al/{label,g2}/recs, read only), pass_a = FT-2 (a) on the
   label start, the g2 start split by g1 class, and the in-domain reference (FT_<k>_al fold-k tests, same dipole) ->
@@ -56,6 +58,7 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import shutil
 import sys
 import threading
@@ -81,7 +84,8 @@ DD_CUT_A = 0.030              # per-reaction |Δd| cut of the failure classes (=
 FAIL_CLASSES = ("not_converged", "n_imag", "other_saddle")      # (i) / (ii) / (iii), user 11-05 (3); = pipeline
 NOT_ATTEMPTED = ("no_start", "no_label", "not_covered")
 RECALC_MAX = 30               # D1 config_run.yaml orca_optts_block Recalc_Hess 30: --recalc is never less frequent
-EZ_LIST = C.MLT / "pipeline" / "lists" / "f0_test_ez.csv"       # ez_groups.py (E/Z sibling groups of the fold-0 tests)
+LISTS_DIR = C.MLT / "pipeline" / "lists"          # pipeline.py lists (f<k>_test.csv) + ez_groups.py (f<k>_test_ez.csv)
+EZ_TEST_RX = re.compile(r"^f([0-4])_test\.csv$")   # a fold-k test list -> its E/Z sibling list f<k>_test_ez.csv
 
 
 def _truthy(v):
@@ -178,10 +182,31 @@ def select_rxns(rx, i=None, n=None, only_failed=None):
     return rx, fails
 
 
+def ez_list_for(lst=None, df=None):
+    """the E/Z sibling list that matches the measured list (each fold is split by its own list): a list named
+    f<k>_test.csv -> f<k>_test_ez.csv in the same folder; no list (the `summarize` CLI) -> the records' single T1 fold
+    k (column fold_T1) -> LISTS_DIR/f<k>_test_ez.csv; any other list (dip<d>, a3, D0), mixed folds or a missing file ->
+    None (no by_ez_sibling split)."""
+    p = None
+    if lst:
+        m = EZ_TEST_RX.match(Path(lst).name)
+        p = Path(lst).parent / f"f{m.group(1)}_test_ez.csv" if m else None
+    elif df is not None and not df.empty and "fold_T1" in df:
+        ks = set()
+        for x in df.fold_T1.dropna():
+            try:
+                ks.add(int(float(x)))
+            except (TypeError, ValueError):
+                ks.add(None)
+        k = next(iter(ks)) if len(ks) == 1 else None
+        p = LISTS_DIR / f"f{k}_test_ez.csv" if k is not None and 0 <= k <= 4 else None
+    return p if p is not None and p.is_file() else None
+
+
 def read_ez(path=None):
-    """{rxn_id: True (E/Z sibling on the training side) | False} from the ez_groups.py list; {} if absent."""
-    p = Path(path or EZ_LIST)
-    if not p.is_file():
+    """{rxn_id: True (E/Z sibling on the training side) | False} from an ez_groups.py list; {} if none / absent."""
+    p = Path(path) if path else None
+    if p is None or not p.is_file():
         return {}
     import pandas as pd
     L = pd.read_csv(p, usecols=["rxn_id", "ez_sibling_in_train"], dtype=str, keep_default_na=False)
@@ -468,7 +493,8 @@ def fail_counts(df):
 
 
 def ez_tables(df, ez_list=None):
-    """{'with': table, 'without': table, ...} over the records listed in the E/Z sibling list (None if none are)."""
+    """{'with': table, 'without': table, ...} over the records listed in the E/Z sibling list ez_list (None if no list
+    is given or none of the records is listed)."""
     ez = read_ez(ez_list)
     if not ez or df.empty or "rxn_id" not in df:
         return None
@@ -476,14 +502,17 @@ def ez_tables(df, ez_list=None):
     known = grp.notna()
     if not known.any():
         return None
-    out = dict(ez_list=str(Path(ez_list or EZ_LIST)), n_listed=int(known.sum()), n_unlisted=int((~known).sum()))
+    out = dict(ez_list=str(Path(ez_list)), n_listed=int(known.sum()), n_unlisted=int((~known).sum()))
     for lab, val in (("with", True), ("without", False)):
         sel = known & (grp == val)
         out[lab] = dict(table(df[sel]), fail_classes=fail_counts(df[sel])) if sel.any() else dict(n_attempted=0)
     return out
 
 
-def summarize(out_dir, ez_list=None):
+def summarize(out_dir, ez_list=None, lst=None):
+    """<out_dir>/geom.csv + summary.json from the records; by_ez_sibling uses ez_list, else the E/Z list that matches
+    the measured list lst (ez_list_for; `run` passes its list, the CLI none -> the records' single fold); none -> no
+    split."""
     df = load_records(out_dir)
     if df.empty:
         C.not_ready(f"no records in {out_dir}/recs")
@@ -504,7 +533,7 @@ def summarize(out_dir, ez_list=None):
              recalc=sorted({str(x) for x in df.recalc.dropna()}) if "recalc" in df else None)
     if (df.start == "g2").any():
         S["by_g1_class"] = {c: table(g) for c, g in df.groupby("g1_class")}
-    ezt = ez_tables(df, ez_list)
+    ezt = ez_tables(df, ez_list if ez_list is not None else ez_list_for(lst, df))
     if ezt:
         S["by_ez_sibling"] = ezt
     C.write_json(Path(out_dir) / "summary.json", S)
@@ -892,7 +921,7 @@ def main(argv=None):
         print(json.dumps(dict(run={k: v for k, v in info.items() if k != "spec"}, note="nothing to do in this slice"),
                          default=C._json_default))
         return 0
-    S = summarize(out_dir)
+    S = summarize(out_dir, lst=lst)
     print(json.dumps(dict(run={k: v for k, v in info.items() if k not in ("spec",)}, all=S["all"]), indent=1,
                      default=C._json_default))
     return 3 if info.get("halt") else 0
