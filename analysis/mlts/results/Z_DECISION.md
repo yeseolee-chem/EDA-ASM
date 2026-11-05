@@ -22,6 +22,12 @@
 - 순위(대상만): MACE-OMOL-0, AIMNet2, MACE-MH-1
 - **FT 시범 상위 2개: MACE-OMOL-0, AIMNet2**
 - 사전 예상(미세조정 전 부족) 확인: True
+- **시범 결과 (2026-11-05 추가, 사용자 결정)**:
+  - MACE-OMOL-0는 학습률 1e-3 전체 미세조정에서 1 epoch 뒤 NaN이 됐다 → **"설정 실패, 보류"**(탈락 아님).
+  - 두 후보의 PES 품질은 비교하지 않았다.
+  - 기반 MLIP = **AIMNet2(조건부 확정)**. 조건은 fold 0 FT-2 (a)(라벨 TS 출발) 통과이고, (b)(G2 TS 출발)도 함께 잰다. fold 1–4 학습은 (a) 통과 뒤에 한다.
+  - (a) 실패 시: G-4 능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 실패면 STOP.
+  - 기록: `results/DEVIATIONS.md`.
 - 힘·에너지 지표는 수준이 달라(후보는 ωB97M 계열·기체상, 라벨은 B3LYP-D3BJ/def2-SVP SMD water) 참고값이다.
 
 ## 속도 변형 (dtype / cuEquivariance)

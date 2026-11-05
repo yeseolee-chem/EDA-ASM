@@ -899,7 +899,17 @@ def train_unit(key, run, cand, al=False, deps=()):
 
 
 def pilots(P):
-    return list(P.state.get("params", {}).get("pilots") or [])
+    """Z pilots minus the candidates put on hold ($MLT/pipeline/pilots_held.json {"held": [...]}; user 11-05:
+    MACE-OMOL-0 'setting failure, on hold' — NaN after 1 epoch at lr 1e-3, not a PES-quality verdict)."""
+    held = set((rj_abs(P.c.mlt / "pipeline" / "pilots_held.json") or {}).get("held") or [])
+    return [c for c in (P.state.get("params", {}).get("pilots") or []) if c not in held]
+
+
+def rj_abs(path):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
 
 
 def base_cand(P):
@@ -1546,8 +1556,22 @@ def decide_ft2p(P, S, st):
     P.state.setdefault("params", {}).update(base=b["cand"], base_run=b["run"])
     desc = "; ".join(f"{r['cand']} 같은 TS {fmt(r['same'])} · |Δd| 중앙값 {fmt(r['dd'], 4)} Å · RMSD {fmt(r['rmsd'], 4)} Å "
                      f"({r['n']}반응), E+F {fmt(r['ef'], 1)} ms" for r in rows)
-    return dict(key=f"base {b['cand']}", numbers=dict(rows=rows, speed_source=src),
-                line=f"FT-2(a) 라벨 TS 출발(fold 0 시험): {desc} → 기반 MLIP = {b['cand']} (규칙: 같은 TS 비율 → 차이 "
+    # user 11-05 (5): fold 1-4 start only after FT-2 (a) passes on fold 0 (same thresholds as the round-2 gate)
+    a = geom_all(P, P.c.mlt / "ft2" / b["run"] / "label")
+    g2 = geom_all(P, P.c.mlt / "ft2" / b["run"] / "g2")
+    chk = {k: (a.get(k) is not None and (a[k] <= v if not k.startswith("same") else a[k] >= v)) for k, v in FT2_A.items()}
+    if not all(chk.values()):
+        return dict(key=f"base {b['cand']} FT-2(a) fold0 fail", numbers=dict(rows=rows, label=a, g2=g2, thresholds=FT2_A,
+                                                                           pass_=chk, speed_source=src),
+                    halt=f"FT-2 (a) fold 0 실패({', '.join(k for k, v in chk.items() if not v)}): {desc}. G2 TS 출발 |Δd| "
+                         f"중앙값 {fmt(g2.get('dd_median_A'), 4)} Å, 같은 TS {fmt(g2.get('same_ts_frac'))}. 사용자 11-05 순서: "
+                         f"G-4 능동학습(fold 0) 뒤 재측정 → 그래도 실패면 MACE-OMOL-0 lr ≤ 1e-4로 fold 0만 재시도 → 둘 다 "
+                         f"실패면 STOP",
+                    options=["`retry` — G-4(fold 0) 능동학습 · FT_0 재학습을 lead가 준비한 뒤 다시 잰다 (사용자 순서 1단계)",
+                             "`param ...` — MACE-OMOL-0 lr ≤ 1e-4 fold 0 재시도 (2단계)", "`accept` — 실패를 기록하고 진행 (사용자 승인 필요)"])
+    return dict(key=f"base {b['cand']}", numbers=dict(rows=rows, label=a, g2=g2, thresholds=FT2_A, pass_=chk,
+                                                      speed_source=src),
+                line=f"FT-2(a) 라벨 TS 출발(fold 0 시험): {desc} → 통과 → 기반 MLIP = {b['cand']} (규칙: 같은 TS 비율 → 차이 "
                      f"{TIE_SAME} 안이면 |Δd| → {TIE_DD} Å 안이면 빠른 쪽, '같으면 빠른 쪽'; 속도 출처 {src}). "
                      f"FT_0 = {b['run']} 재사용(같은 fold0 분할, 약 12 GPU-h 절약). 1차 FT_1–FT_4는 {b['cand']}로 학습한다.")
 

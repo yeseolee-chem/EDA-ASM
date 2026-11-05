@@ -263,7 +263,7 @@ def _geom(E, root, run, start, n, dd, cov=None):
     d = E.mlt / root / run / start
     d.mkdir(parents=True, exist_ok=True)
     cov = n if cov is None else cov
-    E.wj(d / "summary.json", dict(all=dict(status_counts=dict(ok=cov), same_ts_frac=1.0, dd_median_A=dd,
+    E.wj(d / "summary.json", dict(all=dict(status_counts=dict(ok=cov), same_ts_frac=1.0, dd_median_A=dd, dd_p90_A=dd,
                                            n_attempted=cov, rmsd_median_A=0.01)))
     rows = "rxn_id,status,dd_max,rmsd_heavy,same_ts,n_imag\n" + "".join(f"{1000000 + i},ok,{dd},0.01,True,1.0\n"
                                                                          for i in range(cov))

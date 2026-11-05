@@ -103,7 +103,9 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import mlt_common as M  # noqa: E402
 
-CODE_VERSION = "mlts-ft-5"          # -5: G-D1-trunc accepted as complete inputs (splits rebuilt so their meta says so)
+CODE_VERSION = "mlts-ft-6"          # -6: FT-leak-trunc (Nurion truncated systems dropped); -5: G-D1-trunc complete inputs
+LEAK_DROP_KINDS = ("nur_truncated", "nur_x_truncated")   # audit 11-05 check 2: truncated systems can equal a held-out
+#   reaction's reactant pair (the tags cannot show it) and 108 of them cannot be identity-checked -> never trained on
                                     # -3: D0-plus / D0-gauss holdout drop (+ siblings) + independent C-2 holdout / G4
                                     #     checks (FT-d0hold); splits rebuilt (no production data built with -3 yet)
                                     # -4: Nurion input (FT-nurion) + per-split size cap with tiers (FT-cap), nur_ TS kinds
@@ -713,6 +715,10 @@ class Pool:
         P = pd.DataFrame(rows)
         del rows
         P = self._filters(P, fmax_cap)
+        trunc = P["kind"].isin(LEAK_DROP_KINDS)                 # decision FT-leak-trunc (audit 11-05 check 2)
+        self.stats["dropped_leak_kinds"] = dict(kinds=list(LEAK_DROP_KINDS), n=int(trunc.sum()))
+        print(f"[data] dropped {int(trunc.sum())} rows of kinds {LEAK_DROP_KINDS} (FT-leak-trunc)", flush=True)
+        P = P[~trunc]
         self._tag_check(P)
         P = P.reset_index(drop=True)
         P["tier"] = tier_of(P)                           # decision FT-cap (G4 duplicates: build_split, *_al only)
