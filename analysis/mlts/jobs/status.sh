@@ -27,7 +27,7 @@ T=$OUT/.latest.tmp$$
   echo "== PIPELINE_LOG tail"
   tail -6 $RES/PIPELINE_LOG.md 2>/dev/null | cut -c1-260
   echo "== FT train progress"
-  for f in $(ls -t $MLT/logs/ft_p_*.out $MLT/logs/ft_spec_AIMNet2_*.out $MLT/logs/mltp_FT-*.out 2>/dev/null | head -6); do
+  for f in $(ls -t $MLT/logs/ft_p_*.out $MLT/logs/ft_spec_AIMNet2_*.out $MLT/logs/ft_abl_*.out $MLT/logs/mltp_FT-*.out 2>/dev/null | head -8); do
     echo "-- $(basename $f): $(grep '\[train\] epoch' $f | tail -1 | cut -c1-170)"; done
   for f in $(ls -t $MLT/logs/ft_spec_data_*.out 2>/dev/null | head -1); do
     echo "-- $(basename $f): $(tail -2 $f | cut -c1-200 | tr '\n' ' ')"; done
