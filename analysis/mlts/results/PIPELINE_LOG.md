@@ -46,3 +46,11 @@
 - 2026-11-05T18:13 p86 j1063540 | FT-d1 done | FT-r1 done | FT2-r1: queued -> ready | G4: blocked -> ready
 - 2026-11-05T18:13 p86 j1063540 | commit 9c465b1e: FT-d1 done (complete); FT-r1 done (complete) | push origin mlts ok | G4 submit 1063559 plan crit | FT2-r1 submit 1063560[3] FTpilot_AIMNet2_0/g2 filler | FT2-r1 submit 1063561[0,1] FTpilot_AIMNet2_1/label filler
 - 2026-11-05T18:23 p87 j1063558 | FT2-r1: queued -> ready | FT2-f0 done | G4: queued -> ready
+- 2026-11-05T18:23 p87 j1063558 | commit b2352fd3: FT2-f0 done (fold0 report) | push origin mlts ok | G4 submit 1063585[0] opt crit | FT2-r1 submit 1063586[2,3] FTpilot_AIMNet2_1/label filler
+- 2026-11-05T18:33 p88 j1063581 | FT2-r1: queued -> ready | G4 submit 1063593[0] run crit | FT2-r1 submit 1063594[0,1] FTpilot_AIMNet2_1/g2 filler
+- 2026-11-05T18:43 p89 j1063592 | FT2-r1: queued -> ready | FT2-r1 submit 1063609[2,3] FTpilot_AIMNet2_1/g2 filler
+- 2026-11-05T18:53 p90 j1063608 | FT2-r1: queued -> ready | G4 submit 1063619 collect crit | FT2-r1 submit 1063620[0,1,2] FTpilot_AIMNet2_2/label filler
+- 2026-11-05T19:03 p91 j1063618 | FT2-r1: queued -> ready | FT2-r1 submit 1063636[0,1,2] FTpilot_AIMNet2_2/g2 filler
+- 2026-11-05T19:13 p92 j1063635 | FT2-r1: queued -> ready | FT2-r1 submit 1063658[0,1,2] FTpilot_AIMNet2_3/label filler
+- 2026-11-05T19:24 p93 j1063657 | FT2-r1: queued -> ready | FT2-r1 submit 1063674[0,1,2] FTpilot_AIMNet2_3/g2 filler
+- 2026-11-05T19:34 p94 j1063673 | FT2-r1 done
