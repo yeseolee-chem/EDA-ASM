@@ -54,3 +54,5 @@
 - 2026-11-05T19:13 p92 j1063635 | FT2-r1: queued -> ready | FT2-r1 submit 1063658[0,1,2] FTpilot_AIMNet2_3/label filler
 - 2026-11-05T19:24 p93 j1063657 | FT2-r1: queued -> ready | FT2-r1 submit 1063674[0,1,2] FTpilot_AIMNet2_3/g2 filler
 - 2026-11-05T19:34 p94 j1063673 | FT2-r1 done
+- 2026-11-05T19:34 p94 j1063673 | commit 816c8bb2: FT2-r1 done (complete) | push origin mlts ok
+- 2026-11-05T20:34 p100 j1063739 | G4 done | FT-d2: blocked -> ready
