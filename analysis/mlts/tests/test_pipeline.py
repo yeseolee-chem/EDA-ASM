@@ -43,7 +43,12 @@ Scenarios (review defect in brackets):
   first-round models); e9 the manual arrays ft2_spec_f4_<start> adopted unit by unit (no double submission, the
   re-measure waits for them, a retried task keeps @I 2); e10 f4_test_ez with an empty 'with' group; e11 FT2-f0: the
   fold-0 FT-2 numbers split by f0_test_ez once FT2-r1's fold-0 first pass is final (FT2-r1 skips fold 4); ts_geom
-  summarize splits by the measured list's own E/Z list (e3)"""
+  summarize splits by the measured list's own E/Z list (e3)
+  FT-abl (user 11-05 17:0x (2)) + FT2-p accept (17:0x (1)): e12 the pre-registered force-weight rule (waits while an
+  ablation's training / FT-2 is live; fw1 / fw5 / baseline by the same-TS gain > 0.02, then |dd|, then the smaller fw;
+  both ablations dead -> baseline; a pending FT-2 whose afterok can never be satisfied is not live); e13 G4 does not
+  wait for FT-abl, FT-r2 / FT-fin wait for it and carry the chosen `finetune.py train` args (not ft1); e14 FT2-p fails
+  -> HALT with base / base_run / gate_run set, FT-abl decides during the HALT, `RESOLVE: accept` -> FT-d1 -> FT-r1 -> G4"""
 from __future__ import annotations
 
 import json
@@ -866,8 +871,8 @@ def s12_contract_units():
                 if d not in {x.key for x in us}:
                     bad.append(f"{S.name}/{u.key}: dep {d} not a unit")
     check(not bad, f"all registry units well formed ({bad[:5]})")
-    check(len(PL.registry()) == 43, f"registry has every spec stage + A4-App / H-App / C2-K / N-scan / D0-eval / "
-                                    f"FT2-f0 ({len(PL.registry())})")
+    check(len(PL.registry()) == 44, f"registry has every spec stage + A4-App / H-App / C2-K / N-scan / D0-eval / "
+                                    f"FT2-f0 / FT-abl ({len(PL.registry())})")
 
 
 @scenario
@@ -2452,6 +2457,250 @@ def e11_f0_ez_report():
     n_dec = E.dec().count("fold 0 FT-2 보고")
     E.run()
     check(E.dec().count("fold 0 FT-2 보고") == n_dec == 1, "the report line is written once")
+
+
+# ================================================================ FT-abl (user 11-05 17:0x (2)) + FT2-p accept (17:0x (1))
+ABL_N = 50
+ABL_JOBS = {"fw1": ("1063376", "1063378"), "fw5": ("1063377", "1063379")}      # the lead's train / FT-2 job ids
+ABL_PARAMS = dict(base="AIMNet2", base_run="FTpilot_AIMNet2_0", pilots=["AIMNet2"], gate_run="FTpilot_AIMNet2_4")
+
+
+def _abl_rows(n, n_same, dd=0.01):
+    """label first-pass rows: reactions 0 .. n_same - 1 the same TS, the rest another TS; every |dd| = dd."""
+    rows = [_row(i, dd=dd) for i in range(n)]
+    for r in rows[n_same:]:
+        r["same_ts"] = False
+    return rows
+
+
+def _abl_env(name, base_same=5, done=None, n=ABL_N):
+    """FT-abl ready: the baseline FTpilot_AIMNet2_4 trained, its label first pass on f4_test recorded (base_same of n
+    the same TS); done = the preset stages (default: every stage except FT-abl)."""
+    E = Env(name)
+    E.preset(done=[x for x in ALL if x != "FT-abl"] if done is None else done, params=dict(ABL_PARAMS))
+    E.lists(n)
+    _ft_done(E, PL.ABL_BASE_RUN)
+    _geom_rows(E, PL.ABL_BASE_RUN, "label", _abl_rows(n, base_same))
+    return E
+
+
+def _abl_jobs(E, tag, train="RUNNING", ft2="PENDING", reason="Dependency"):
+    """the lead's manual ablation jobs: ft_abl_<tag> (train ::: ft1) + ft2_abl_<tag> (--array=0-1, afterok on it)."""
+    jt, jf = ABL_JOBS[tag]
+    E.sl.add(jt, f"ft_abl_{tag}", train, cpus=8, gpus=1, part="gpu3", exit=1 if train == "FAILED" else 0)
+    for i in (0, 1):
+        E.sl.add(f"{jf}_{i}", f"ft2_abl_{tag}", ft2, cpus=16, gpus=1, part="gpu3",
+                 reason=reason if ft2 == "PENDING" else "None", exit=1 if ft2 == "FAILED" else 0)
+
+
+def _abl_result(E, tag, n_same, dd=0.01, n=ABL_N, n_rec=None):
+    """an ablation's finished training + its FT-2 label first-pass rows (n_rec of n recorded)."""
+    run = PL.abl_run(tag)
+    _ft_done(E, run)
+    _geom_rows(E, run, "label", _abl_rows(n, n_same, dd)[:n if n_rec is None else n_rec])
+
+
+def _abl_finish(E, tag):
+    for jid in ABL_JOBS[tag]:
+        E.sl.set(jid, "COMPLETED", 0)
+
+
+def _abl_nums(E):
+    return (E.stage("FT-abl").get("decision") or {}).get("numbers") or {}
+
+
+def _abl_case(name, res, base_same=5):
+    """both ablations finished: res = {tag: (n_same, dd)} -> (env, FT-abl stage, numbers, params)."""
+    E = _abl_env(name, base_same)
+    for t, (k, dd) in res.items():
+        _abl_jobs(E, t, train="COMPLETED", ft2="COMPLETED")
+        _abl_result(E, t, k, dd)
+    E.run()
+    return E, E.stage("FT-abl"), _abl_nums(E), E.state()["params"]
+
+
+@scenario
+def e12_ft_abl_rule():
+    """[user 11-05 17:0x (2)] FT-abl (no jobs) picks the round-2 `finetune.py train` arguments from the lead's fold-4
+    ablations by the rule fixed before any ablation number: (A) waits while an ablation's training or FT-2 is live,
+    then (A2) both beat the baseline and fw5 is higher by > 0.02 -> fw5; (B) fw1 +0.04, fw5 +0.02 (not > 0.02) -> fw1;
+    (B2) both beat it, within 0.02 of each other and within 0.002 A median |dd| -> the smaller fw (fw1); (B3) fw5 lower
+    median |dd| by > 0.002 A -> fw5; (C) gains <= 0.02 -> baseline (no args); (D) both dead (training failed in sacct
+    with its afterok FT-2 still pending; FT-2 ended at 10 / 50 records) -> baseline, the decision says so; (D2) sacct
+    down, the FT-2 pending with DependencyNeverSatisfied is not live -> failed."""
+    E = _abl_env("e12a_abl_live")
+    _abl_jobs(E, "fw1")
+    _abl_jobs(E, "fw5", train="COMPLETED", ft2="RUNNING")
+    _abl_result(E, "fw5", 9, n_rec=20)
+    E.run()
+    st = E.stage("FT-abl")
+    check(st.get("status") == "blocked" and "fw1" in st.get("why", "") and "fw5" in st.get("why", "")
+          and "ft_abl_choice" not in E.state()["params"] and not E.sl.calls and "auto FT-abl" not in E.dec(),
+          f"A: ablation training / FT-2 live -> FT-abl waits, no choice, nothing submitted ({st.get('status')}: "
+          f"{st.get('why', '')[:140]})")
+    _abl_result(E, "fw5", 9)
+    _abl_finish(E, "fw5")
+    E.clock.adv(600)
+    E.run()
+    st = E.stage("FT-abl")
+    check(st.get("status") == "blocked" and "fw1:" in st.get("why", "") and "fw5:" not in st.get("why", "")
+          and "ft_abl_choice" not in E.state()["params"],
+          f"A: fw5 finished, fw1 still training -> still waits ({st.get('why', '')[:100]})")
+    _abl_result(E, "fw1", 7)
+    _abl_finish(E, "fw1")
+    E.clock.adv(600)
+    E.run()
+    p = E.state()["params"]
+    check(E.stage("FT-abl").get("status") == "done" and p.get("ft_abl_choice") == "fw5"
+          and p.get("ft_train_args") == ["--fw", "5.0", "--patience", "50"],
+          f"A2: fw1 0.14 / fw5 0.18 vs baseline 0.10 -> fw5 (higher by > 0.02) ({p.get('ft_abl_choice')}, "
+          f"{p.get('ft_train_args')})")
+    E, st, nums, p = _abl_case("e12b_abl_fw1", {"fw1": (7, 0.01), "fw5": (6, 0.01)})
+    ab = nums.get("ablations") or {}
+    check(st.get("status") == "done" and p.get("ft_abl_choice") == "fw1" and nums.get("choice") == "fw1"
+          and p.get("ft_train_args") == ["--fw", "1.0", "--patience", "50"] and p.get("ft_abl_cand") == "AIMNet2",
+          f"B: fw1 +0.04 > 0.02, fw5 +0.02 (not > 0.02) -> fw1, params ft_train_args ({st.get('status')}: "
+          f"{p.get('ft_abl_choice')}, {p.get('ft_train_args')})")
+    check(abs(((nums.get("baseline") or {}).get("same_ts_frac") or 0) - 0.10) < 1e-9
+          and abs(((ab.get("fw1") or {}).get("same_ts_frac") or 0) - 0.14) < 1e-9
+          and abs(((ab.get("fw5") or {}).get("same_ts_frac") or 0) - 0.12) < 1e-9
+          and (ab.get("fw1") or {}).get("ft1_valid_force_mae_ts_near") == 0.5
+          and (nums.get("baseline") or {}).get("dd_median_A") == 0.01,
+          f"B: numbers per candidate (same TS 0.10 / 0.14 / 0.12, FT-1 valid force MAE) ({sorted(nums)[:8]})")
+    d = E.dec()
+    check("auto FT-abl" in d and "선택 = fw1" in d and "같은 TS 0.100" in d and "같은 TS 0.140" in d
+          and "같은 TS 0.120" in d and "FT-1 검증 힘 MAE" in d and "--fw 1.0 --patience 50" in d and "허수 1개" in d
+          and "90 %" in d and "RMSD" in d,
+          "B: the decision line reports every candidate's same TS, |dd| median / p90, RMSD, n_imag 1, FT-1 and the args")
+    E.run()
+    check(E.dec().count("auto FT-abl") == 1, "B: the decision is written once")
+    _E, _st, _n, p = _abl_case("e12b2_abl_tie_fw", {"fw1": (7, 0.010), "fw5": (8, 0.009)})
+    check(p.get("ft_abl_choice") == "fw1",
+          f"B2: fw1 0.14 / fw5 0.16 (within 0.02), |dd| 0.010 / 0.009 (within 0.002 A) -> the smaller fw "
+          f"({p.get('ft_abl_choice')})")
+    _E, _st, _n, p = _abl_case("e12b3_abl_dd", {"fw1": (7, 0.010), "fw5": (8, 0.005)})
+    check(p.get("ft_abl_choice") == "fw5" and p.get("ft_train_args") == ["--fw", "5.0", "--patience", "50"],
+          f"B3: within 0.02 same TS, fw5 |dd| lower by 0.005 > 0.002 A -> fw5 ({p.get('ft_abl_choice')})")
+    E, st, nums, p = _abl_case("e12c_abl_keep", {"fw1": (6, 0.005), "fw5": (5, 0.005)})
+    check(st.get("status") == "done" and p.get("ft_abl_choice") == "baseline" and p.get("ft_train_args") == []
+          and "기준선 유지" in E.dec() and "선택 = 기준선" in E.dec(),
+          f"C: fw1 +0.02 (not > 0.02), fw5 +0.00 -> baseline kept, no args ({p.get('ft_abl_choice')}, "
+          f"{p.get('ft_train_args')})")
+    E = _abl_env("e12d_abl_dead")
+    _abl_jobs(E, "fw1", train="FAILED", ft2="PENDING", reason="Dependency")
+    _abl_jobs(E, "fw5", train="COMPLETED", ft2="COMPLETED")
+    _abl_result(E, "fw5", 40, n_rec=10)
+    E.run()
+    st, nums, p = E.stage("FT-abl"), _abl_nums(E), E.state()["params"]
+    sts = nums.get("status") or {}
+    check(st.get("status") == "done" and p.get("ft_abl_choice") == "baseline" and p.get("ft_train_args") == []
+          and (sts.get("fw1") or {}).get("state") == "failed" and "without results" in (sts.get("fw1") or {}).get("why", "")
+          and (sts.get("fw5") or {}).get("state") == "failed"
+          and "neither done nor live" in (sts.get("fw5") or {}).get("why", "") and not nums.get("ablations")
+          and "모두 실패" in E.dec(),
+          f"D: fw1 training FAILED (its FT-2 still pending), fw5 FT-2 ended at 10/50 -> both failed -> baseline, the "
+          f"line says so ({st.get('status')}: {sts})")
+    E = _abl_env("e12d2_abl_never")
+    for t in PL.ABL_TAGS:
+        _abl_jobs(E, t, train="FAILED", ft2="PENDING", reason="DependencyNeverSatisfied")
+    E.sl.sacct_fail = True
+    E.run()
+    st, p = E.stage("FT-abl"), E.state()["params"]
+    check(st.get("status") == "done" and p.get("ft_abl_choice") == "baseline",
+          f"D2: sacct down, FT-2 pending with DependencyNeverSatisfied (not live) -> failed -> baseline "
+          f"({st.get('status')}: {st.get('why', '')[:80]})")
+
+
+@scenario
+def e13_ft_abl_ftr2():
+    """[user 11-05 17:0x (2)] (A) G4 does not wait for FT-abl; (B) FT-r2 and FT-fin wait for it, then carry the chosen
+    arguments on `finetune.py train` (not on ft1) and the FT-r2 start line records them; the arguments apply only when
+    the base candidate is the ablated one (AIMNet2)."""
+    E = _abl_env("e13a_g4_no_wait", done=[x for x in ALL[:ALL.index("G4")] if x != "FT-abl"])
+    for t in PL.ABL_TAGS:
+        _abl_jobs(E, t)
+    E.run()
+    check(len(E.calls("g4_al.py g4_plan")) == 1 and E.stage("FT-abl").get("status") == "blocked",
+          f"A: G4 plans while FT-abl waits for the ablations ({E.stage('G4').get('status')}: "
+          f"{E.stage('G4').get('why', '')[:60]}; FT-abl {E.stage('FT-abl').get('status')})")
+    E = _abl_env("e13b_ftr2_waits", done=[x for x in ALL[:ALL.index("FT-d2") + 1] if x != "FT-abl"])
+    for t in PL.ABL_TAGS:
+        _abl_jobs(E, t)
+    E.run()
+    r2, fin = E.stage("FT-r2"), E.stage("FT-fin")
+    check(not E.calls("finetune.py train") and r2.get("status") == "blocked" and "FT-abl" in r2.get("why", "")
+          and fin.get("status") == "blocked" and "FT-abl" in fin.get("why", ""),
+          f"B: FT-d2 done, ablations live -> FT-r2 / FT-fin wait for FT-abl ({r2.get('status')}: {r2.get('why', '')[:60]}; "
+          f"{fin.get('status')}: {fin.get('why', '')[:60]})")
+    _abl_result(E, "fw1", 7)
+    _abl_result(E, "fw5", 5)
+    for t in PL.ABL_TAGS:
+        _abl_finish(E, t)
+    E.clock.adv(600)
+    E.run()
+    c = E.calls("finetune.py train FT_")
+    r2c = [x for x in c if any(f"finetune.py train FT_{k} " in x for k in range(5))]
+    finc = [x for x in c if "train FT_all_s" in x or "train FT_LODO_" in x]
+    check(E.stage("FT-abl").get("status") == "done" and len(r2c) == 5
+          and all(f"finetune.py train FT_{k} AIMNet2 --with-al --fw 1.0 --patience 50 ::: finetune.py ft1 FT_{k} --with-al"
+                  in " | ".join(r2c) for k in range(5)) and all(x.endswith("--with-al") for x in r2c),
+          f"B: FT-abl chose fw1 -> FT_0-4_al train carry --fw 1.0 --patience 50, ft1 none ({[x[-110:] for x in r2c]})")
+    check(finc and all("AIMNet2 --with-al --fw 1.0 --patience 50 ::: finetune.py ft1 " in x for x in finc),
+          f"B: FT-fin (filler) trains with the same arguments ({[x[-100:] for x in finc]})")
+    check("FT_0–4_al 학습 인자" in E.dec() and "fw1" in E.dec(), "B: FT-r2's start line records the FT-abl arguments")
+    P = PL.Pass(E.ctx(), dry=True)
+    P.state = E.state()
+    a1 = PL.ft_args(P)
+    P.state["params"]["base"] = "MACE-OMOL-0"
+    check(a1 == ["--fw", "1.0", "--patience", "50"] and PL.ft_args(P) == [],
+          f"B: the arguments apply only when the base is the ablated AIMNet2 ({a1}, {PL.ft_args(P)})")
+
+
+@scenario
+def e14_ft2p_accept():
+    """[user 11-05 17:0x (1)] FT2-p fails the fold-4 FT-2 (a) gate -> HALT with params base / base_run / gate_run set on
+    the fail branch; FT-abl still decides during the HALT; `RESOLVE: accept` -> FT2-p done -> FT-d1 -> FT-r1 (FT_1-3 with
+    the base; fold 4 = the trained gate model) -> G4 (the five first-round models) proceed."""
+    n = 20
+    run = PL.gate_run("AIMNet2")
+    E = _ft2p_env("e14_ft2p_accept", n, ())
+    for s in PL.STARTS:
+        _geom_rows(E, run, s, [_row(i, dd=0.02) for i in range(n)])
+    E.run()
+    st, p = E.stage("FT2-p"), E.state()["params"]
+    check(st.get("status") == "halted" and p.get("base") == "AIMNet2" and p.get("base_run") == "FTpilot_AIMNet2_0"
+          and p.get("gate_run") == run and p.get("gate_fold") == 4 and not E.calls("finetune.py data FT_1"),
+          f"FT-2 (a) fails -> HALT, params base / base_run / gate_run set on the fail branch ({st.get('status')}, {p})")
+    check(E.stage("FT-abl").get("status") == "done" and p.get("ft_abl_choice") == "baseline",
+          f"FT-abl decides during the FT2-p HALT (no ablation jobs here -> baseline) ({E.stage('FT-abl').get('status')})")
+    f = E.res / "STOP_FT2-p.md"
+    f.write_text("RESOLVE: accept 사용자 11-05 17:0x (1) — FT-2 (a) fold 4 실패를 기록하고 G-4 → FT-r2 → FT2-r2로 진행\n"
+                 + f.read_text())
+    E.run()
+    S = E.state()
+    check(S["stages"]["FT2-p"]["status"] == "done" and not S["halted"] and (E.res / "STOP_FT2-p.resolved.md").is_file()
+          and len(E.calls("finetune.py data FT_1 FT_2 FT_3 FT_4")) == 1 and "RESOLVE: accept" in E.dec(),
+          f"RESOLVE accept -> FT2-p done, HALT cleared, FT-d1 submitted ({S['stages']['FT2-p']['status']}, "
+          f"{S['halted']})")
+    for k in range(1, 5):
+        E.wj(E.res / "ft" / f"FT_{k}_data.json", dict(fingerprint="fp", inputs_complete=True, leakage_C2=dict(pass_=True)))
+    E.finish(E.job_of("FT-d1", "data"))
+    E.run()
+    c = " | ".join(E.calls("finetune.py train FT_"))
+    check(E.stage("FT-d1").get("status") == "done"
+          and all(f"finetune.py train FT_{k} AIMNet2 ::: finetune.py ft1 FT_{k}" in c for k in range(1, 4))
+          and "train FT_4 " not in c,
+          f"FT-d1 done -> FT-r1 trains FT_1-3 with the base AIMNet2; fold 4 reuses the trained gate model "
+          f"FTpilot_AIMNet2_4 (r1_run) ({c[-160:]})")
+    for k in range(1, 4):
+        _ft_done(E, f"FT_{k}")
+    for l in E.live("mltp_FT-r1"):
+        E.finish(l["id"])
+    E.run()
+    g4 = E.calls("g4_plan")
+    check(E.stage("FT-r1").get("status") == "done" and len(g4) == 1
+          and "--models FTpilot_AIMNet2_0,FT_1,FT_2,FT_3,FTpilot_AIMNet2_4" in g4[0],
+          f"FT-r1 done -> G4 plans with the five first-round models ({[x[-90:] for x in g4]})")
 
 
 # ================================================================ main

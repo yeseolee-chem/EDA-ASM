@@ -46,8 +46,8 @@ Each run: stop if `$MLT/PIPELINE_PAUSE` is `exit` or `results/STOP_S.md` exists 
 ## HALT 풀기 / clear a HALT
 
 추천안이 정해진 분기(G-D0 사용자 선택 200 + 100의 예산 확인, Z 후보 1개, LODO는 능동학습 자료 포함, A-3 0.70–0.85,
-A″ arm 입력 실패 시 arm 제외, P-3 실행, A-3 목록 분할)는 자동으로 진행하고 DECISIONS에 적는다. 보고만 하는 단계(N-scan,
-D0-eval, X-rep, FT2-f0와 filler)의 HALT는 그 단계에 의존하는 단계만 멈춘다. 추천안이 없는 STOP(FT-2 2차 실패, A-3 < 0.70
+A″ arm 입력 실패 시 arm 제외, P-3 실행, A-3 목록 분할, FT-abl 힘 가중치 선택)는 자동으로 진행하고 DECISIONS에 적는다.
+보고만 하는 단계(N-scan, D0-eval, X-rep, FT2-f0, FT-abl와 filler)의 HALT는 그 단계에 의존하는 단계만 멈춘다. 추천안이 없는 STOP(FT-2 2차 실패, A-3 < 0.70
 또는 예산 안 엔진 없음, G 예산 초과, H-2 > 2 %, C-2 · C2-K · C-1 실패, E 등록 변경, A-4 디스크 부족, exit 3)과 운영 실패
 (재시도 소진)는 **HALT**: `results/STOP_<단계>.md`(조건 · 수치 · 선택지 · 추천)를 쓰고 그 단계와 의존 단계를 멈춘다.
 - 범위: 보통 단계의 HALT 동안에는 새 단계도 시작하지 않는다(이미 시작한 독립 단계는 계속). 보고용 filler 단계
@@ -65,6 +65,11 @@ D0-eval, X-rep, FT2-f0와 filler)의 HALT는 그 단계에 의존하는 단계�
 | `RESOLVE: param <k>=<v>` | 이 단계 매개변수를 바꾸고 다시 낸다 |
 | `RESOLVE: param <단계>.<k>=<v>` | 다른 단계(예: `G-D0f.n_g2=150`) 매개변수를 바꿔 그 단계를 다시 내고, 이 STOP은 통과 |
 
+- **FT2-p 실패 (사용자 11-05 17:0x (1))**: FT-2 (a) fold 4 실패 HALT는 lead가 `results/STOP_FT2-p.md` 첫 줄에
+  `RESOLVE: accept <이유>`를 써서 푼다. `decide_ft2p`는 통과 · 실패 어느 쪽에서도 판정 전에 params `base` · `base_run` ·
+  `gate_run` · `gate_fold`를 적으므로, accept 뒤 FT-d1 → FT-r1(FT_k를 기반 후보로) → G4 → FT-d2 → FT-r2 → FT2-r2(능동학습 뒤
+  재측정)가 이어진다. FT-r1 · G4는 params `base` · `base_run`이 없으면 기다린다(need; 판정 규칙 오류로 HALT한 뒤 accept한 경우).
+
 ## 손으로 낸 job / manual jobs
 
 실행기는 squeue와 (pass마다) sacct에서 등록부의 이름(`g_run1`, `g_run1rev`, `g_run3`, `g_run2`, `g_collect`, `z_omol`,
@@ -74,6 +79,8 @@ comment `mltp:nur:<tar>:manual`도), `ft2_spec_f4_label|g2`(FT2-p, 배열 원소
 `@I n`; squeue에 있는 동안 그 출발은 1차 · 재측정 모두 내지 않음); 그 밖의 `g_*d0*`(`g_run_d0g1rev`, `g_run_d0g1shuf1-3` 등 보조
 task)는 G-D0의 새 제출을 막기만 함)을 자기 작업으로 받아들인다. 그 밖의 손 제출은 `--comment=mltp:<단계>:<작업>:manual`을 붙이면 같은 작업으로
 받아들이고 중복 제출하지 않는다.
+- lead의 fold 4 힘 가중치 ablation `ft_abl_fw1|fw5`(학습 ::: ft1) · `ft2_abl_fw1|fw5`(afterok, label 1차 `@I 2`)는 넘겨받지
+  않는다. FT-abl이 squeue · sacct에서 이름으로 읽기만 한다(도는지, 결과 없이 끝났는지).
 - D1 G-2(1061710)는 사용자가 317/400에서 취소했다(결정 'Nurion'): G-D1은 G1 · G3가 빠짐없고 G-2가 317단위 이상이면 끝난 것으로
   보고(`G_report` complete=false여도) G-2를 다시 내지 않는다.
 - Nurion: FT 자료 단계(FT-dp, FT-d1, FT-d2)는 `results/N_report.json` complete(결과 tar 23개 모두)가 되거나, lead가
@@ -121,7 +128,9 @@ env: R = reactot, M = mlts, D = d1 (스크립트가 필요하면 스스로 다�
 | FT2-p | **관문 fold 4**(`GATE_FOLD`; 사용자 11-05 15:5x "바꿔줘", FT-2 수치를 보기 전에 fold 0에서 바꿈): `ts_geom.py run FTpilot_<c>_4 <f4_test.csv> label\|g2 <out> @I n` (M, GA 16c 64G; n = ⌈반응 수 × max(Z wall, 180 s) / 14 작업자 / 2 h⌉ ≤ 4, 단 넘겨받은 손 배열이 있으면 그 크기: `ft2_spec_f4_label` · `ft2_spec_f4_g2` → n = 2) → 1차가 끝나면(전부 기록, 또는 99.5 % 이상, 그리고 1차 task(넘겨받은 손 task 포함) 없음) 반응별 기준에 실패한 반응만 `ts_geom.py run ... <out>_recalc5 @I n --recalc 5 --only-failed <out>`. 손 배열이 squeue에 있는 출발은 1차도 재측정도 내지 않는다 | 뒤: Z-rep · lists(FT-p를 기다리지 않음). 필요: 시범 후보마다 `FTpilot_<c>_4` 학습 끝 + `$MLT/pipeline/lists/f4_test_ez.csv`(없으면 기다림). 끝 = 두 출발 1차 기록 완료 + 실패 반응 모두 재측정. 판정(`decide_ft2p`, 수치는 recs/*.json 반응 기록에서 다시 계산 — 손 run의 summary.json은 쓰지 않음): 반응마다 재측정 기록이 있으면 그것(recalc 5에서도 실패해야 실패); 실패 분류 (i) not_converged (ii) n_imag ≠ 1 (iii) other_saddle(수렴 · 허수 1개인데 다른 TS 또는 \|Δd\| > 0.030 Å)를 출발별 1차 / 재측정 뒤로; fold 4 목록으로 나눈 E/Z 형제 있음 · 없음 (a) · (b); 라벨 출발 두 무리 차이가 같은 TS > 0.05 또는 \|Δd\| 중앙값 > 0.002 Å이면 관문은 '형제 없음'만(결정 줄 + `DEVIATIONS.md` 한 줄), 아니면 전체; 한 무리가 비면(f4: 형제 있음 0/2,195) 나누지 않고 전체(결정 줄에 적음). 기반 MLIP는 fold 4 수치로 고르고, `base_run` = `FTpilot_<base>_0`(= FT_0, fold 0, FT-p)은 그대로 |
 | FT2-r1 | (보고용 filler) 학습이 끝난 1차 모델 `r1_run(k)`마다 `ts_geom.py run <run> <f<k>_test.csv> label\|g2 <out> @I n` — fold 0(FT_0 = FTpilot_<base>_0)과 fold 1–3; fold 4는 FT2-p가 관문 모델로 이미 잼(건너뜀) | 끝 = 그 fold들의 두 출발 1차 기록 완료(재측정 없음) |
 | FT2-f0 | (보고용, job 없음) FT2-r1의 fold 0 1차(두 출발)가 끝나면 | `results/FT2_f0_report.json` {run, label · g2 {all, with_sibling, without_sibling}, fail_classes, ez_rule(나눌 기준을 넘는지, 보고만)} + DECISIONS 한 줄: fold 0 FT-2 (a) · (b)를 `f0_test_ez.csv`로 나눈 수치(사용자 12:0x (2); 관문 아님) |
-| G4 | `g4_al.py g4_plan --models <FT_0..4 1차>` (R, C 4c 16G) → `g4_opt @I n --models ...` (M, GA 16c 64G) → `run G4 @I n` (R, C2 64c 240G) → `collect --g4` (R, C 4c 32G) | 뒤: FT-r1 **그리고 FT-p**(1차 모델 다섯 개 모두, FT_0 = FTpilot_<base>_0). `G4_plan.json` {complete, n_d1 1,000, n_d0 500, predicted_core_h.total (실행 전 예산 검사), est{opt, run}}; `G4_report.json` {complete, core_h_measured.total, stop_file} + `$MLT/dft/gen_G4.extxyz`; G 실측 + G-4 > `gen_dft.BUDGET_CORE_H` → HALT |
+| FT-abl | (판정용, job 없음; 사용자 11-05 17:0x (2) "비교 결과로 자동 선택") 기준선 `FTpilot_AIMNet2_4`(fw 0.2, patience 25)의 label 1차(FT2-p)가 끝나고, 각 ablation `FTabl_AIMNet2_4_fw1|fw5`(lead 손 job `ft_abl_<태그>` ::: `ft2_abl_<태그>`)가 끝났거나(FT-2 label 1차가 f4_test 전부, 또는 99.5 % 이상 + `ft2_abl_<태그>` 없음) 죽었으면(학습 job이 결과 없이 끝남(sacct), 또는 끝나지도 돌지도 않음) | 뒤: lists만(FT2-p HALT와 무관, HALT는 local). 규칙(수치 전 고정, `decide_ftabl`): 후보 = 기준선 + 끝난 ablation, 지표 = label 1차 같은 TS 비율(recs/*.json, 기록 없는 반응은 실패); 기준선보다 **0.02 넘게** 높아야 바꾸고, 그런 ablation끼리 0.02 안이면 \|Δd\| 중앙값 낮은 쪽, 그것도 0.002 Å 안이면 fw 작은 쪽. 판정 줄: 후보마다 같은 TS · \|Δd\| 중앙값 / 90 % · RMSD 중앙값 · 허수 1개 비율 · FT-1 검증 힘 MAE. params `ft_train_args`(예: `["--fw", "1.0", "--patience", "50"]`, 기준선이면 `[]`) · `ft_abl_choice` · `ft_abl_cand` |
+| FT-r2 · FT-fin | `finetune.py train FT_<k> <base> --with-al <ft_train_args> ::: finetune.py ft1 FT_<k> --with-al` (k = 0..4); FT-fin은 FT_all_s0–2 · FT_LODO_0–4 (M, AIMNet2 GA 8c 64G) | 뒤: FT-d2 **그리고 FT-abl**(G4 · FT-d2는 FT-abl을 기다리지 않음). `ft_train_args`는 기반 후보가 `ft_abl_cand`(AIMNet2)일 때만 붙인다; ft1에는 붙이지 않는다. run_key(lr · ew · fw · bs)가 바뀌면 finetune이 새 실행 폴더를 만든다(FT_<k>_al은 아직 없음) |
+| G4 | `g4_al.py g4_plan --models <FT_0..4 1차>` (R, C 4c 16G) → `g4_opt @I n --models ...` (M, GA 16c 64G) → `run G4 @I n` (R, C2 64c 240G) → `collect --g4` (R, C 4c 32G) | 뒤: FT-r1 **그리고 FT-p**(1차 모델 다섯 개 모두, FT_0 = FTpilot_<base>_0); FT-abl은 기다리지 않음; 필요: params base · base_run. `G4_plan.json` {complete, n_d1 1,000, n_d0 500, predicted_core_h.total (실행 전 예산 검사), est{opt, run}}; `G4_report.json` {complete, core_h_measured.total, stop_file} + `$MLT/dft/gen_G4.extxyz`; G 실측 + G-4 > `gen_dft.BUDGET_CORE_H` → HALT |
 | FT2-r2 | 목록이 하나라도 없으면 `ez_groups.py run --folds 0,1,2,3,4` (M, C 4c 16G; 있는 목록은 건너뜀) + 학습이 끝난 FT_<k>_al마다 `ts_geom.py run FT_<k>_al <f<k>_test.csv> label\|g2 <out> @I n` (FT2-p와 같은 n) → 1차가 끝난 (run, 출발)마다 실패 반응만 `... <out>_recalc5 @I n --recalc 5 --only-failed <out>` | 끝 = `$MLT/pipeline/lists/f0..f4_test_ez.csv` + 모든 1차 기록 + 실패 반응 모두 재측정(partial · progress도 재측정 포함). 판정(`decide_ft2r2`, FT2-p와 같은 규칙): 반응마다 재측정 기록이 있으면 그것; 실패 분류를 출발별 1차 / 재측정 뒤(5 fold 합침 + fold별); fold마다 자기 목록(학습 쪽 = T1 fold ≠ k)으로 나눈 E/Z 형제 있음 · 없음 (a) · (b)를 5 fold 합침; 라벨 출발 두 무리 차이 > 0.05 같은 TS 또는 > 0.002 Å이면 '형제 없음'만(결정 줄 + `DEVIATIONS.md`), 아니면 전체; 실패면 HALT. `results/FT_report.json`(gate_round2 = 판정 numbers) · `FT_geom.csv`(합친 기록 + fail_class · remeasured · first_pass_fail_class) |
 | X-rep | `ts_geom.py x_report` (M, C 4c) | `X_report.json` {complete, per_dipole{pass_a}} |
 | D0-eval | `ts_geom.py d0_eval run @I 3` (M, GA 16c 64G) → `ts_geom.py d0_eval report` (M, C 4c) — FT-fin 뒤, 보고만 | `D0_eval_report.json` {complete, per_model, pooled, floor_rmsd_A 0.009}; 기준 TS = Coley TS(D0-gauss), 출발 label = Coley TS, g2 = G2c xTB TS |

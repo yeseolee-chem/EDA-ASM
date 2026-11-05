@@ -133,7 +133,20 @@ FT2_SPEC_RX = rf"ft2_spec_f{GATE_FOLD}_(?P<s>label|g2)"   # the lead's manual FT
 FT2_SPEC_CAND = "AIMNet2"                   # 1063319, --array=0-1, `ts_geom.py run FTpilot_AIMNet2_4 ... @I 2`): adopted
 F0_REPORT = "FT2_f0_report.json"            # FT2-f0: the fold-0 FT-2 numbers split by f0_test_ez (report only)
 TIE_SAME, TIE_DD = 0.025, 0.002
-GEOM_PARTIAL = 0.995            # coverage accepted after 2 rounds without progress (records missing = pipeline errors)
+# FT-abl (user 11-05 17:0x (2) "비교 결과로 자동 선택"): the lead's manual fold-4 force-weight ablations (ft_abl_<tag>
+# `finetune.py train FTabl_AIMNet2_4_<tag> AIMNet2 --fw <x> --patience 50 ::: ft1`, then afterok ft2_abl_<tag> `ts_geom.py
+# run FTabl_AIMNet2_4_<tag> f4_test label ... @I 2`, first pass only) against the baseline FTpilot_AIMNet2_4 (fw 0.2,
+# patience 25) pick the `finetune.py train` arguments of FT-r2 / FT-fin; rule fixed before any ablation number (decide_ftabl)
+ABL_CAND = FT2_SPEC_CAND                    # AIMNet2: the ablated candidate (the arguments apply only to that base)
+ABL_BASE_RUN = f"FTpilot_{ABL_CAND}_{GATE_FOLD}"   # = gate_run(ABL_CAND), first-pass records $MLT/ft2/<run>/label/recs
+ABL_TAGS = ("fw1", "fw5")
+ABL_ARGS = {"fw1": ["--fw", "1.0", "--patience", "50"], "fw5": ["--fw", "5.0", "--patience", "50"]}
+ABL_FW = {"baseline": 0.2, "fw1": 1.0, "fw5": 5.0}
+ABL_PATIENCE = {"baseline": 25, "fw1": 50, "fw5": 50}
+ABL_MIN_GAIN = 0.02                         # an ablation must beat the baseline same-TS fraction by MORE than this
+ABL_DD_TIE_A = 0.002                        # ablations within ABL_MIN_GAIN of each other -> lower median |dd|; within
+ABL_START = "label"                         # this too -> the smaller fw (closer to the default)
+GEOM_PARTIAL = 0.995           # coverage accepted after 2 rounds without progress (records missing = pipeline errors)
 Z_TOL = 0.01                    # Z: up to 1 % of the list without a record counts as finished
 A3_RULE = dict(stop_below=0.70, limit_below=0.85, app_core_h=1.0)
 A3_BUDGET = {"A": (0.6, 3.0), "Ap": (0.6, 3.0), "App": (1.0, 3.0)}    # arm: (core-h, GPU-min) per reaction, median
@@ -911,9 +924,11 @@ def is_aimnet(cand):
     return str(cand).lower().startswith("aimnet")
 
 
-def train_unit(key, run, cand, al=False, deps=()):
+def train_unit(key, run, cand, al=False, deps=(), args=()):
+    """`finetune.py train <run> <cand> [--with-al] [args] ::: finetune.py ft1 <run> [--with-al]`; args (the FT-abl
+    choice, ft_args) go to train only."""
     x = ["--with-al"] if al else []
-    cmd = ["finetune.py", "train", run, cand] + x + [":::", "finetune.py", "ft1", run] + x
+    cmd = ["finetune.py", "train", run, cand] + x + [str(a) for a in args] + [":::", "finetune.py", "ft1", run] + x
     rd = run + ("_al" if al else "")
     return one(key, cmd, env="mlts", part="GA" if is_aimnet(cand) else "G24", c=8, mem=64 if is_aimnet(cand) else 96,
                gpu=1, deps=deps, done=lambda P, r=rd: train_done(P, r), disk_gb=3.0)
@@ -1924,7 +1939,10 @@ def decide_ft2p(P, S, st):
         a note is appended to results/DEVIATIONS.md); otherwise on all fold-4 test reactions. An empty group (f4_test_ez
         lists 0 'with sibling' of 2,195) never splits: no comparison is made and the decision line says which group is
         empty; the gate uses all fold-4 test reactions.
-    The base MLIP is ranked on the merged label-start numbers of all gate-fold test reactions (rank_key_cmp)."""
+    The base MLIP is ranked on the merged label-start numbers of all gate-fold test reactions (rank_key_cmp). params
+    base / base_run / gate_run / gate_fold are written BEFORE the pass / fail branch (also before the E/Z-list HALT), so
+    the user's 11-05 17:0x (1) `RESOLVE: accept` of a failed gate lets FT-d1 -> FT-r1 -> G4 -> FT-d2 -> FT-r2 -> FT2-r2
+    continue with the base set (FT-r1 / G4 need it: BASE_NEED)."""
     from functools import cmp_to_key
     k = GATE_FOLD
     speeds, src = pilot_speeds(P, pilots(P))
@@ -2134,6 +2152,228 @@ def decide_ft2f0(P, S, st):
                              g2={x: g2[x] for x in ("all", "with_sibling", "without_sibling")}))
 
 
+# ---------------------------------------------------------------- FT-abl (round-2 force weight, user 11-05 17:0x (2))
+FTABL_RULE = (f"pre-registered (lead 11-05 17:0x, before any ablation number): candidates = the baseline {ABL_BASE_RUN} "
+              f"(fw {ABL_FW['baseline']}, patience {ABL_PATIENCE['baseline']}) + every finished ablation "
+              f"FTabl_{ABL_CAND}_{GATE_FOLD}_<tag> ({', '.join(f'{t}: ' + ' '.join(ABL_ARGS[t]) for t in ABL_TAGS)}); "
+              f"metric = the {ABL_START}-start first-pass same_ts_frac over {GATE_LIST} from recs/*.json (geom_rows + "
+              f"pooled; a list reaction without a record counts as an attempted failure, as FT2-p); an ablation must "
+              f"beat the baseline by more than {ABL_MIN_GAIN} absolute, else the baseline is kept; among those that do, "
+              f"the ones within {ABL_MIN_GAIN} of the best -> the lower median |dd|; within {ABL_DD_TIE_A} A of that too "
+              f"-> the smaller fw (closer to the default); an ablation is finished when its FT-2 first pass covers the "
+              f"list (all, or >= {GEOM_PARTIAL:.1%} with no live ft2_abl_<tag> task) and dead when its training ended "
+              f"without results (sacct) or nothing of it is live and the FT-2 is not finished; both dead -> baseline; "
+              f"the chosen arguments go to `finetune.py train` of FT-r2 and FT-fin when the base candidate is "
+              f"{ABL_CAND}")
+
+
+def abl_run(tag):
+    """FTabl_<ABL_CAND>_<GATE_FOLD>_<tag> (finetune.parse_run: a fold-k ablation run)."""
+    return f"FTabl_{ABL_CAND}_{GATE_FOLD}_{tag}"
+
+
+def abl_od(P, run):
+    return P.c.mlt / "ft2" / run / ABL_START
+
+
+def abl_live(P, tag):
+    """squeue ids of the ablation's training (ft_abl_<tag>) and FT-2 (ft2_abl_<tag>) jobs; a pending task whose
+    dependency can never be satisfied (afterok on a failed training) is not live."""
+    names = {f"ft_abl_{tag}": "train", f"ft2_abl_{tag}": "ft2"}
+    out = dict(train=[], ft2=[])
+    for j in getattr(P, "sq", None) or []:
+        k = names.get(j.get("name"))
+        if k and not (j.get("state") == "PENDING" and str(j.get("reason") or "").startswith("DependencyNeverSatisfied")):
+            out[k].append(j["id"])
+    return out
+
+
+def abl_hist(P):
+    """sacct rows (since HISTORY_SINCE) of the ablation jobs, one query per pass (cached on P); [] when sacct fails
+    (then squeue alone decides: neither done nor live = failed)."""
+    if getattr(P, "_abl_hist", None) is None:
+        names = [f"{p}_{t}" for t in ABL_TAGS for p in ("ft_abl", "ft2_abl")]
+        try:
+            rows = P.c.slurm.sacct(names=names, since=HISTORY_SINCE)
+        except Exception:                                                   # noqa: BLE001
+            rows = None
+        P._abl_hist = list(rows or [])
+    return P._abl_hist
+
+
+def abl_cov(P, od):
+    """reactions recorded in one ts_geom out_dir: the larger of summary.json's status counts and the record rows."""
+    return max(geom_cov(P, od), len({row_id(r) for r in geom_rows(od, P)}))
+
+
+def abl_status(P, tag):
+    """('done' | 'live' | 'failed', why) of one ablation. done: its FT-2 label first pass covers f4_test (every reaction,
+    or >= 99.5 % with no live ft2_abl_<tag> task); failed: its training job ended (sacct) without a finished training
+    (train_done), or nothing of it is live and the FT-2 is not done ('neither done nor live'); else live."""
+    run, nl = abl_run(tag), n_list(P, GATE_LIST)
+    cov, live = abl_cov(P, abl_od(P, run)), abl_live(P, tag)
+    if nl > 0 and cov >= nl:
+        return "done", f"FT-2 {cov}/{nl}"
+    if nl > 0 and cov >= math.ceil(GEOM_PARTIAL * nl) and not live["ft2"]:
+        return "done", f"FT-2 {cov}/{nl} (>= {GEOM_PARTIAL:.1%}, no live ft2_abl_{tag})"
+    ended = {}
+    for r in abl_hist(P):
+        s = str(r.get("state") or "").split()
+        if s and s[0] not in LIVE_STATES:
+            ended.setdefault(r.get("name"), []).append(f"{r.get('id')} {s[0]}")
+    et = ended.get(f"ft_abl_{tag}") or []
+    if et and not live["train"] and not train_done(P, run):
+        return "failed", f"training ended without results ({', '.join(et)}; results/ft/{run}_train.json not done)"
+    if live["train"] or live["ft2"]:
+        return "live", (f"training {','.join(live['train']) or '-'} / FT-2 {','.join(live['ft2']) or '-'} in squeue, "
+                        f"FT-2 {cov}/{nl}")
+    e2 = ended.get(f"ft2_abl_{tag}") or []
+    return "failed", (f"neither done nor live: FT-2 {cov}/{nl} (< {GEOM_PARTIAL:.1%})"
+                      + (f", ft2_abl_{tag} ended {', '.join(e2)}" if e2 else ""))
+
+
+def abl_metrics(P, run, label):
+    """label-start first-pass numbers of one candidate over f4_test (geom_rows: recs/*.json; pooled, list reactions
+    without a record = attempted failures) + its FT-1 valid force MAE (results/ft/<run>_ft1.json) and training."""
+    want = set(list_ids(P, GATE_LIST))
+    rows = [r for r in geom_rows(abl_od(P, run), P) if not want or row_id(r) in want]
+    have = {row_id(r) for r in rows}
+    m = pooled(rows, sum(1 for x in want if x not in have))
+    T = P.rjp(P.c.res / "ft" / f"{run}_train.json") or {}
+    F = P.rjp(P.c.res / "ft" / f"{run}_ft1.json") or {}
+    sets = F.get("sets") or {}
+    v = sets.get("valid") or sets.get("valid_subset") or {}
+    fm = v.get("force_mae_kcal_A") or {}
+    hy, ep = T.get("hyper") or {}, T.get("epochs") or {}
+    best = ep.get("best") if isinstance(ep.get("best"), dict) else {}
+    out = dict(label=label, run=run, fw=hy.get("fw") if hy.get("fw") is not None else ABL_FW.get(label),
+               patience=hy.get("patience") if hy.get("patience") is not None else ABL_PATIENCE.get(label))
+    out.update({k: m.get(k) for k in ("same_ts_frac", "dd_median_A", "dd_p90_A", "rmsd_median_A", "nimag1_frac",
+                                      "n_attempted", "n_missing_records", "n_optimised")})
+    out.update(ft1_valid_force_mae_ts_near=fm.get("ts_near"), ft1_valid_force_mae_all=fm.get("all"),
+               train_best_valid_force_mae=best.get("mae_f_kcal_A"), best_epoch=ep.get("best_epoch"),
+               n_epochs=ep.get("n"), gpu_h=T.get("gpu_h"))
+    return out
+
+
+def abl_choose(base, abls):
+    """the pre-registered rule (FTABL_RULE) -> (choice 'baseline' | tag, reason). base / abls: abl_metrics."""
+    bs = base.get("same_ts_frac")
+    if bs is None:
+        return "baseline", "기준선 수치가 없어 기준선 유지"
+    if not abls:
+        return "baseline", "끝난 ablation이 없어(모두 실패) 기준선 유지"
+    gain = {t: round(m["same_ts_frac"] - bs, 9) for t, m in abls.items() if m.get("same_ts_frac") is not None}
+    gtxt = ", ".join(f"{t} {g:+.3f}" for t, g in gain.items())
+    elig = [t for t, g in gain.items() if g > ABL_MIN_GAIN]
+    if not elig:
+        return "baseline", f"기준선보다 같은 TS가 {ABL_MIN_GAIN} 넘게 높은 ablation이 없어 기준선 유지(차이 {gtxt})"
+    top = max(abls[t]["same_ts_frac"] for t in elig)
+    near = [t for t in elig if round(top - abls[t]["same_ts_frac"], 9) <= ABL_MIN_GAIN]
+    dd = {t: abls[t]["dd_median_A"] if abls[t].get("dd_median_A") is not None else 9.9 for t in near}
+    dmin = min(dd.values())
+    tied = [t for t in near if round(dd[t] - dmin, 9) <= ABL_DD_TIE_A]
+    ch = min(tied, key=lambda t: (ABL_FW.get(t, 9e9), t))
+    why = f"기준선보다 같은 TS가 {ABL_MIN_GAIN} 넘게 높은 ablation: {', '.join(elig)}(차이 {gtxt})"
+    if len(near) == 1:
+        why += f" → 같은 TS가 가장 높은 {ch}"
+    elif len(tied) == 1:
+        why += f" → {', '.join(near)}는 같은 TS 차이 {ABL_MIN_GAIN} 안 → |Δd| 중앙값이 낮은 {ch}"
+    else:
+        why += (f" → {', '.join(near)}는 같은 TS 차이 {ABL_MIN_GAIN} 안, |Δd| 중앙값도 {ABL_DD_TIE_A} Å 안 → fw가 작은 "
+                f"{ch}(기본값에 가까움)")
+    return ch, why
+
+
+def abl_txt(m):
+    """one candidate's numbers as decision-line text."""
+    return (f"같은 TS {fmt(m.get('same_ts_frac'))} · |Δd| 중앙값 {fmt(m.get('dd_median_A'), 4)} · 90 % "
+            f"{fmt(m.get('dd_p90_A'), 4)} Å · RMSD 중앙값 {fmt(m.get('rmsd_median_A'), 4)} Å · 허수 1개 "
+            f"{fmt(m.get('nimag1_frac'))} · FT-1 검증 힘 MAE(TS 근처) {fmt(m.get('ft1_valid_force_mae_ts_near'))} · 전체 "
+            f"{fmt(m.get('ft1_valid_force_mae_all'))} kcal/mol/Å ({m.get('n_attempted')}반응)")
+
+
+def gate_ftabl(P):
+    """FT-abl readiness (no jobs): the baseline's label first pass on f4_test final (FT2-p: first_pass_final) and
+    every ablation finished or dead (abl_status) -> 'pass' (decide_ftabl chooses); else 'wait'. Independent of the
+    FT2-p decision and of its HALT (after: lists only)."""
+    try:
+        nl = n_list(P, GATE_LIST)
+        if not first_pass_final(P, P.st("FT2-p"), abl_od(P, ABL_BASE_RUN), nl, f"{ABL_BASE_RUN}/{ABL_START}"):
+            return "wait", f"the baseline {ABL_BASE_RUN} {ABL_START} first pass on {GATE_LIST} not final (FT2-p)", {}
+        sts = {t: abl_status(P, t) for t in ABL_TAGS}
+        nums = {t: dict(state=s, why=w) for t, (s, w) in sts.items()}
+        live = [f"{t}: {w}" for t, (s, w) in sts.items() if s == "live"]
+        if live:
+            return "wait", "ablations not finished — " + "; ".join(live), nums
+        return "pass", "", nums
+    except Exception as e:                                                  # noqa: BLE001
+        return "wait", f"gate(): {type(e).__name__}: {e}"[:200], {}
+
+
+def decide_ftabl(P, S, st):
+    """FT-abl (user 11-05 17:0x (2) "비교 결과로 자동 선택"; no jobs): the force weight (and patience) of the round-2
+    retraining FT-r2 and of FT-fin, picked from the lead's fold-4 ablations. PRE-REGISTERED RULE (lead 11-05 17:0x,
+    fixed before any ablation number existed; FTABL_RULE):
+      candidates — the baseline FTpilot_AIMNet2_4 (fw 0.2, patience 25; the FT2-p gate model) + every FINISHED
+        ablation FTabl_AIMNet2_4_<tag>, tags fw1 (--fw 1.0 --patience 50) and fw5 (--fw 5.0 --patience 50). Finished =
+        its FT-2 label first pass covers f4_test (all, or >= 99.5 % with no live ft2_abl_<tag>); an ablation whose
+        training job ended without results (sacct) or that is neither finished nor live counts as failed and is not a
+        candidate (both failed -> baseline, the decision line says so).
+      metric — label-start FIRST-PASS same_ts_frac over f4_test from the per-reaction records recs/*.json (geom_rows +
+        pooled, like for like: the baseline's recalc-5 re-measure is not used; a list reaction without a record counts
+        as an attempted failure, as in FT2-p).
+      choice — an ablation must beat the baseline by MORE than ABL_MIN_GAIN = 0.02 absolute, otherwise the baseline is
+        kept; among the ablations that do, those within 0.02 of the best -> the lower median |dd|; if that is also
+        within ABL_DD_TIE_A = 0.002 A -> the smaller fw (closer to the default).
+    The decision line reports every candidate's same_ts_frac, |dd| median / p90, RMSD median, n_imag == 1 fraction and
+    the FT-1 valid force MAE (results/ft/<run>_ft1.json). Writes params ft_train_args (e.g. ["--fw", "1.0",
+    "--patience", "50"]; [] for the baseline), ft_abl_choice and ft_abl_cand = AIMNet2: FT-r2 and FT-fin append
+    ft_train_args to `finetune.py train` (not ft1) when the base candidate is AIMNet2 (ft_args). finetune's run_key
+    holds lr / ew / fw / bs, so a changed fw makes a new run dir (no FT_<k>_al run exists yet)."""
+    sts = {t: abl_status(P, t) for t in ABL_TAGS}
+    base = abl_metrics(P, ABL_BASE_RUN, "baseline")
+    abls = {t: abl_metrics(P, abl_run(t), t) for t, (s, _w) in sts.items() if s == "done"}
+    ch, why = abl_choose(base, abls)
+    args = list(ABL_ARGS[ch]) if ch in ABL_ARGS else []
+    P.state.setdefault("params", {}).update(ft_train_args=args, ft_abl_choice=ch, ft_abl_cand=ABL_CAND)
+    failed = {t: w for t, (s, w) in sts.items() if s != "done"}
+    nums = dict(choice=ch, ft_train_args=args, cand=ABL_CAND, baseline=base, ablations=abls,
+                status={t: dict(state=s, why=w) for t, (s, w) in sts.items()}, rule=FTABL_RULE, min_gain=ABL_MIN_GAIN,
+                dd_tie_A=ABL_DD_TIE_A, list=GATE_LIST, start=ABL_START)
+    parts = [f"기준선 {ABL_BASE_RUN}(fw {base.get('fw')}, patience {base.get('patience')}) {abl_txt(base)}"]
+    parts += [f"{t} {abl_run(t)}(fw {abls[t].get('fw')}, patience {abls[t].get('patience')}) {abl_txt(abls[t])}"
+              for t in ABL_TAGS if t in abls]
+    parts += [f"{t} {abl_run(t)} 실패 — {failed[t]}" for t in ABL_TAGS if t in failed]
+    both = "두 ablation 모두 실패 → " if not abls else ""
+    use = f"`finetune.py train ... {' '.join(args)}`" if args else "추가 인자 없음(기본 fw 0.2 · patience 25)"
+    line = (f"FT-abl 힘 가중치 선택(사용자 11-05 17:0x (2) '비교 결과로 자동 선택'; fold {GATE_FOLD} {GATE_LIST} "
+            f"{ABL_START} 출발 1차, 반응 기록 recs/*.json; 규칙은 ablation 수치 전 고정): " + "; ".join(parts)
+            + f" → {both}**선택 = {'기준선' if ch == 'baseline' else ch}**: {why}. FT-r2(FT_0–4_al)와 FT-fin(FT_all_s0–2_al · "
+              f"FT_LODO_0–4_al) 학습에 {use}(기반 후보가 {ABL_CAND}일 때만; ft1은 인자 없음). 규칙: 후보 = 기준선 + 끝난 "
+              f"ablation; 지표 = 같은 TS 비율(기록 없는 반응은 실패); 기준선보다 {ABL_MIN_GAIN} 넘게 높아야 바꾼다; 그런 "
+              f"ablation끼리 {ABL_MIN_GAIN} 안이면 |Δd| 중앙값이 낮은 쪽, {ABL_DD_TIE_A} Å 안이면 fw가 작은 쪽.")
+    return dict(key=f"choice {ch}", numbers=nums, line=line)
+
+
+def ft_args(P):
+    """the FT-abl choice (params ft_train_args) for `finetune.py train` of FT-r2 / FT-fin when the base candidate is
+    the ablated one (params ft_abl_cand = ABL_CAND), else [] (the ablations measured AIMNet2 only)."""
+    p = P.state.get("params", {})
+    a = p.get("ft_train_args") or []
+    return [str(x) for x in a] if a and base_cand(P) == (p.get("ft_abl_cand") or ABL_CAND) else []
+
+
+def base_set(P):
+    """params base and base_run set (decide_ft2p sets them before its pass / fail branch, so a RESOLVE accept of a
+    failed gate keeps them; FT-r1 / G4 wait otherwise, e.g. after an accepted decision-rule error)."""
+    p = P.state.get("params", {})
+    return bool(p.get("base")) and bool(p.get("base_run"))
+
+
+BASE_NEED = ("params base / base_run (the FT2-p decision; set on its pass and its fail branch)", base_set)
+
+
 def models_r1(P):
     return ",".join(r1_run(P, k) or "" for k in range(5))
 
@@ -2217,11 +2457,23 @@ def done_ftd2(P):
 
 
 def units_ftr2(P, S, st):
-    b = base_cand(P)
+    """FT_<k>_al (k = 0..4) with the base candidate, --with-al + the FT-abl arguments (ft_args) on train."""
+    b, a = base_cand(P), ft_args(P)
     out = []
     for k in range(5):
-        out += train_unit(f"FT_{k}_al", f"FT_{k}", b, al=True)
+        out += train_unit(f"FT_{k}_al", f"FT_{k}", b, al=True, args=a)
     return out
+
+
+def abl_use_txt(P):
+    """the FT-abl choice as start-line text (FT-r2 / FT-fin on_start)."""
+    a, ch = ft_args(P), P.state.get("params", {}).get("ft_abl_choice")
+    return (f"FT-abl 선택 {ch} → `finetune.py train ... --with-al {' '.join(a)}`(ft1은 인자 없음)" if a else
+            f"FT-abl 선택 {ch or '없음'} → 추가 인자 없음(기본 fw · patience; 기반 후보 {base_cand(P)})")
+
+
+def start_ftr2(P, S, st):
+    return f"FT_0–4_al 학습 인자: {abl_use_txt(P)}. 사용자 11-05 17:0x (2) '비교 결과로 자동 선택'."
 
 
 FT2R2_RUNS = [(f"FT_{k}_al", f"f{k}_test") for k in range(5)]
@@ -2449,16 +2701,18 @@ def decide_ft2r2(P, S, st):
 
 
 def units_ftfin(P, S, st):
-    b = base_cand(P)
+    """FT_all_s0-2 + FT_LODO_0-4, --with-al + the FT-abl arguments (ft_args, the same setting as FT-r2) on train."""
+    b, a = base_cand(P), ft_args(P)
     out = []
     for r in FIN_RUNS:
-        out += train_unit(r + "_al", r, b, al=True)
+        out += train_unit(r + "_al", r, b, al=True, args=a)
     return out
 
 
 def start_ftfin(P, S, st):
     return "FT_all_s0–2와 FT_LODO_0–4를 모두 --with-al(G-4 능동학습 자료 포함)로 학습한다. 추천안: LODO는 최종 모델과 같은 자료"\
-           "(능동학습 포함)를 쓰고 그 dipole 구조만 뺀다 — X(LODO) 결과가 배포 모델의 일반화를 그대로 대신하게 하기 위함."
+           "(능동학습 포함)를 쓰고 그 dipole 구조만 뺀다 — X(LODO) 결과가 배포 모델의 일반화를 그대로 대신하게 하기 위함. "\
+           f"학습 인자는 FT-r2와 같다: {abl_use_txt(P)}."
 
 
 def units_xrun(P, S, st):
@@ -3042,7 +3296,7 @@ def registry():
                    done=lambda P: all(data_ok(P, f"FT_{k}") for k in range(1, 5)), results=["ft/FT_[1-4]_data.json"],
                    summary="finetune data FT_1 FT_2 FT_3 FT_4"))
     S.append(Stage("FT-r1", "FT", 34, units_ftr1, after=["FT-d1"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
-                   done=lambda P: all(train_done(P, r1_run(P, k)) for k in range(1, 5)),
+                   need=[BASE_NEED], done=lambda P: all(train_done(P, r1_run(P, k)) for k in range(1, 5)),
                    progress=prog_train(lambda P: [r1_run(P, k) for k in range(1, 5)]),
                    results=["ft/FT_[1-4]_train.json", "ft/FT_[1-4]_ft1.json"],
                    summary="train FT_<k> <base> ::: ft1 FT_<k>, k = 1..4"))
@@ -3057,21 +3311,33 @@ def registry():
                    summary="report only, no jobs: once FT2-r1's fold-0 first pass of FT_0 = FTpilot_<base>_0 on f0_test is "
                            "final (both starts), the fold-0 FT-2 (a) / (b) numbers split by f0_test_ez.csv (user 12:0x "
                            f"(2)) -> results/{F0_REPORT} + one DECISIONS line (the gate is fold {GATE_FOLD}, FT2-p)"))
-    S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1", "FT-p"],
+    S.append(Stage("FT-abl", "FT", 37, None, after=["lists"], gate=gate_ftabl, decide=decide_ftabl, halt_scope="local",
+                   summary=f"decision only, no jobs (user 11-05 17:0x (2)): once the baseline {ABL_BASE_RUN} label first "
+                           f"pass is final and every ablation FTabl_{ABL_CAND}_{GATE_FOLD}_<{'|'.join(ABL_TAGS)}> (the "
+                           f"lead's ft_abl_<tag> ::: ft2_abl_<tag>, read by name from squeue / sacct, not adopted) is "
+                           f"finished (FT-2 label first pass on {GATE_LIST}: all or >= 99.5 %, no live task) or dead "
+                           f"(training ended without results, or neither finished nor live) -> pre-registered choice "
+                           f"(first-pass same-TS gain > {ABL_MIN_GAIN} over the baseline, then median |dd| within "
+                           f"{ABL_DD_TIE_A} A, then the smaller fw) -> params ft_train_args / ft_abl_choice / ft_abl_cand "
+                           f"for FT-r2 + FT-fin `finetune.py train`; after lists only (independent of FT2-p and its "
+                           f"HALT); G4 / FT-d2 do not wait for it"))
+    S.append(Stage("G4", "G", 40, units_g4, after=["FT-r1", "FT-p"], need=[BASE_NEED],
                    code=[("g4_al.py", "g4_plan"), ("g4_al.py", "g4_opt"), ("g4_al.py", "run", r"G4"),
                          ("g4_al.py", "collect", r"--g4")],
                    done=done_g4, decide=decide_g4, guard=guard_g4,
                    results=["G4_plan.json", "G4_report.json"],
-                   summary="after FT-r1 and FT-p (all five first-round models, FT_0 = FTpilot_<base>_0): g4_al g4_plan "
-                           "(1,000 D1 + 500 D0 training-side reactions) -> g4_opt @I n (GPU) -> run G4 @I n -> collect "
-                           "--g4"))
+                   summary="after FT-r1 and FT-p (all five first-round models, FT_0 = FTpilot_<base>_0; not FT-abl): "
+                           "g4_al g4_plan (1,000 D1 + 500 D0 training-side reactions) -> g4_opt @I n (GPU) -> run G4 "
+                           "@I n -> collect --g4"))
     S.append(Stage("FT-d2", "FT", 41, units_ftd2, after=["G4"], code=[("finetune.py", "data")], need=[N_NEED],
                    done=done_ftd2, results=["ft/*_al_data.json"], summary="finetune data --all --with-al"))
-    S.append(Stage("FT-r2", "FT", 42, units_ftr2, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+    S.append(Stage("FT-r2", "FT", 42, units_ftr2, after=["FT-d2", "FT-abl"],
+                   code=[("finetune.py", "train"), ("finetune.py", "ft1")], on_start=start_ftr2,
                    done=lambda P: all(train_done(P, f"FT_{k}_al") for k in range(5)),
                    progress=prog_train(lambda P: [f"FT_{k}_al" for k in range(5)]),
                    results=["ft/FT_[0-4]_al_train.json", "ft/FT_[0-4]_al_ft1.json"],
-                   summary="train FT_<k> <base> --with-al ::: ft1 (k = 0..4)"))
+                   summary="after FT-d2 and FT-abl: train FT_<k> <base> --with-al <FT-abl ft_train_args when the base "
+                           "is AIMNet2> ::: ft1 FT_<k> --with-al (k = 0..4)"))
     S.append(Stage("FT2-r2", "FT", 43, units_ft2r2, after=["FT-d2", "lists"],
                    code=[("ts_geom.py", "run", r"--only-failed"), ("ez_groups.py", "run", r"--folds")],
                    done=done_ft2r2, decide=decide_ft2r2, partial=partial_ft2r2, progress=prog_ft2r2,
@@ -3081,12 +3347,14 @@ def registry():
                            "(<start>_recalc5) -> pooled FT-2 (a) gate on the merged records, E/Z 'with' / 'without "
                            "sibling' split pooled over the folds (> 0.05 same-TS or > 0.002 A median |dd| -> 'without' "
                            "only + DEVIATIONS) -> HALT on fail; results/FT_report.json + FT_geom.csv"))
-    S.append(Stage("FT-fin", "FT", 44, units_ftfin, after=["FT-d2"], code=[("finetune.py", "train"), ("finetune.py", "ft1")],
+    S.append(Stage("FT-fin", "FT", 44, units_ftfin, after=["FT-d2", "FT-abl"],
+                   code=[("finetune.py", "train"), ("finetune.py", "ft1")],
                    done=lambda P: all(train_done(P, r + "_al") for r in FIN_RUNS), filler=True, on_start=start_ftfin,
                    decide=decide_ftfin, progress=prog_train(lambda P: [r + "_al" for r in FIN_RUNS]),
                    results=["ft/FT_all_s*_al_train.json", "ft/FT_all_s*_al_ft1.json", "ft/FT_LODO_*_al_train.json",
                             "ft/FT_LODO_*_al_ft1.json", "FT_report.json"],
-                   summary="filler: FT_all_s0-2 + FT_LODO_0-4, --with-al"))
+                   summary="filler, after FT-d2 and FT-abl: FT_all_s0-2 + FT_LODO_0-4, --with-al + the FT-abl "
+                           "ft_train_args (the same setting as FT-r2)"))
     S.append(Stage("X-run", "X", 45, units_xrun, after=["FT-d2", "lists"], code=[("ts_geom.py", "run")], done=done_xrun,
                    filler=True, progress=lambda P: geom_progress(P, [f"FT_LODO_{d}_al" for d in range(5)], P.c.mlt / "x"),
                    partial=geom_partial(geom_dirs(lambda P: [(f"FT_LODO_{d}_al", f"dip{d}") for d in range(5)], xroot)),
