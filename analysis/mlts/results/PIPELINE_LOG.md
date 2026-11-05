@@ -26,3 +26,9 @@
 - 2026-11-05T07:04 p44 j1062571 | FT-dp: outputs incomplete -> round 2 | FT-dp submit 1062579 data crit
 - 2026-11-05T07:14 p45 j1062578 | FT-dp adopt 1062580 (ft_data, CANCELLED by 1627) from sacct history as data
 - 2026-11-05T07:24 p46 j1062583 | FT-dp done | FT-p: blocked -> ready
+- 2026-11-05T07:24 p46 j1062583 | commit 23ed6d47: FT-dp done (complete) | push origin mlts ok | FT-p submit 1062599 MACE-OMOL-0 crit | FT-p submit 1062600 AIMNet2 crit
+- 2026-11-05T10:28 p50 j1062623 | FT-p MACE-OMOL-0: 1062599 CANCELLED (lead) -> not resubmitted
+- 2026-11-05T11:59 p51 j1062889 | FT-p adopt 1062883 (ft_p_AIMNet2) as AIMNet2 | FT-dp adopt 1062881 (ft_data, COMPLETED) from sacct history as data
+- 2026-11-05T12:39 p55 j1062977 | FT2-p: blocked -> waiting_code | FT2-r1: blocked -> waiting_code | G4: blocked -> waiting_code | FT2-r2: blocked -> waiting_code | X-run: blocked -> waiting_code | X-rep: blocked -> waiting_code | D0-eval: blocked -> waiting_code
+- 2026-11-05T13:00 p56 j1063028 | FT2-p: waiting_code -> blocked | FT2-r1: waiting_code -> blocked | G4: waiting_code -> blocked | FT2-r2: waiting_code -> blocked | X-run: waiting_code -> blocked | X-rep: waiting_code -> blocked | D0-eval: waiting_code -> blocked
+- 2026-11-05T16:22 p76 j1063326 | FT-p done | FT2-p: blocked -> ready
