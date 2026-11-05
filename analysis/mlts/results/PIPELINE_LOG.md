@@ -32,3 +32,10 @@
 - 2026-11-05T12:39 p55 j1062977 | FT2-p: blocked -> waiting_code | FT2-r1: blocked -> waiting_code | G4: blocked -> waiting_code | FT2-r2: blocked -> waiting_code | X-run: blocked -> waiting_code | X-rep: blocked -> waiting_code | D0-eval: blocked -> waiting_code
 - 2026-11-05T13:00 p56 j1063028 | FT2-p: waiting_code -> blocked | FT2-r1: waiting_code -> blocked | G4: waiting_code -> blocked | FT2-r2: waiting_code -> blocked | X-run: waiting_code -> blocked | X-rep: waiting_code -> blocked | D0-eval: waiting_code -> blocked
 - 2026-11-05T16:22 p76 j1063326 | FT-p done | FT2-p: blocked -> ready
+- 2026-11-05T16:22 p76 j1063326 | commit d24bfe5c: FT-p done (complete) | push origin mlts ok | FT2-p submit 1063339[0,1,2,3] FTpilot_AIMNet2_0/label crit | FT2-p submit 1063340[0,1,2] FTpilot_AIMNet2_0/g2 crit
+- 2026-11-05T16:42 p77 j1063368 | FT2-p adopt 1063319_0 (ft2_spec_f4_g2, COMPLETED) from sacct history as FTpilot_AIMNet2_4/g2[0] | FT2-p adopt 1063319_1 (ft2_spec_f4_g2, COMPLETED) from sacct history as FTpilot_AIMNet2_4/g2[1] | FT2-p adopt 1063318_0 (ft2_spec_f4_label, COMPLETED) from sacct history as FTpilot_AIMNet2_4/label[0] | FT2-p adopt 1063318_1 (ft2_spec_f4_label, COMPLETED) from sacct history as FTpilot_AIMNet2_4/label[1] | FT2-p: queued -> ready | FT2-f0: new -> blocked | FT2-p submit 1063392[0,1,2] FTpilot_AIMNet2_4/label_recalc5 crit
+- 2026-11-05T16:52 p78 j1063385 | FT2-p: queued -> ready
+- 2026-11-05T17:02 p79 j1063419 | FT2-p submit 1063446[3] FTpilot_AIMNet2_4/label_recalc5 crit
+- 2026-11-05T17:12 p80 j1063445 | FT2-p: queued -> ready | FT-abl: new -> blocked | FT2-p submit 1063462[0] FTpilot_AIMNet2_4/g2_recalc5 crit
+- 2026-11-05T17:22 p81 j1063461 | FT2-p submit 1063468[1,2] FTpilot_AIMNet2_4/g2_recalc5 crit
+- 2026-11-05T17:32 p82 j1063467 | FT2-p submit 1063508[3] FTpilot_AIMNet2_4/g2_recalc5 crit
