@@ -24,12 +24,18 @@ the same command, 3 = STOP)
         results/ft/<run>_data.json. Up-to-date splits are skipped (idempotent); nothing is deleted (a --force rebuild
         moves the old split dir aside).
   train <run> [--fw X] [--max-epochs 1000] [--cap-gpu-h 150] [--wall-h 47] [--allow-partial] [--force]
-        MLTENV=mlts, 1 GPU: $MLT/ft/<run>/ (run_key.json, last.pt, best_ema.pt, sae.json, budget.json, epochs.jsonl,
-        stop.json, lock.json), $MLT/models/<run>.jpt + <run>.json (EMA weights of the best epoch; mlts_bridge / ts_geom
-        load it by name), results/ft/<run>_train.json (rewritten every epoch: status running, then done)
+        MLTENV=mlts, 1 GPU: $MLT/ft/<run>/ (run_key.json, last.pt, best_ts_ema.pt, sae.json, budget.json, epochs.jsonl,
+        stop.json, lock.json), $MLT/models/<run>.jpt + <run>.json (EMA weights picked by FTF-export: the best epoch on
+        the selection metric = validation TS-near force MAE, user 11-06; mlts_bridge / ts_geom load it by name),
+        results/ft/<run>_train.json (rewritten every epoch: status running, then done)
   ft1 <run> [--batch-size 64] [--force]
         MLTENV=mlts, 1 GPU: FT-1 (record only) on valid (+ test) read from the store -> results/ft/<run>_ft1.json,
         $MLT/ft/<run>/ft1_finetuned_<set>.parquet
+  export <run> --tag <tag> [--force]
+        MLTENV=mlts, GPU or CPU: interim model (user 11-06 step 2; training is not interrupted) from a COPY of
+        $MLT/ft/<run>/last.pt (old or new checkpoint format; no lock, nothing written in the run dir), weights by
+        FTF-export -> $MLT/models/<run>_<tag>.jpt + .json (card interim=true; mlts_bridge / ts_geom load
+        '<run>_<tag>' by name), results/ft/<run>_<tag>_export.json; prints the TS-near metric history
   status                           one line per *_full run
 
 sbatch (from analysis/mlts; login: one-shot sbatch only; L=/gpfs/tmp_cpu2/yeseo1ee/mlts/logs)
@@ -41,6 +47,9 @@ sbatch (from analysis/mlts; login: one-shot sbatch only; L=/gpfs/tmp_cpu2/yeseo1
   sbatch -p gpu1,gpu2,gpu3,gpu4,gpu5,gpu6 -J ftf_k --array=0-4 --time=48:00:00 --gres=gpu:1 -c 8 --mem=32G \
          --output=$L/%x_%A_%a.out --dependency=afterok:<data job> --kill-on-invalid-dep=yes --export=ALL,MLTENV=mlts \
          jobs/mlt.slurm ft_full.py train FT_@I_full ::: ft_full.py ft1 FT_@I_full
+  sbatch -p gpu1,gpu2,gpu3,gpu4,gpu5,gpu6 -J ftf_exp --time=48:00:00 --gres=gpu:1 -c 4 --mem=32G \
+         --output=$L/%x_%j.out --export=ALL,MLTENV=mlts jobs/mlt.slurm ft_full.py export FT_0_full --tag mid
+         (interim model FT_0_full_mid; the training of FT_0_full keeps running)
   A 48 h wall: the trainer pauses itself (exit 2, ft1 skipped) when the next epoch would end past --wall-h 47 h of this
   job; resubmit the same line (without the dependency): it resumes from last.pt (model + EMA + optimizer + scheduler +
   epoch / warmup state). A done run exits 0 at once and ft1 re-runs only when the training json is newer.
@@ -56,6 +65,9 @@ import hashlib  # noqa: E402
 import json  # noqa: E402
 import math  # noqa: E402
 import os  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402
+import signal  # noqa: E402
 import time  # noqa: E402
 from collections import Counter  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor  # noqa: E402
@@ -87,6 +99,12 @@ H = dict(cand="AIMNet2", lr=1e-4, lr_warm0=1e-5, warmup_epochs=3, ema=0.99, plat
          plateau_threshold=0.0, lr_stop=1e-6, no_improve_stop=100, max_epochs=1000, cap_gpu_h=150.0, ew=1.0, fw_default=1.0, batch=64,
          valid_batch=128, clip_value=0.4, wall_h=47.0, e0_nmax=40000, grad_skip_consec_stop=10,
          grad_skip_epoch_stop=100)
+# decision FTF-sel (user 11-06): ONE selection metric for best checkpoint, ReduceLROnPlateau and early stopping
+SEL_KEY = "mae_f_ts_kcal_A"                         # epoch record key: validation TS-near force MAE, EMA weights
+SEL_NAME = "val TS-near force MAE (EMA)"
+PREV_SEL = "val force MAE over all validation structures (EMA) [mae_f_kcal_A]"   # the metric before 11-06
+SEL_CODE = "ts-sel-1"                               # last.pt 'ckpt_format' of checkpoints with the TS-near fields
+LEGACY_BEST = "best_ema_allF_legacy.pt"             # the old all-structure best_ema.pt, renamed at the migration
 
 DECISIONS = {
     "FTF-scope": "user 11-05 20:5x step 1: the FT-cap train / valid caps are removed; every structure that passes the "
@@ -130,16 +148,39 @@ DECISIONS = {
                  "maximum, numbers 0 = padding as aimnet merge_groups), batch order shuffled. Validation rows are "
                  "gathered once (exact-size batches of 128, as before).",
     "FTF-ema": "weight EMA 0.99 updated after every optimizer step (all parameters incl. shifts; torch._foreach_lerp_); "
-               "validation and the exported model use the EMA weights; best_ema.pt = EMA weights of the best epoch.",
-    "FTF-sched": "metric = validation force MAE over all validation structures (kcal/mol/A, mean |dF| over Cartesian "
-                 "components of real atoms) with EMA weights; it drives ReduceLROnPlateau (factor 0.8, patience 10, "
+               "validation and the exported model use the EMA weights; best_ts_ema.pt = the EMA weights FTF-export "
+               "picks (TS-near selection metric).",
+    "FTF-sched": "selection metric (FTF-sel, user 11-06) = validation TS-near force MAE (kcal/mol/A, mean |dF| over "
+                 "Cartesian components of real atoms of the TS-near validation structures) with EMA weights "
+                 "(sel_metric(rec) = rec['mae_f_ts_kcal_A']); it drives ReduceLROnPlateau (factor 0.8, patience 10, "
                  "threshold 0 rel = strictly lower), best-checkpoint selection (strictly lower) and early stopping, so "
-                 "all three share one improvement definition. "
-                 "Validation energy MAE (training frame, kcal/mol) and TS-near force MAE are recorded only. Warmup: "
-                 "epochs 0-2, lr linear per optimizer step 1e-5 -> 1e-4; the plateau scheduler steps from epoch 3 on.",
-    "FTF-stop": "stop when lr < 1e-6 after a scheduler step, or 100 epochs without a better validation force MAE, or "
-                "1,000 epochs, or the GPU-h cap; then export the best EMA weights (stop.json keeps the reason so a "
-                "resubmit goes straight to export).",
+                 "all three share one improvement definition. Validation force MAE over all structures and energy MAE "
+                 "(training frame, kcal/mol) are recorded only. Before 11-06 the metric was the all-structure force "
+                 "MAE (runs migrated mid-training record switched_at_epoch and previous_metric). Warmup: epochs 0-2, lr "
+                 "linear per optimizer step 1e-5 -> 1e-4; the plateau scheduler steps from epoch 3 on; right before "
+                 "its first step scheduler.best = min(scheduler.best, best TS-near of epochs 0-2), so the scheduler's "
+                 "best is the same value as the best-checkpoint / early-stop best.",
+    "FTF-sel": "user 11-06: best checkpoint, ReduceLROnPlateau and early stop use the validation TS-near force MAE "
+               "(EMA). Resume of a last.pt written by the old code (no TS fields): best_ts_epoch / best_ts_metric = "
+               "first strict argmin / min of mae_f_ts_kcal_A over the history records (records without it skipped); "
+               "early-stop counter = last epoch - best_ts_epoch; the current lr is kept; scheduler.best = "
+               "best_ts_metric, num_bad_epochs = min(patience, number of epochs after best_ts_epoch at which the "
+               "scheduler stepped (epoch >= 3)) (= min(since-best, patience) whenever best_ts_epoch >= 2), "
+               "cooldown_counter 0, so with mode min / threshold 0 rel a stale run reduces the lr at its next "
+               "non-improving epoch. Weights of the historical TS-near best exist only when best_ts_epoch is the epoch "
+               "of the old best_ema (all-structure best) or the last epoch (EMA of last.pt); else ts_best_weights = "
+               "'not retained (epoch N)'. From the switch on, best_ts_ema (EMA at the best TS-near metric seen) and "
+               "best_ts_sw_ema (best TS-near among the epochs evaluated after the switch) are kept in last.pt; an "
+               "epoch after the switch that beats best_ts_metric becomes the best (weights kept). The old "
+               "best_ema.pt is renamed best_ema_allF_legacy.pt at the migration and is never exported.",
+    "FTF-export": "export weights (final train export and the interim `export` command): the TS-near best if its "
+                  "weights are kept; else the best TS-near since the switch; else (no epoch evaluated after the "
+                  "switch) the saved candidate (old all-structure best_ema or last-epoch EMA) with the lowest recorded "
+                  "TS-near metric. export_epoch / export_metric (TS-near) / export_rule go to the card and the train "
+                  "json. The all-structure best is never exported.",
+    "FTF-stop": "stop when lr < 1e-6 after a scheduler step, or 100 epochs without a better validation TS-near force "
+                "MAE (FTF-sel), or 1,000 epochs, or the GPU-h cap; then export the FTF-export weights (stop.json keeps "
+                "the reason so a resubmit goes straight to export).",
     "FTF-budget": "GPU-h = wall-h of the train command (finetune.Budget, budget.json, summed over attempts). For *_full "
                   "runs the 12 h target / 24 GPU-h STOP of FT-budget is replaced by a 150 GPU-h cap (user 11-05 "
                   "20:5x): no epoch is started when it would end past 150 GPU-h, and a cap reached mid-epoch drops that "
@@ -148,10 +189,13 @@ DECISIONS = {
               "baseline 0.2 / fw1 1.0 / fw5 5.0); else PIPELINE_STATE.json params ft_abl_choice / ft_train_args (when "
               "ft_abl_cand is AIMNet2); else 1.0 (no FT-abl decision). The value is pinned in run_key.json at the "
               "first start; a later decision is recorded but does not change a started run (restart = --force).",
-    "FTF-resume": "checkpoint every epoch (last.pt: model, EMA, optimizer, scheduler, epoch, optimizer step, best "
-                  "metric / epoch, the best EMA weights themselves, history; atomic; best_ema.pt is rewritten from that "
-                  "copy after last.pt, and again right before export, so weights and recorded best epoch always agree). "
-                  "lock.json is released on every exit. A resubmit resumes; the run key (split fingerprint, store, lr, ew, "
+    "FTF-resume": "checkpoint every epoch (last.pt: model, EMA, optimizer, scheduler, epoch, optimizer step, TS-near "
+                  "best metric / epoch + its EMA weights, best-since-switch metric / epoch + weights, selection record, "
+                  "history; atomic; best_ts_ema.pt is rewritten from that copy after last.pt, and again right before "
+                  "export, so weights and recorded epoch always agree). "
+                  "lock.json is released on every exit (SIGTERM from scancel / the wall -> exit 143 through the "
+                  "finally; a job killed without it leaves a lock that blocks a new job for 900 s after its last "
+                  "heartbeat). A resubmit resumes; the run key (split fingerprint, store, lr, ew, "
                   "fw, batch, EMA) is pinned, a different key = STOP (--force moves the run dir aside, never deletes). "
                   "The trainer pauses (exit 2) when the next epoch would end past --wall-h of this job.",
     "FTF-selfcheck": "at every start: split meta (C-2 pass, inputs complete, store fingerprint), index overlap, the "
@@ -162,7 +206,7 @@ DECISIONS = {
 
 
 def _jobtag():
-    return dict(F._jobtag(), code_full=CODE_VERSION)
+    return dict(F._jobtag(), code_full=CODE_VERSION, code_sel=SEL_CODE)   # CODE_VERSION is in the data fingerprints
 
 
 def _ranges(starts, lens):
@@ -866,9 +910,148 @@ class EMA:
                     d.lerp_(s, self.w)
 
 
+# ================================================================ selection metric (FTF-sel / FTF-export, user 11-06)
+def _num(v):
+    """finite float or None."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def sel_metric(rec):
+    """THE selection metric of one epoch record (best checkpoint, ReduceLROnPlateau, early stop): validation TS-near
+    force MAE with EMA weights = rec['mae_f_ts_kcal_A']; None when the record lacks it."""
+    return _num((rec or {}).get(SEL_KEY))
+
+
+def all_metric(rec):
+    """validation force MAE over all validation structures (recorded only since 11-06)."""
+    return _num((rec or {}).get("mae_f_kcal_A"))
+
+
+def hist_best(hist, fn):
+    """(epoch, value) of the first strict minimum of fn over the history records (strictly lower = the trainer's
+    improvement rule); records without a value are skipped; (None, inf) when none has one."""
+    be, bm = None, math.inf
+    for h in hist or []:
+        m = fn(h)
+        if m is not None and h.get("epoch") is not None and m < bm:
+            be, bm = int(h["epoch"]), m
+    return be, bm
+
+
+def ts_hist(hist):
+    """{epoch: TS-near metric} of the history records that carry it."""
+    return {int(h["epoch"]): sel_metric(h) for h in hist or []
+            if h.get("epoch") is not None and sel_metric(h) is not None}
+
+
+def _cpu_sd(sd):
+    return None if sd is None else {k: t.detach().to("cpu", copy=True) for k, t in sd.items()}
+
+
+def fresh_ts_state():
+    """selection state of a run that starts with the new code (TS-near selection from epoch 0)."""
+    return dict(fmt="fresh", bts_epoch=None, bts_metric=math.inf, bts_sd=None, bsw_epoch=None, bsw_metric=math.inf,
+                bsw_sd=None, cands=[],
+                sel=dict(selection_metric=SEL_NAME, metric_key=SEL_KEY, switched_at_epoch=0, previous_metric=None,
+                         ts_best_weights="kept (TS-near selection from epoch 0)"))
+
+
+def ts_state(ck):
+    """selection state from a last.pt dict (decision FTF-sel). New format (ckpt_format SEL_CODE): its TS fields. Old
+    format (written before 11-06): migrated from the history records; the old best_ema and the last-epoch EMA are kept
+    as candidates (FTF-export third rule). Weights are CPU copies. Pure: reads ck only (train and export use it)."""
+    last = int(ck["epoch"])
+    if ck.get("ckpt_format") == SEL_CODE:
+        bm, sm = _num(ck.get("best_ts_metric")), _num(ck.get("best_ts_sw_metric"))
+        st = dict(fmt="new", bts_epoch=ck.get("best_ts_epoch"), bts_metric=math.inf if bm is None else bm,
+                  bts_sd=_cpu_sd(ck.get("best_ts_ema")), bsw_epoch=ck.get("best_ts_sw_epoch"),
+                  bsw_metric=math.inf if sm is None else sm, bsw_sd=None, cands=[],
+                  sel=dict(ck.get("selection") or {}))
+        if st["bts_sd"] is not None and st["bts_epoch"] is not None and st["bts_epoch"] == st["bsw_epoch"]:
+            st["bsw_sd"] = st["bts_sd"]                  # same epoch: one CPU copy (saved once by torch.save)
+        else:
+            st["bsw_sd"] = _cpu_sd(ck.get("best_ts_sw_ema"))
+        return st
+    hist = ck.get("hist") or []
+    warm, pat = int(H["warmup_epochs"]), int(H["plateau_patience"])
+    be, bm = hist_best(hist, sel_metric)
+    ob_e = ck.get("best_epoch")
+    ob_e = None if ob_e is None else int(ob_e)
+    ob_sd, last_sd = _cpu_sd(ck.get("best_ema")), _cpu_sd(ck.get("ema"))
+    if be is None:
+        sd, note = None, "not retained (no epoch record has the TS-near metric)"
+    elif ob_e == be and ob_sd is not None:
+        sd, note = ob_sd, f"retained (epoch {be} = the old all-structure best_ema)"
+    elif be == last and last_sd is not None:
+        sd, note = last_sd, f"retained (epoch {be} = the last epoch, EMA weights of last.pt)"
+    else:
+        sd, note = None, f"not retained (epoch {be})"
+    # ReduceLROnPlateau(mode min, threshold 0 rel): is_better(a, best) = a < best; num_bad_epochs counts the scheduler
+    # steps since the best (the trainer steps it at epochs >= warmup) and the lr drops when it exceeds patience
+    n_bad = 0 if be is None else min(pat, sum(1 for h in hist if h.get("epoch") is not None
+                                              and be < int(h["epoch"]) and int(h["epoch"]) >= warm))
+    try:
+        lr = float(ck["opt"]["param_groups"][0]["lr"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        lr = None
+    sel = dict(selection_metric=SEL_NAME, metric_key=SEL_KEY, switched_at_epoch=last + 1, previous_metric=PREV_SEL,
+               previous_best=dict(epoch=ob_e, metric=_num(ck.get("best_metric"))), ts_best_weights=note,
+               migration=dict(rule="FTF-sel (old last.pt without TS fields)", last_epoch=last, n_records=len(hist),
+                              n_records_with_metric=len(ts_hist(hist)), best_ts_epoch=be, best_ts_metric=_num(bm),
+                              since_best=None if be is None else last - be, sched_best=_num(bm),
+                              sched_num_bad_epochs=int(n_bad), sched_cooldown_counter=0, lr_kept=lr,
+                              migrated=F._now()))
+    return dict(fmt="old", bts_epoch=be, bts_metric=bm, bts_sd=sd, bsw_epoch=None, bsw_metric=math.inf, bsw_sd=None,
+                cands=[("old all-structure best_ema", ob_e, ob_sd), ("last-epoch EMA", last, last_sd)], sel=sel)
+
+
+def pick_export(TS, hist):
+    """decision FTF-export: (state_dict, epoch, TS-near metric, rule) or None (nothing exportable)."""
+    if TS.get("bts_sd") is not None and TS.get("bts_epoch") is not None:
+        return TS["bts_sd"], int(TS["bts_epoch"]), _num(TS["bts_metric"]), "TS-near best (EMA weights of that epoch)"
+    if TS.get("bsw_sd") is not None and TS.get("bsw_epoch") is not None:
+        return (TS["bsw_sd"], int(TS["bsw_epoch"]), _num(TS["bsw_metric"]),
+                f"TS-near best since the switch at epoch {(TS.get('sel') or {}).get('switched_at_epoch')} (the "
+                f"historical TS-near best epoch {TS.get('bts_epoch')} is not retained)")
+    th = ts_hist(hist)
+    c = [(th[int(e)], int(e), sd, lab) for lab, e, sd in TS.get("cands") or []
+         if sd is not None and e is not None and int(e) in th]
+    if c:
+        m, e, sd, lab = min(c, key=lambda t: (t[0], t[1]))
+        return sd, e, m, (f"no epoch evaluated after the switch: the saved candidate with the lowest recorded TS-near "
+                          f"metric ({lab}, epoch {e})")
+    return None
+
+
+def ts_summary(hist, TS=None):
+    """compact TS-near metric history (printed by export / at resume)."""
+    th = ts_hist(hist)
+    be, bm = hist_best(hist, sel_metric)
+    ae, am = hist_best(hist, all_metric)
+    last = hist[-1] if hist else {}
+    pts = sorted(set([e for e in th if e % 10 == 0] + sorted(th)[-10:]))
+    out = dict(n_epochs=len(hist), n_with_ts_metric=len(th), best_ts_epoch=be, best_ts_metric=_num(bm),
+               best_all_epoch=ae, best_all_metric=_num(am), last_epoch=last.get("epoch"),
+               last_ts_metric=sel_metric(last), last_lr_next=last.get("lr_next"),
+               since_best_ts=(int(last["epoch"]) - be) if last and be is not None else None,
+               curve={str(e): round(th[e], 5) for e in pts})
+    if TS is not None:
+        out.update(selection=TS.get("sel"), best_ts_since_switch=dict(epoch=TS.get("bsw_epoch"),
+                                                                      metric=_num(TS.get("bsw_metric"))))
+    return out
+
+
 def cmd_train(run, o):
-    """lock.json is released on every exit (normal return, pause exit 2, STOP exit 3, exceptions)."""
+    """lock.json is released on every exit (normal return, pause exit 2, STOP exit 3, exceptions, SIGTERM)."""
     held = []
+    try:                                                 # scancel / wall SIGTERM -> SystemExit(143): the finally below
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))   # releases lock.json (as mlts_autode.py)
+    except ValueError:                                   # not the main thread: keep the default handler
+        pass
     try:
         return _cmd_train(run, o, held)
     finally:
@@ -922,10 +1105,16 @@ def _cmd_train(run, o, held):
     if not smeta or smeta.get("fingerprint") != sfp or not split_files_ok(sdir):
         M.stop(f"{run}: split dir {sdir} missing / incomplete / fingerprint differs")
     prev = F._rj(out_json)
+    # FTF-sel: a run finished by the pre-11-06 code (no selection_metric in its train json) is re-evaluated: resume
+    # from last.pt, the old metric-dependent early stop is set aside, the TS-near rule decides, the export is redone
+    old_sel_done = bool(prev and prev.get("status") == "done" and prev.get("selection_metric") != SEL_NAME)
     if prev and prev.get("status") == "done" and model_out.is_file() and prev.get("data_fingerprint") == sfp \
-            and not o.force:
+            and not o.force and not old_sel_done:
         print(f"[train] {run} done already ({model_out}; stop: {prev.get('stop_reason')})", flush=True)
         return 0
+    if old_sel_done and not o.force:
+        print(f"[train] {run} was finished by the old selection code (stop: {prev.get('stop_reason')}); re-evaluated "
+              f"under FTF-sel ({SEL_NAME})", flush=True)
     if not smeta.get("inputs_complete") and not o.allow_partial:
         M.not_ready(f"split {R['split']} was built from incomplete inputs; rebuild with `ft_full.py data` after the "
                     f"collects, or pass --allow-partial")
@@ -972,6 +1161,8 @@ def _cmd_train(run, o, held):
           (("train", "valid"), ("train", "test"), ("valid", "test"))}
     if any(ov.values()) or not len(tr) or not len(va) or max(int(tr.max()), int(va.max())) >= store.n:
         M.stop(f"{run}: bad index sets (overlap {ov}, n_train {len(tr)}, n_valid {len(va)}, store n {store.n})")
+    if not bool(store.ts_near[va].any()):                # FTF-sel: the selection metric needs TS-near validation rows
+        M.stop(f"{run}: no TS-near structure in the validation set: the selection metric {SEL_NAME} is undefined")
     bs = int(H["batch"])
     tr_sh = store.shard[tr]
     by_shard = {int(s): tr[tr_sh == s] for s in np.unique(tr_sh)}
@@ -1019,9 +1210,11 @@ def _cmd_train(run, o, held):
         forces=dict(fn="aimnet.train.loss.peratom_loss_fn", weight=fw, kwargs=dict(key_true="forces",
                                                                                     key_pred="forces"))))
     ema = EMA(model, ema_model, H["ema"])
-    last_p, best_p, stop_p = rd / "last.pt", rd / "best_ema.pt", rd / "stop.json"
-    hist, start, gstep, best_metric, best_epoch, sae_ck = [], 0, 0, float("inf"), None, None
-    best_sd = None                                       # CPU copy of the best EMA weights; saved inside last.pt
+    last_p, best_p, stop_p = rd / "last.pt", rd / "best_ts_ema.pt", rd / "stop.json"
+    hist, start, gstep, sae_ck = [], 0, 0, None
+    # FTF-sel selection state: bts_* = best TS-near metric / epoch / EMA weights (CPU; None = not retained), bsw_* = best
+    # TS-near among the epochs evaluated after the switch, cands = old-format candidates, sel = the selection record
+    TS = fresh_ts_state()
     if last_p.is_file():
         ck = torch.load(last_p, map_location=dev, weights_only=False)
         if (ck.get("key") or {}).get("split_fp") != sfp:
@@ -1031,15 +1224,33 @@ def _cmd_train(run, o, held):
         opt.load_state_dict(ck["opt"])
         sch.load_state_dict(ck["sch"])
         hist, start, gstep = ck["hist"], int(ck["epoch"]) + 1, int(ck["gstep"])
-        best_metric, best_epoch, sae_ck = float(ck["best_metric"]), ck["best_epoch"], ck.get("sae")
-        best_sd = ck.get("best_ema")
-        if best_sd is not None:
-            best_sd = {k: t.detach().to("cpu", copy=True) for k, t in best_sd.items()}
-        if best_epoch is not None and best_sd is None:
-            M.stop(f"{last_p}: best epoch {best_epoch} recorded but no best_ema weights in the checkpoint")
+        sae_ck = ck.get("sae")
+        TS = ts_state(ck)
         del ck
-        print(f"[train] resumed from {last_p}: epoch {start - 1}, step {gstep}, best {best_epoch} "
-              f"({best_metric:.4f} kcal/mol/A), {bud.prev_h:.2f} GPU-h used", flush=True)
+        if TS["fmt"] == "old":                           # FTF-sel migration of a run started by the old code
+            mg = TS["sel"]["migration"]
+            mg.update(sched_best_before=_num(sch.best), sched_num_bad_before=int(sch.num_bad_epochs),
+                      sched_cooldown_before=int(sch.cooldown_counter))
+            sch.best = float(TS["bts_metric"])           # inf when no record has the metric (is_better(a, inf) = True)
+            sch.num_bad_epochs = int(mg["sched_num_bad_epochs"])
+            sch.cooldown_counter = 0
+            old_best = rd / "best_ema.pt"                # all-structure best: relabelled, never exported
+            if old_best.is_file():
+                try:
+                    os.replace(old_best, rd / LEGACY_BEST)
+                    TS["sel"]["legacy_best_ema"] = str(rd / LEGACY_BEST)
+                except OSError as e:
+                    print(f"[train] WARNING: could not rename {old_best} to {LEGACY_BEST}: {e!r}", flush=True)
+            elif (rd / LEGACY_BEST).is_file():           # renamed by an earlier attempt that ended before an epoch
+                TS["sel"]["legacy_best_ema"] = str(rd / LEGACY_BEST)
+            print(f"[train] FTF-sel migration (selection metric -> {SEL_NAME}): best TS-near epoch {TS['bts_epoch']} "
+                  f"({_num(TS['bts_metric'])} kcal/mol/A), weights {TS['sel']['ts_best_weights']}; since best "
+                  f"{mg['since_best']}; lr kept {mg['lr_kept']}; scheduler best {mg['sched_best_before']} -> "
+                  f"{_num(sch.best)}, num_bad {mg['sched_num_bad_before']} -> {sch.num_bad_epochs}, cooldown 0",
+                  flush=True)
+        print(f"[train] resumed from {last_p} ({TS['fmt']} format): epoch {start - 1}, step {gstep}, best TS-near "
+              f"{TS['bts_epoch']} ({_num(TS['bts_metric'])} kcal/mol/A), best since switch {TS['bsw_epoch']}, "
+              f"{bud.prev_h:.2f} GPU-h used", flush=True)
     # ---- validation chunk + self-check (FTF-selfcheck; before the E0 fit)
     t_sc = time.time()
     vch = Chunk(store, va)
@@ -1109,19 +1320,25 @@ def _cmd_train(run, o, held):
     hyper = dict(lr=H["lr"], warmup=f"epochs 0-{H['warmup_epochs'] - 1} linear per step {H['lr_warm0']} -> {H['lr']}",
                  warm_steps=warm_steps, steps_per_epoch=nb_epoch, ema=H["ema"],
                  scheduler=f"ReduceLROnPlateau factor {H['plateau_factor']} patience {H['plateau_patience']} threshold "
-                           f"{H['plateau_threshold']} rel (strictly lower = the best / early-stop rule) on val force "
-                           f"MAE (EMA), from epoch {H['warmup_epochs']}",
+                           f"{H['plateau_threshold']} rel (strictly lower = the best / early-stop rule) on {SEL_NAME}, "
+                           f"from epoch {H['warmup_epochs']}",
+                 selection_metric=SEL_NAME, selection_key=SEL_KEY,
+                 switched_at_epoch=TS["sel"].get("switched_at_epoch"), previous_metric=TS["sel"].get("previous_metric"),
+                 recorded_only="validation force MAE over all structures (mae_f_kcal_A), energy MAE (mae_e_kcal)",
                  grad_skip=f"non-finite gradient with finite loss: step skipped; STOP at "
                            f"{H['grad_skip_consec_stop']} in a row or {H['grad_skip_epoch_stop']} in one epoch",
-                 stop=f"lr < {H['lr_stop']} | {H['no_improve_stop']} epochs without improvement | {o.max_epochs} "
-                      f"epochs | {cap_h} GPU-h", ew=H["ew"], fw=fw, fw_source=fw_src, batch_size=bs,
+                 stop=f"lr < {H['lr_stop']} | {H['no_improve_stop']} epochs without improvement of {SEL_NAME} | "
+                      f"{o.max_epochs} epochs | {cap_h} GPU-h", ew=H["ew"], fw=fw, fw_source=fw_src, batch_size=bs,
                  valid_batch=H["valid_batch"], clip=f"clip_grad_value_ {H['clip_value']} (finetune.train_aimnet value)",
                  optimizer="RAdam wd 1e-8 (shifts 0)", d3=F.B3LYP_D3BJ, seed=R["train_seed"], wall_h=o.wall_h,
                  max_epochs=o.max_epochs, cap_gpu_h=cap_h)
 
     def record(status, stop_reason=None, **kw):
         ep_s = [h["epoch_s"] for h in hist]
+        best_epoch = TS["bts_epoch"]
         brec = next((h for h in hist if h["epoch"] == best_epoch), None)
+        ab_e, ab_m = hist_best(hist, all_metric)
+        pk = pick_export(TS, hist)
         return dict(run=run, cand=cand, kind="aimnet", mode="full", status=status, model=str(model_out),
                     model_card=str(model_out.with_suffix(".json")), foundation=str(jpt), split=R["split"],
                     split_dir=str(sdir), data_fingerprint=sfp, store_dir=str(store.dir),
@@ -1129,12 +1346,21 @@ def _cmd_train(run, o, held):
                     inputs_complete=smeta.get("inputs_complete"), n_train=int(len(tr)), n_valid=int(len(va)),
                     n_test=int(len(idx["test"])), n_valid_ts_near=int(store.ts_near[va].sum()), gpu=gpu,
                     gpu_h=bud.now_h(), cap_gpu_h=cap_h, stop_reason=stop_reason,
+                    selection_metric=SEL_NAME, switched_at_epoch=TS["sel"].get("switched_at_epoch"),
+                    previous_metric=TS["sel"].get("previous_metric"),
                     epochs=dict(n=len(hist), best_epoch=best_epoch, best=brec,
-                                best_val_force_mae_kcal_A=best_metric if math.isfinite(best_metric) else None,
+                                best_val_ts_force_mae_kcal_A=_num(TS["bts_metric"]),
                                 since_best=(hist[-1]["epoch"] - best_epoch) if hist and best_epoch is not None
                                 else None,
+                                best_ts_since_switch=dict(epoch=TS["bsw_epoch"], metric=_num(TS["bsw_metric"])),
+                                best_all_structures=dict(epoch=ab_e, metric=_num(ab_m),
+                                                         note="recorded only (no decision uses it since 11-06)"),
+                                selection=TS["sel"],
+                                export_pick=dict(epoch=pk[1], metric_ts=pk[2], rule=pk[3]) if pk else None,
+                                lr_current=float(opt.param_groups[0]["lr"]),
                                 epoch_s_median=float(np.median(ep_s)) if ep_s else None,
-                                metric="validation force MAE, EMA weights, all validation structures (kcal/mol/A)",
+                                metric=f"{SEL_NAME} (kcal/mol/A) = best epoch / scheduler / early stop; all-structure "
+                                       f"force MAE and energy MAE recorded only",
                                 history=hist),
                     sae=saej, parity_released_vs_built=parity, self_check=sc, hyper=hyper, import_guard=guard,
                     disk_gb=dict(run_dir=F._du_gb(rd)),
@@ -1142,14 +1368,21 @@ def _cmd_train(run, o, held):
                     written=F._now(), **_jobtag(), **kw)
 
     def save_ck(epoch):
+        """last.pt in the new format (ckpt_format SEL_CODE; no all-structure best fields)."""
         F._wtorch(dict(model=model.state_dict(), ema=ema_model.state_dict(), opt=opt.state_dict(),
-                       sch=sch.state_dict(), hist=hist, epoch=epoch, gstep=gstep, best_metric=best_metric,
-                       best_epoch=best_epoch, best_ema=best_sd, sae=saej, key=key, written=F._now()), last_p)
+                       sch=sch.state_dict(), hist=hist, epoch=epoch, gstep=gstep, ckpt_format=SEL_CODE,
+                       best_ts_metric=_num(TS["bts_metric"]), best_ts_epoch=TS["bts_epoch"], best_ts_ema=TS["bts_sd"],
+                       best_ts_sw_metric=_num(TS["bsw_metric"]), best_ts_sw_epoch=TS["bsw_epoch"],
+                       best_ts_sw_ema=TS["bsw_sd"], selection=TS["sel"], sae=saej, key=key, written=F._now()),
+                  last_p)
 
     def write_best():
-        """best_ema.pt (plain EMA state_dict, as export_aimnet expects) from the in-memory copy that last.pt holds."""
-        if best_sd is not None:
-            F._wtorch(best_sd, best_p)
+        """best_ts_ema.pt (plain EMA state_dict, as export_aimnet expects) = the FTF-export pick, from the in-memory
+        copies that last.pt holds; returns the pick (None: nothing exportable)."""
+        pk = pick_export(TS, hist)
+        if pk is not None:
+            F._wtorch(pk[0], best_p)
+        return pk
 
     plist = list(model.parameters())
 
@@ -1174,7 +1407,22 @@ def _cmd_train(run, o, held):
         M.write_text(rd / "epochs.jsonl", "".join(json.dumps(h) + "\n" for h in hist))
 
     stop = F._rj(stop_p)
+    if stop and stop.get("selection_metric") != SEL_NAME and "without a better" in str(stop.get("reason") or ""):
+        # FTF-sel: an early stop decided by the old all-structure metric is not a stop under the TS-near rule (the
+        # lr / max-epoch / GPU-h stops do not depend on the metric and are kept); the TS-near rule below decides
+        moved = rd / "stop_oldsel.json"
+        try:
+            os.replace(stop_p, moved)
+            TS["sel"]["old_stop"] = dict(reason=stop.get("reason"), epoch=stop.get("epoch"), moved_to=str(moved))
+            print(f"[train] FTF-sel: old early stop ({stop.get('reason')}) set aside -> {moved}", flush=True)
+            stop = None
+        except OSError as e:
+            print(f"[train] WARNING: could not move the old stop.json aside ({e!r}); it is kept", flush=True)
     stop_reason = stop.get("reason") if stop else None
+    if stop_reason is None and hist and TS["bts_epoch"] is not None and \
+            int(hist[-1]["epoch"]) - int(TS["bts_epoch"]) >= int(H["no_improve_stop"]):
+        stop_reason = (f"{int(hist[-1]['epoch']) - int(TS['bts_epoch'])} epochs without a better {SEL_NAME} "
+                       f"(at resume, FTF-sel)")
     ex = ThreadPoolExecutor(max_workers=1)
     t_beat = time.time()
     epoch = start
@@ -1263,60 +1511,86 @@ def _cmd_train(run, o, held):
         ema_model.eval()
         fema.eval()
         v = evaluate(fema, vch, vb, shift, dev, loss_fn, tick=tick_eval)
-        metric = v["f_all"]
-        if not v["finite"] or metric is None or not math.isfinite(metric):
+        vrec = dict(mae_f_kcal_A=v["f_all"], mae_f_ts_kcal_A=v["f_ts"], mae_e_kcal=v["e"])
+        metric = sel_metric(vrec)                        # FTF-sel: TS-near force MAE (EMA); the others recorded only
+        if not v["finite"] or metric is None or all_metric(vrec) is None:
             M.stop(f"{run}: non-finite validation at epoch {epoch}: {v}")
-        improved = metric < best_metric
-        if improved:
-            best_metric, best_epoch = metric, epoch
-            best_sd = {k: t.detach().to("cpu", copy=True) for k, t in ema_model.state_dict().items()}
+        bts_prev = float(TS["bts_metric"])               # the best before this epoch (scheduler alignment below)
+        improved = metric < bts_prev
+        sw_improved = metric < TS["bsw_metric"]          # improved implies sw_improved (bts_metric <= bsw_metric)
+        if sw_improved:
+            sd_now = {k: t.detach().to("cpu", copy=True) for k, t in ema_model.state_dict().items()}
+            TS.update(bsw_metric=metric, bsw_epoch=epoch, bsw_sd=sd_now)
+            if improved:                                 # the same CPU copy (saved once by torch.save)
+                TS.update(bts_metric=metric, bts_epoch=epoch, bts_sd=sd_now)
+                TS["sel"]["ts_best_weights"] = f"kept (epoch {epoch})"
         if epoch >= int(H["warmup_epochs"]):
+            if epoch == int(H["warmup_epochs"]) and math.isfinite(bts_prev):
+                # first scheduler step: its best = the best of the warmup epochs too, so the plateau rule and the
+                # best / early-stop rule share one best value (a fresh scheduler has best = inf)
+                sch.best = min(float(sch.best), bts_prev)
             sch.step(metric)
         lr_next = float(opt.param_groups[0]["lr"])
-        rec = dict(epoch=epoch, loss=v["loss"], train_loss=tl / max(1, nb), mae_f_kcal_A=metric,
-                   mae_f_ts_kcal_A=v["f_ts"], mae_e_kcal=v["e"], lr=lr_used, lr_next=lr_next, improved=improved,
+        rec = dict(epoch=epoch, loss=v["loss"], train_loss=tl / max(1, nb), **vrec, lr=lr_used, lr_next=lr_next,
+                   improved=improved, improved_on=SEL_KEY,
                    n_batches=nb, n_skipped_steps=n_skip, gstep=gstep, epoch_s=time.time() - t0, gpu_h=bud.now_h(), job_h=job_h(),
                    max_mem_gb=round(torch.cuda.max_memory_allocated() / 1e9, 2), gpu=gpu,
                    slurm_job=os.environ.get("SLURM_JOB_ID"))
         hist.append(rec)
-        save_ck(epoch)                                   # last.pt first (holds best_sd), then best_ema.pt from it
-        if improved:
+        if TS["cands"]:                                  # an epoch after the switch exists: bsw_sd is the fallback;
+            th0 = ts_hist(hist)                          # the dropped FTF-export third-rule candidates are recorded
+            TS["sel"]["c3_dropped"] = [dict(label=lab, epoch=e, metric_ts=th0.get(int(e)) if e is not None else None)
+                                       for lab, e, sd in TS["cands"] if sd is not None]
+            TS["cands"] = []
+        save_ck(epoch)                                   # last.pt first (holds the TS weights), then best_ts_ema.pt
+        if sw_improved or not best_p.is_file():
             write_best()
         write_hist()
         bud.tick(True)
         beat()
-        print(f"[train] epoch {epoch} val F MAE {metric:.4f} (TS-near {v['f_ts']}) kcal/mol/A | E MAE {v['e']:.3f} "
-              f"kcal/mol | lr {lr_used:.3g} -> {lr_next:.3g} | best {best_epoch} | {bud.now_h():.2f} GPU-h | "
+        best_epoch = TS["bts_epoch"]
+        print(f"[train] epoch {epoch} val F MAE TS-near {metric:.4f} (all {v['f_all']:.4f}) kcal/mol/A | E MAE "
+              f"{v['e']:.3f} kcal/mol | lr {lr_used:.3g} -> {lr_next:.3g} | best TS {best_epoch} "
+              f"({TS['bts_metric']:.4f}), since switch {TS['bsw_epoch']} | {bud.now_h():.2f} GPU-h | "
               f"{rec['epoch_s']:.0f} s", flush=True)
         if lr_next < H["lr_stop"]:
             stop_reason = f"lr {lr_next:.3g} < {H['lr_stop']}"
         elif epoch - best_epoch >= int(H["no_improve_stop"]):
-            stop_reason = f"{epoch - best_epoch} epochs without a better validation force MAE"
+            stop_reason = f"{epoch - best_epoch} epochs without a better {SEL_NAME}"
         F._write_train(out_json, record("running", stop_reason=stop_reason))
         epoch += 1
     ex.shutdown(wait=False)
-    # ---- stop -> export the best EMA weights (FTF-stop)
+    # ---- stop -> export the FTF-export weights (TS-near selection; FTF-stop)
     if not stop:
         M.write_json(stop_p, {**_jobtag(), "reason": stop_reason, "epoch": hist[-1]["epoch"] if hist else None,
+                              "selection_metric": SEL_NAME, "best_ts_epoch": TS["bts_epoch"],
                               "gpu_h": bud.now_h(), "stopped": F._now()})   # _jobtag has time
-    if best_sd is None:
-        F._write_train(out_json, record("failed", stop_reason=stop_reason, note="no finished epoch"))
-        M.stop(f"{run}: stopped ({stop_reason}) without any finished epoch (no best EMA weights)")
-    write_best()                                         # best_ema.pt = the weights of the recorded best_epoch
+    pk = write_best()                                    # best_ts_ema.pt = the weights of the recorded export epoch
+    if pk is None:
+        F._write_train(out_json, record("failed", stop_reason=stop_reason, note="no finished epoch / no exportable "
+                                                                                "TS-near weights"))
+        M.stop(f"{run}: stopped ({stop_reason}) without exportable EMA weights (FTF-export: {TS['sel']})")
+    _sd, x_epoch, x_metric, x_rule = pk
     _r4, chk4 = store.atoms(tr[:4])
     exp = F.export_aimnet(C, best_p, model_out, sae, dict(R, run=run), cand, dict(fingerprint=sfp), dev, chk4)
     card_p = model_out.with_suffix(".json")
     card = F._rj(card_p) or {}
-    card.update(mode="full", weights=f"EMA (decay {H['ema']}) of the best epoch", best_epoch=best_epoch,
-                best_val_force_mae_kcal_A=best_metric, stop_reason=stop_reason, fw=fw, split_dir=str(sdir),
-                store_dir=str(store.dir), g4=(smeta.get("g4") or {}).get("why"), code_full=CODE_VERSION)
+    card.update(name=run, mode="full", weights=f"EMA (decay {H['ema']}) of epoch {x_epoch} ({x_rule})",
+                selection_metric=SEL_NAME, export_epoch=x_epoch, export_metric=x_metric, export_metric_key=SEL_KEY,
+                export_rule=x_rule, best_ts_epoch=TS["bts_epoch"], best_val_ts_force_mae_kcal_A=_num(TS["bts_metric"]),
+                switched_at_epoch=TS["sel"].get("switched_at_epoch"), previous_metric=TS["sel"].get("previous_metric"),
+                ts_best_weights=TS["sel"].get("ts_best_weights"), stop_reason=stop_reason, fw=fw, split_dir=str(sdir),
+                store_dir=str(store.dir), g4=(smeta.get("g4") or {}).get("why"), code_full=CODE_VERSION,
+                code_sel=SEL_CODE)
     M.write_json(card_p, card)
     bud.tick(True)
-    res = record("done", stop_reason=stop_reason, export=exp)
+    res = record("done", stop_reason=stop_reason, export=exp, export_epoch=x_epoch, export_metric=x_metric,
+                 export_rule=x_rule)
     res["disk_gb"]["model"] = model_out.stat().st_size / 1e9
     F._write_train(out_json, res)
-    print(json.dumps(dict(run=run, status="done", stop_reason=stop_reason, best_epoch=best_epoch,
-                          best_val_force_mae_kcal_A=best_metric, epochs=len(hist), gpu_h=round(bud.now_h(), 2),
+    print(json.dumps(dict(run=run, status="done", stop_reason=stop_reason, selection_metric=SEL_NAME,
+                          export_epoch=x_epoch, export_metric=x_metric, export_rule=x_rule,
+                          best_ts_epoch=TS["bts_epoch"], epochs=len(hist), gpu_h=round(bud.now_h(), 2),
                           model=str(model_out))), flush=True)
     return 0
 
@@ -1347,6 +1621,8 @@ def cmd_ft1(run, o):
     out = dict(run=run, cand=tj.get("cand"), model=tj["model"], which="finetuned", mode="full",
                dtype="float32 (shifts float64)", device=torch.cuda.get_device_name(0), sets={},
                split_dir=str(sdir), store_dir=str(store.dir), train_written=tj.get("written"),
+               model_export=dict(selection_metric=tj.get("selection_metric"), epoch=tj.get("export_epoch"),
+                                 metric_ts=tj.get("export_metric"), rule=tj.get("export_rule")),
                definitions=dict(ts_near=F.DECISIONS["FT-ts-near"], rel_e=F.DECISIONS["FT-relE"],
                                 force_mae="mean |F_pred - F_ref| over Cartesian components, kcal mol-1 A-1"),
                note="FT-1 is recorded only (spec 5); FT-2 geometry is the report of step 2")
@@ -1394,23 +1670,145 @@ def cmd_ft1(run, o):
     return 0
 
 
+# ================================================================ interim export (user 11-06 step 2)
+EXPORT_TMP = F.FT / "_export_tmp"                   # temp copies (never inside a run dir); removed after the export
+TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*")
+
+
+def cmd_export(run, o):
+    """interim model of a running (or finished) *_full run without touching the training: a COPY of last.pt (old or
+    new format) is read, the weights are picked by FTF-export, the model is built and checked exactly as the final
+    export (finetune.export_aimnet: SAE + ATOM_REF shifts, B3LYP-D3(BJ) head) -> $MLT/models/<run>_<tag>.jpt + .json
+    (card interim=true, kind aimnet: mlts_bridge.resolve_spec('<run>_<tag>') -> _from_card) and
+    results/ft/<run>_<tag>_export.json. No lock is taken and nothing is written in $MLT/ft/<run>/."""
+    import torch
+    F._guard_imports()
+    R = full_run(run)
+    run = R["run"]
+    tag = str(o.tag or "")
+    if not TAG_RE.fullmatch(tag):
+        raise SystemExit(f"--tag {tag!r}: letters, digits, '.' and '-' only (no '_'), not empty")
+    name = f"{run}_{tag}"
+    try:
+        F.parse_run(name)
+        clash = True
+    except SystemExit:
+        clash = False
+    if clash or name in FULL_RUNS:
+        raise SystemExit(f"{name} is a training run name; choose another --tag")
+    rd = F.FT / run
+    last_p = rd / "last.pt"
+    if not last_p.is_file():
+        M.not_ready(f"{run}: no checkpoint {last_p} yet")
+    dst = F.MODELS / f"{name}.jpt"
+    card_p = dst.with_suffix(".json")
+    tmpd = EXPORT_TMP / f"{name}.{_lock_me()}.{os.getpid()}"
+    F._mkdir(tmpd)
+    try:
+        cp = tmpd / "last.pt"
+        shutil.copyfile(last_p, cp)                      # last.pt is replaced atomically (os.replace): one open = one version
+        ck = torch.load(cp, map_location="cpu", weights_only=False)
+        key = dict(ck.get("key") or {})
+        hist = list(ck.get("hist") or [])
+        last_epoch = int(ck["epoch"])
+        saej = ck.get("sae") or F._rj(rd / "sae.json")
+        TS = ts_state(ck)
+        del ck
+        summ = ts_summary(hist, TS)
+        print(f"[export] {run}: last.pt ({TS['fmt']} format), last epoch {last_epoch}; TS-near metric history "
+              f"{json.dumps(summ, default=str)}", flush=True)
+        pk = pick_export(TS, hist)
+        if pk is None:
+            M.stop(f"{run}: no exportable EMA weights in {last_p} (FTF-export: {TS['sel']})")
+        sd, x_epoch, x_metric, x_rule = pk
+        old = F._rj(card_p)
+        if dst.is_file() and old and not o.force:
+            if old.get("source_run") == run and old.get("export_epoch") == x_epoch and old.get("export_rule") == x_rule:
+                print(f"[export] {name} up to date ({dst}: epoch {x_epoch}, {x_rule})", flush=True)
+                return 0
+            raise SystemExit(f"{dst} exists (source {old.get('source_run')} epoch {old.get('export_epoch')}); the "
+                             f"current pick is epoch {x_epoch}: pass --force to replace it or use another --tag")
+        cand = F.canon_cand(key.get("cand") or H["cand"])
+        C = F.CANDIDATES[cand]
+        if C["kind"] != "aimnet":
+            raise SystemExit(f"{run}: candidate {cand} is not AIMNet2")
+        if not key.get("split_fp") or not key.get("split_dir") or not key.get("store_dir"):
+            M.stop(f"{last_p}: checkpoint run key lacks split / store: {key}")
+        if not saej or not saej.get("sae_eV"):
+            M.stop(f"{run}: no SAE in {last_p} / sae.json")
+        sae = {int(z): float(v) for z, v in saej["sae_eV"].items()}
+        sdir = Path(key["split_dir"])
+        store = Store(key["store_dir"])
+        tr = np.load(sdir / "train.npy").astype(np.int64)
+        _r4, chk4 = store.atoms(tr[:4])                  # the same check structures as the final export
+        wp = tmpd / "weights.pt"
+        F._wtorch(sd, wp)
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        exp = F.export_aimnet(C, wp, dst, sae, dict(R, run=name), cand, dict(fingerprint=key["split_fp"]), dev, chk4)
+        if R["mode"] == "fold":
+            held = f"fold {R['val']} (T1)"
+        elif R["mode"] == "lodo":
+            held = f"dipole {M.DIPOLES[R['val']]}"
+        else:
+            held = "none (all data)"
+        card = F._rj(card_p) or {}
+        card.update(name=name, kind="aimnet", interim=True, mode="full_interim",
+                    note="interim export (user 11-06 step 2): not the final model of the run; the training continues",
+                    source_run=run, source_checkpoint=str(last_p), source_ckpt_format=TS["fmt"],
+                    source_last_epoch=last_epoch, weights=f"EMA (decay {H['ema']}) of epoch {x_epoch} ({x_rule})",
+                    selection_metric=SEL_NAME, export_epoch=x_epoch, export_metric=x_metric, export_metric_key=SEL_KEY,
+                    export_rule=x_rule, best_ts_epoch=TS["bts_epoch"],
+                    best_val_ts_force_mae_kcal_A=_num(TS["bts_metric"]),
+                    ts_best_weights=(TS["sel"] or {}).get("ts_best_weights"),
+                    switched_at_epoch=(TS["sel"] or {}).get("switched_at_epoch"),
+                    previous_metric=(TS["sel"] or {}).get("previous_metric"), selection=TS["sel"], split_mode=R["mode"],
+                    fold=R["val"] if R["mode"] == "fold" else None, held_out=held, split_dir=str(sdir),
+                    store_dir=str(store.dir), fw=key.get("fw"), code_full=CODE_VERSION, code_sel=SEL_CODE)
+        M.write_json(card_p, card)
+        out = dict(name=name, model=str(dst), card=str(card_p), source_run=run, source_last_epoch=last_epoch,
+                   source_ckpt_format=TS["fmt"], selection_metric=SEL_NAME, export_epoch=x_epoch,
+                   export_metric=x_metric, export_rule=x_rule, split=R["split"], held_out=held, export=exp,
+                   ts_history=summ, decisions={k: DECISIONS[k] for k in ("FTF-sel", "FTF-export")},
+                   written=F._now(), **_jobtag())
+        M.write_json(F.RES_FT / f"{name}_export.json", out)
+        print(json.dumps(dict(name=name, model=str(dst), source_run=run, source_last_epoch=last_epoch,
+                              export_epoch=x_epoch, export_metric=x_metric, export_rule=x_rule, split=R["split"],
+                              check_max_abs_eV=exp.get("check_max_abs_eV"))), flush=True)
+        return 0
+    finally:
+        shutil.rmtree(tmpd, ignore_errors=True)
+
+
 # ================================================================ status
 def cmd_status():
+    """one line per *_full run; best TS-near epoch / metric from the history (both json formats), export pick."""
     print(f"{'run':18s} {'split':16s} {'n_train':>8s} {'n_valid':>7s} {'n_test':>6s} {'G4':>3s} {'status':8s} "
-          f"{'ep':>4s} {'best':>4s} {'F_val':>7s} {'F_TS':>7s} {'GPU-h':>6s} stop")
+          f"{'ep':>4s} {'bestTS':>6s} {'F_TS':>7s} {'F_all':>7s} {'since':>5s} {'lr':>8s} {'sw':>4s} {'exp':>4s} "
+          f"{'GPU-h':>6s} stop")
     for r in FULL_RUNS:
         d = F._rj(F.RES_FT / f"{r}_data.json") or {}
         t = F._rj(F.RES_FT / f"{r}_train.json") or {}
         c = d.get("counts") or {}
         ep = t.get("epochs") or {}
-        b = ep.get("best") or {}
+        hist = ep.get("history") or []
+        be, bm = hist_best(hist, sel_metric)
+        b = next((h for h in hist if h.get("epoch") == be), {}) if be is not None else {}
+        last = hist[-1] if hist else {}
+        xp = ep.get("export_pick") or {}
+        sw = t.get("switched_at_epoch")
         g4 = (d.get("g4") or {}).get("used")
         print(f"{r:18s} {d.get('split', ''):16s} {c.get('train', {}).get('n', ''):>8} {c.get('valid', {}).get('n', ''):>7} "
               f"{c.get('test', {}).get('n', ''):>6} {('y' if g4 else 'n') if d else '':>3s} {t.get('status', ''):8s} "
-              f"{ep.get('n', ''):>4} {ep.get('best_epoch', '') if ep.get('best_epoch') is not None else '':>4} "
-              f"{('%.4f' % b['mae_f_kcal_A']) if b.get('mae_f_kcal_A') is not None else '':>7s} "
-              f"{('%.4f' % b['mae_f_ts_kcal_A']) if b.get('mae_f_ts_kcal_A') is not None else '':>7s} "
+              f"{ep.get('n', ''):>4} {be if be is not None else '':>6} "
+              f"{('%.4f' % bm) if _num(bm) is not None else '':>7s} "
+              f"{('%.4f' % b['mae_f_kcal_A']) if _num(b.get('mae_f_kcal_A')) is not None else '':>7s} "
+              f"{(int(last['epoch']) - be) if last and be is not None else '':>5} "
+              f"{('%.2e' % last['lr_next']) if _num(last.get('lr_next')) is not None else '':>8s} "
+              f"{sw if sw is not None else '':>4} {xp.get('epoch') if xp.get('epoch') is not None else '':>4} "
               f"{('%.2f' % t['gpu_h']) if t.get('gpu_h') is not None else '':>6s} {t.get('stop_reason') or ''}")
+    print(f"bestTS / F_TS = first minimum of the selection metric ({SEL_NAME}) over the epoch history; F_all = "
+          f"all-structure force MAE at that epoch (recorded only); since = epochs since bestTS; lr = lr after the last "
+          f"epoch; sw = switched_at_epoch (FTF-sel migration); exp = epoch the FTF-export rule picks now")
     return 0
 
 
@@ -1441,6 +1839,10 @@ def main(argv=None):
     a.add_argument("run")
     a.add_argument("--batch-size", dest="batch_size", type=int, default=64)
     a.add_argument("--force", action="store_true")
+    a = sub.add_parser("export", help="interim model <run>_<tag> from a copy of last.pt (FTF-export; no lock)")
+    a.add_argument("run")
+    a.add_argument("--tag", required=True)
+    a.add_argument("--force", action="store_true", help="replace an existing <run>_<tag> model of another epoch")
     sub.add_parser("status")
     o = ap.parse_args(argv)
     if o.cmd == "data":
@@ -1449,6 +1851,8 @@ def main(argv=None):
         return cmd_train(o.run, o)
     if o.cmd == "ft1":
         return cmd_ft1(o.run, o)
+    if o.cmd == "export":
+        return cmd_export(o.run, o)
     if o.cmd == "status":
         return cmd_status()
     ap.print_help()
