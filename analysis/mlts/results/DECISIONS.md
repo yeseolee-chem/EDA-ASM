@@ -313,3 +313,14 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - LODO_4 · 2 · 3은 1064360–62(`--begin=now+20minutes --nice=10000`)로 냈다. FT_k_full보다 먼저 칸을 잡지 않게 하기 위해서다.
     - 그 틈에 도는 job: 중간 내보내기 ftf_exp 1064347(`export FT_0_full --tag mid` → $MLT/models/FT_0_full_mid), FT-2 (b) ft2mid_f0_g2 1064348(afterok, `ts_geom.py run FT_0_full_mid f0_test g2 $MLT/ft2_full/FT_0_full_mid/g2 @I 2`), 그림 1064349(TS 근처 곡선 · 학습률 → `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_ts_curves.png`), 정리 1063986.
     - 중간 내보내기는 옛 형식 last.pt를 읽으므로 규칙 C3(저장된 후보 중 TS 최저)를 따를 수 있다. 쓰인 epoch와 규칙을 결과에 적는다.
+  - **결과 (11-06 11:1x – 11:3x)**:
+    - 재개 성공: 예를 들어 FT_0_full은 switched_at_epoch 94 → 지금 101 epoch이고, TS best는 epoch 92(과거, 가중치 없음)이다. FT_4_full은 switched 91 → 98 epoch이고, 전환 뒤 epoch 94가 새 TS best다.
+    - 중간 내보내기 FT_0_full_mid는 epoch 93(TS 0.3046)이다. 규칙 C3을 썼다: TS best epoch 92(0.3035)의 가중치는 옛 코드가 남기지 않았고, epoch 93의 옛 best_ema가 쓸 수 있는 것 중 가장 낮았다.
+    - **FT-2 (b) G2 출발, fold 0 시험(1064348)**:
+      - 1,874반응 중 시도 1,744(G2 출발 없음 130), 수렴 1,628(0.933).
+      - **|Δd| 중앙값 0.0384 Å · 90 % 0.184 Å, 같은 TS 0.155**, 허수 1개 0.947, RMSD 중앙값 0.33 Å.
+      - G2 xTB 출발점 자체는 |Δd| 0.127 Å · 같은 TS 0.006이었다.
+      - 비교: 시범 FTpilot_AIMNet2_0 (b)는 0.054 Å · 같은 TS 0.076, 시범 fold 4 (b)는 0.063 Å · 0.064.
+      - 나아졌지만 FT-2 (a) 기준(0.010 Å, 0.90)과는 거리가 멀다. 보고만 하고 관문으로 쓰지 않는다.
+    - 그림 1064349: `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_ts_curves.png`(사용자가 보고 지움).
+    - 정리 1063986(11:18): MACE 벤치 · 시범 폴더(약 8.0 GB), ft/data(8.9 GB), `$MLT/tmp`(0.8 GB), stale 폴더 5개(0.2 GB)를 지웠다. 모두 **약 17.3 GB**이고, `$MLT`는 지금 13.7 GB다.
