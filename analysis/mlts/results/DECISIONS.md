@@ -299,3 +299,17 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
 - **학습 곡선 그림 (11-06, 사용자 "epoch별 학습 곡선 … 보고 삭제할거야", "로그인노드에서 일시적 허용")**:
   - 실행 칸이 가득 차서 그림 job 1064304가 돌 수 없었다. 사용자가 일시적으로 허락해서, login에서 `scancel 1064304`와 reactot python `plot_curves.py`(JSON 13개 읽기 + PNG 1장)를 1번 실행했다.
   - 그림: `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_learning_curves.png`(사용자가 보고 지움; 저장소에는 넣지 않음).
+- **사용자 지시 (11-06 오전)**: (1) 모든 FT_*_full의 best 선택 · ReduceLROnPlateau · 조기 종료 기준을 검증 TS 근처 힘 MAE(EMA)로 바꾸고, 진행 중 학습에도 바로 적용한다. (2) FT_0_full의 TS 근처 best로 fold 0 FT-2 (b) G2 출발을 1회 중간 측정한다. (3) 모델별 TS 근처 곡선과 현재 학습률을 보고한다.
+  - **FTF-sel / FTF-export (ft_full.py, workflow wf_880cce25-bbd; 구현 → 독립 검토 2개 → 수정, 권장안)**:
+    - 기준: `sel_metric(rec) = rec['mae_f_ts_kcal_A']`. 전체 힘 MAE와 에너지 MAE는 기록만 한다. 종료 조건은 그대로다.
+    - 옛 last.pt로 재개할 때: TS best = 기록 중 첫 최솟값. 조기 종료 카운터 = 마지막 epoch − best_ts_epoch(재개 때 이미 100 이상이면 바로 종료). 학습률은 그대로 두고, scheduler.best = best_ts, num_bad = min(10, best 이후 step 수), cooldown 0.
+    - 과거 TS best 가중치는 그 epoch가 옛 best_ema이거나 마지막 epoch일 때만 남아 있다. 아니면 'not retained'로 기록하고, 전환 이후 TS best를 따로 저장한다.
+    - 내보내기 규칙: C1 TS best → C2 전환 이후 best → C3 저장된 후보 중 TS 최저. 규칙은 카드와 json에 남긴다. 옛 best_ema.pt는 best_ema_allF_legacy.pt로 이름을 바꾼다.
+    - `ft_full.py export <run> --tag <tag>`는 중간 모델을 만든다. last.pt 사본만 읽고, 잠금을 잡지 않고, run 폴더에 쓰지 않는다.
+    - SIGTERM을 받으면 잠금을 푼다.
+  - **적용 (사용자 허락 "scancel 허락 (권장)", login에서 scancel 1번)**:
+    - 학습 10개(1063834–38 · 1063917 · 1063878–81)와 대기 중인 LODO 3개(1063918 · 1063922 · 1063923)를 내렸다.
+    - 옛 코드 job은 잠금이 900 s 남으므로, 학습 10개를 `--begin=now+16minutes`로 다시 냈다. FT_0–4_full 1064350–54, FT_all_full 1064355, s1 1064356, s2 1064357, LODO_0 1064358, LODO_1 1064359. checkpoint에서 이어 학습하며 이때부터 새 기준을 쓴다.
+    - LODO_4 · 2 · 3은 1064360–62(`--begin=now+20minutes --nice=10000`)로 냈다. FT_k_full보다 먼저 칸을 잡지 않게 하기 위해서다.
+    - 그 틈에 도는 job: 중간 내보내기 ftf_exp 1064347(`export FT_0_full --tag mid` → $MLT/models/FT_0_full_mid), FT-2 (b) ft2mid_f0_g2 1064348(afterok, `ts_geom.py run FT_0_full_mid f0_test g2 $MLT/ft2_full/FT_0_full_mid/g2 @I 2`), 그림 1064349(TS 근처 곡선 · 학습률 → `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_ts_curves.png`), 정리 1063986.
+    - 중간 내보내기는 옛 형식 last.pt를 읽으므로 규칙 C3(저장된 후보 중 TS 최저)를 따를 수 있다. 쓰인 epoch와 규칙을 결과에 적는다.
