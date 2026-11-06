@@ -296,3 +296,6 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
   - 검사 · 시험 · dry-run · 시뮬레이터: 65 job · 395 core-h · 10.7 GPU-h. 대부분 sandbox 3개로 358 core-h다.
   - launcher: 117 job · 0.1 core-h.
   - 분류 안 됨: 71 job · 31 core-h · 4.2 GPU-h(이름 목록은 표 안).
+- **학습 곡선 그림 (11-06, 사용자 "epoch별 학습 곡선 … 보고 삭제할거야", "로그인노드에서 일시적 허용")**:
+  - 실행 칸이 가득 차서 그림 job 1064304가 돌 수 없었다. 사용자가 일시적으로 허락해서, login에서 `scancel 1064304`와 reactot python `plot_curves.py`(JSON 13개 읽기 + PNG 1장)를 1번 실행했다.
+  - 그림: `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_learning_curves.png`(사용자가 보고 지움; 저장소에는 넣지 않음).
