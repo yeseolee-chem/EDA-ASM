@@ -331,3 +331,6 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
     - FT-2 label 1065814 · g2 1065815(`ts_geom.py run FT_4_full f4_test <출발> $MLT/ft2_full/FT_4_full/<출발> @I 2`);
     - assemble 1065816(afterany g2, `manual_chain.py assemble 4 FT_4_full`);
     - h3a 1065817(afterok assemble, MC_ROOT=full, finalize · meta · hf_inputs · hf_run).
+  - **FT-2 재측정 fold 4 (FT_4_full, 보고용)**:
+    - (a) 라벨 출발 2,195: |Δd| 중앙값 **0.0253 Å** · 90 % 0.067, 같은 TS **0.336**, RMSD 0.061, 허수 1개 0.982, 수렴 0.992. 시범 FTpilot_AIMNet2_4는 0.0446 · 0.137 · 0.113 · 0.126이었다.
+    - (b) G2 출발 2,102(no_start 93): |Δd| 중앙값 **0.0338 Å** · 90 % 0.248, 같은 TS **0.185**, 허수 1개 0.928, 수렴 0.922(미수렴 163). 시범 (b)는 0.063 · 0.064였다.
