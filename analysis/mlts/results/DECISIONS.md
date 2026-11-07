@@ -324,3 +324,10 @@ STOP 조건에서도 추천안을 골라 여기 기록하고 진행한다. 삭�
       - 나아졌지만 FT-2 (a) 기준(0.010 Å, 0.90)과는 거리가 멀다. 보고만 하고 관문으로 쓰지 않는다.
     - 그림 1064349: `/gpfs/home1/yeseo1ee/projects/eda-asm-prediction/mlts_ts_curves.png`(사용자가 보고 지움).
     - 정리 1063986(11:18): MACE 벤치 · 시범 폴더(약 8.0 GB), ft/data(8.9 GB), `$MLT/tmp`(0.8 GB), stale 폴더 5개(0.2 GB)를 지웠다. 모두 **약 17.3 GB**이고, `$MLT`는 지금 13.7 GB다.
+- **FT_4_full 끝 (11-07)**:
+  - 멈춘 이유: "100 epochs without a better val TS-near force MAE (EMA)".
+  - 313 epoch, 42.3 GPU-h. TS best는 epoch 212다: 검증 TS 근처 힘 MAE 0.361, 전체 0.395 kcal/mol/Å, 에너지 0.82 kcal/mol, 그때 학습률 2.6e-5.
+  - fold 4 2단계를 손 sbatch로 냈다(대기열 상한 20 때문에 FT-2는 출발마다 2 task):
+    - FT-2 label 1065814 · g2 1065815(`ts_geom.py run FT_4_full f4_test <출발> $MLT/ft2_full/FT_4_full/<출발> @I 2`);
+    - assemble 1065816(afterany g2, `manual_chain.py assemble 4 FT_4_full`);
+    - h3a 1065817(afterok assemble, MC_ROOT=full, finalize · meta · hf_inputs · hf_run).
