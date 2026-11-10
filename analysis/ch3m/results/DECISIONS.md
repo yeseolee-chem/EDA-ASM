@@ -1,0 +1,35 @@
+# CH3M 결정 기록 (docs/specs/CH3M_MODELS.md)
+
+- **0-user (2026-11-10 15:2x)**: 사용자가 CH3M_MODELS.md를 붙이며 "진행후 push"라고 했다.
+  - 앞선 지시 "모든 분기에서 추천안대로 진행", "최대 병렬로 진행"과 CH3 때 켠 자동 점검 · 알림을 이어서 적용한다.
+  - STOP(13절)에서만 멈추고 묻는다.
+- **2 브랜치**: `git worktree add -b ch3m …-ch3m 6a4f59c2`. 지시서 원문은 세션 기록에서 job 1070918로 추출해 바이트 그대로 commit했다(2ad32b5f, sha256 7d6af9a7…).
+  - 자동 점검 cron 1d43131b는 매시 13분과 43분에 돈다. 알림은 새 사건만 보내고 `$CH3M/monitor_state.json`에 기록한다.
+- **1 S0 통과 (15:40, job 1070921, commit a668a0c0)**: 1-1..1-7 모두 통과.
+  - 1-6: env_espley가 xgboost 3.2.0 / scikit-learn 1.3.1 / numpy 1.26.0 / pandas 2.1.1 / python 3.11.16으로 LADDER XGB 기록과 같다.
+  - 1-7 디스크: 계산 노드에서는 mmlsquota가 안 되므로 보수적으로 계산했다. 300 GB − (ch3 S0 du 187 GB + 지금 $CH3 · $CH3M du 8 GB) = 105 GB ≥ 20.
+  - 1-8: deploy 최종 모델 `.pt` 5개는 없다(11-09 정리). 따라서 8-3에서 교체 후보가 없으면 9절대로 `train_m.py final TF10`으로 같은 모델을 재생성 입력에서 다시 만든다.
+- **4 XP 통과 (15:45, job 1070929)**: lf · g2 묶음 모두 다음을 확인했다.
+  - y10이 라벨과 비트 단위로 같다.
+  - 분할 20목록이 DeployData.split과 같다.
+  - X가 토큰 glob과 같다(차 0).
+  - lf pair_list_sha = 7de6e33a…
+- **3 코드 구현 메모 (명령서 3절, 추천안)**:
+  - **train_m.py**: ch3 `train_ch3.run_unit` / `train_final`을 모델 이름을 인자로 받게 옮긴 사본이다. fu2 fit · deploy 도우미는 import한다. LADDER train_atoms.run_unit과 S arm 계산이 같다(fit, gate, kcal = predict × s_y).
+  - **xgb_m.py**: LADDER `train_xgb.run_unit`(L1301-1421)을 타깃 목록 인자로 옮겼다.
+    - `prep_fit · leak_check · run_parallel · gate_eval · cost · GRID`는 train_xgb에서 import한다.
+    - `use_targets`가 `TARGETS / NT / H_IDX / H_TARGETS`를 바꾼다.
+    - 데이터는 XP 묶음의 `PackData`이고, `XData.split`(L862-922)을 그대로 옮겼다.
+    - LADDER 명령의 코드 sha 관문(XG-G9)은 명령에만 있어 이 경로에는 해당하지 않는다.
+  - **C-RG2**: C-RG가 실패하면 `train_m.py cr GNN`이 같은 프로세스에서 C-RG2를 바로 돌린다. 판정은 tests_m merge가 5절 규칙대로 한다.
+  - **K 제출 (MaxSubmit 20)**:
+    - 1차: GNN10 · TF10 배열(gpu1)과 XGB 배열(CPU 32코어, `run 10 ::: run 3`)을 낸다.
+    - 2차: TF10이 끝나면 launch_m k2가 GNN3 배열, collect, E를 낸다.
+    - 실행 10 상한 안에서 GPU · CPU를 동시에 쓴다.
+  - **시험 실행 (job 1070941, $CH3M/dev, 결과 아님)**:
+    - XGB: lf 3모드 1칸 학습, 분할 재현, 4타깃 출력 — 정상.
+    - eval selftest (i) ch3 E3_compare 4줄(4 dp)과 (ii) 0-3 MAE 표 6행(3 dp)을 그대로 재현했다.
+    - 오차 상쇄 참고값은 corr(d1, d2) GNN −0.62(명령서 −0.64), XGB −0.49(−0.51), elst · pauli · oi 따로 더한 크기 3.63 / 3.70 / 3.98(명령서 3.64 / 3.74 / 4.02)로 조금 다르다. 판정 항목이 아니므로 정의 차이로 기록한다. 상쇄 후 크기 0.34 / 0.34 / 0.72와 corr(pauli, elst + oi)는 같다.
+    - train_m TF · GNN run_unit, TF10 final + I-2(차 0) — 정상.
+    - **버그(보고 후 수정)**: GNN smoke의 C-T `pt_state_4_outputs`가 ch3 `ct_checks`에서 TF 구조로 `.pt`를 불러와 거짓 실패했다. GNN 구조로 불러온 검사(`pt_state_GNN_4_outputs`)는 통과했다. GNN smoke에서는 TF 불러오기 항목을 빼고 GNN 항목을 쓴다.
+  - **EM 정의**: eval_ch3 정의를 그대로 쓴다(9-3 주 집합 P_sens_ref, 예측 자신의 barrier 부호). EM_ad는 TF · GNN · dep의 자기 타깃별 문턱이고, XGB는 seed 1개라 없다.
