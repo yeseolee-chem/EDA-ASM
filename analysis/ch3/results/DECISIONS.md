@@ -101,4 +101,22 @@
 - **사슬 재개**: job R′가 D1 · D2(afterany) 뒤에 다음을 차례로 돈다. 조건이 맞지 않으면 c_deviation이 exit 3으로 멈춘다.
   - c_deviation write → eval selftest → prereg write → commit PREREG → launch_k.
   - launch_k가 내는 job: K(run_dev, 5 fold 동시) → collect → E · I-1 → W(run_dev) · I-2.
+- **편차 판정 · PREREG · K (13:48, job 1070805)**:
+  - 조건 1–3이 모두 성립했다(proceed true). D1은 LADDER 대비 튜닝 검증값 · 예측 차 0.0이다. D2는 칸 3 × 128, epoch 95, deploy 대비 ±2 % 안 타깃 2/10이다.
+  - eval selftest는 13/15를 재현했다. PREREG는 aead5df7로 commit · push했다. 이어서 K 1070816(0-4), Kc, E, I1, WI를 제출했다.
+- **K 완료 (14:45, commit 1f34f718)**: 5 fold, 시험 짝 7,279, 0.91 GPU-h. 선택 칸은 2 × 64(f0, f2), 2 × 128(f1, f3), 3 × 64(f4)다.
+- **E (14:47, commit 1bdfc204)**: 채택 규칙 미충족. P_main para 1,658짝에서 ch3 대 lf 합 상대 차는 다음과 같다.
+
+  | 타깃 | 상대 차 (95 % CI) | 판정 |
+  |---|---|---|
+  | strain | +8.1 % (+1.2, +14.9) | 실패 |
+  | inter | −0.1 % (−4.8, +4.5) | 통과 |
+  | solv | −1.4 % (−6.7, +3.0) | 통과 |
+  | barrier | +5.7 % (+0.2, +12.1) | 실패 |
+
+  - 명령서 9-2대로 STOP하지 않고 W · I를 진행한다(나란히 보고, 결정은 사용자).
+- **W · I (14:54, commits 6e06d830, 24730ade)**:
+  - W: 칸 2 × 128(2 × 64와 동률, 튜닝 평균 0.4789 대 0.4810), epoch 44, 학습 짝 7,334, C-4 · C-5 · C-T 통과.
+  - I-1 최대 9.5e-7, I-2 0 → 통과.
+- **S (15:0x)**: `SUMMARY_CH3.md`를 작성했다. 숫자는 결과 파일과 대조하는 읽기 전용 검증 workflow로 확인한 뒤 commit · push한다.
 - **GPU**: C-3′, C-8, K, W, I는 명령서대로 RTX 3090(gpu1)에서만 돌린다. 비어 있지 않으면 대기열에서 기다린다(deploy 때처럼 A10으로 옮기지 않는다).
