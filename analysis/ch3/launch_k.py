@@ -9,9 +9,11 @@ Chain (submitted from analysis/ch3, SLURM_SUBMIT_DIR of every child = analysis/c
   K    gpu1 RTX 3090, --array=0-4%5          jobs/gpu_ch3.slurm train_ch3.py run @I 5
   Kc   cpu, afterany:K, CH3ENV=d1fu2          train_ch3.py collect ::: commit_phase.py K
   E    cpu, afterok:Kc, CH3ENV=espley         eval_ch3.py run ::: commit_phase.py E
-  WI   gpu1 RTX 3090, afterok:E                train_ch3.py final ::: commit_phase.py W ::: predict_ch3.py check-i1
-                                               ;;; predict_ch3.py check-i2 ;;; commit_phase.py I
-       (W and I-2 in one job = the same GPU, spec 11 I-2)
+  I1   gpu1 RTX 3090, afterok:Kc               predict_ch3.py check-i1        (needs only the K units: runs beside E / W;
+                                               user 11-10 "최대 병렬로 진행")
+  WI   gpu1 RTX 3090, afterok:E, afterany:I1   train_ch3.py final ::: commit_phase.py W ::: predict_ch3.py check-i2
+                                               ;;; commit_phase.py I
+       (W and I-2 in one job = the same GPU, spec 11 I-2; the I commit carries I-1 and I-2)
 """
 from __future__ import annotations
 
@@ -47,10 +49,12 @@ def main():
     ids["E"] = sbatch(CPU + ["-J", "ch3_E", "--export=ALL,CH3ENV=espley", f"--dependency=afterok:{ids['Kc']}",
                              "--kill-on-invalid-dep=yes", "jobs/cpu_ch3.slurm", "eval_ch3.py", "run", ":::",
                              "commit_phase.py", "E"])
-    ids["WI"] = sbatch(GPU + ["-J", "ch3_WI", f"--dependency=afterok:{ids['E']}", "--kill-on-invalid-dep=yes",
-                              "jobs/gpu_ch3.slurm", "train_ch3.py", "final", ":::", "commit_phase.py", "W", ":::",
-                              "predict_ch3.py", "check-i1", ";;;", "predict_ch3.py", "check-i2", ";;;",
-                              "commit_phase.py", "I"])
+    ids["I1"] = sbatch(GPU + ["-J", "ch3_I1", f"--dependency=afterok:{ids['Kc']}", "--kill-on-invalid-dep=yes",
+                              "jobs/gpu_ch3.slurm", "predict_ch3.py", "check-i1"])
+    ids["WI"] = sbatch(GPU + ["-J", "ch3_WI", f"--dependency=afterok:{ids['E']},afterany:{ids['I1']}",
+                              "--kill-on-invalid-dep=yes", "jobs/gpu_ch3.slurm", "train_ch3.py", "final", ":::",
+                              "commit_phase.py", "W", ":::", "predict_ch3.py", "check-i2", ";;;", "commit_phase.py",
+                              "I"])
     rec = dict(written=C3.now(), prereg_git_head=pre.get("git_head"), prereg_md_sha256=pre.get("md_sha256"), jobs=ids)
     C3.write_json(C3.CH3 / "launch_k.json", rec)
     print(json.dumps(rec, indent=1), flush=True)
