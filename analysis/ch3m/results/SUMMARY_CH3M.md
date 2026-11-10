@@ -188,5 +188,8 @@ XGB가 예상보다 CPU를 더 썼다(lf10 47.2 대 예상 30).
 | E | 791aa4bf |
 | W | 0b6cc53b |
 | I | f40b5177 |
+| S | d7096500 |
 
 `$CH3M/`(XGB 묶음, 단위, `.pt`, 로그)는 commit하지 않았다.
+
+**push된 HEAD (`git push -u origin ch3m`, 2026-11-11): `d7096500e921e45952ff0f58f50f1bc26f85efec`**
