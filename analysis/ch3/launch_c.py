@@ -5,7 +5,8 @@
   python launch_c.py      -> $CH3/launch_c.json (job ids)
 
 Chain (submitted from analysis/ch3):
-  VC   cpu, CH3ENV=d1fu2           verify_inputs.py ::: commit_phase.py V ::: tests_ch3.py cpu      (V, C-Y, C-D, C-5)
+  VC   cpu, CH3ENV=d1fu2           commit_phase.py S0 <S0_start.json> ::: verify_inputs.py ::: commit_phase.py V
+                                   ::: tests_ch3.py cpu                                            (V, C-Y, C-D, C-5)
   C8   gpu1 RTX 3090, afterok:VC   train_ch3.py smoke                                              (C-8, C-T, C-4)
   C3r  gpu1 RTX 3090, afterok:VC   train_ch3.py c3r                                                (C-3′, C-4)
   Cm   cpu, afterany:C8:C3r        tests_ch3.py merge ::: commit_phase.py C                         (C_tests.json)
@@ -26,8 +27,9 @@ from launch_k import CPU, GPU, sbatch  # noqa: E402
 
 def main():
     ids = {}
-    ids["VC"] = sbatch(CPU + ["-J", "ch3_VC", "--export=ALL,CH3ENV=d1fu2", "jobs/cpu_ch3.slurm", "verify_inputs.py",
-                              ":::", "commit_phase.py", "V", ":::", "tests_ch3.py", "cpu"])
+    ids["VC"] = sbatch(CPU + ["-J", "ch3_VC", "--export=ALL,CH3ENV=d1fu2", "jobs/cpu_ch3.slurm", "commit_phase.py", "S0",
+                              "analysis/ch3/results/S0_start.json", ":::", "verify_inputs.py", ":::", "commit_phase.py",
+                              "V", ":::", "tests_ch3.py", "cpu"])
     dep = ["--dependency=afterok:" + ids["VC"], "--kill-on-invalid-dep=yes"]
     ids["C8"] = sbatch(GPU + ["-J", "ch3_C8", *dep, "jobs/gpu_ch3.slurm", "train_ch3.py", "smoke"])
     ids["C3r"] = sbatch(GPU + ["-J", "ch3_C3r", *dep, "jobs/gpu_ch3.slurm", "train_ch3.py", "c3r"])
