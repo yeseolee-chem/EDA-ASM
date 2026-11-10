@@ -29,7 +29,7 @@ PHASE_FILES = {
     "K": [f"{R}/KM_predictions.parquet", f"{R}/KM_val.csv", f"{R}/KM_report.json"],
     "E": [f"{R}/EM_3v10.csv", f"{R}/EM_noise.csv", f"{R}/EM_choice.csv", f"{R}/EM_cancel.csv", f"{R}/EM_metrics.csv",
           f"{R}/EM_rank.csv", f"{R}/EM_cause.csv", f"{R}/EM_identity.csv", f"{R}/EM_ad.json", f"{R}/EM_report.json"],
-    "W": [f"{R}/WM_report.json", f"{R}/MODEL_CARD_ch3m.json"],
+    "W": [f"{R}/WM_report.json", f"{R}/MODEL_CARD_ch3m.json", f"{R}/WM_gate.json"],
     "I": [f"{R}/IM_selftest.json"],
     "S": [f"{R}/SUMMARY_CH3M.md", f"{R}/DECISIONS.md"],
 }
@@ -96,16 +96,19 @@ def main(argv):
                 big.append(str(f.relative_to(C.REPO)))
             elif not any(x.startswith(".") and x.endswith(".tmp") for x in f.parts):
                 add.append(str(f.relative_to(C.REPO)))
-    if add:
-        git("add", "--", *add, check=True)
-    if git("diff", "--cached", "--quiet").returncode == 0:
+    if not add:
+        print(f"[commit {phase}] no file", flush=True)
+        return 0
+    git("add", "--", *add, check=True)
+    if git("diff", "--cached", "--quiet", "--", *add).returncode == 0:      # only this phase's paths (review 11-10)
         print(f"[commit {phase}] nothing staged", flush=True)
         return 0
     msg = f"CH3M {phase}: {summary(phase)}"
     if big:
         msg += "\n\nNot committed (> 50 MB, spec 11): " + ", ".join(big)
     msg += f"\n\n{TRAILER}"
-    git("-c", "user.name=yeseo1ee", "-c", "user.email=yeseolele@gmail.com", "commit", "-q", "-m", msg, check=True)
+    git("-c", "user.name=yeseo1ee", "-c", "user.email=yeseolele@gmail.com", "commit", "-q", "-m", msg, "--", *add,
+        check=True)
     head = git("rev-parse", "--short", "HEAD").stdout.strip()
     print(json.dumps(dict(phase=phase, head=head, n_files=len(add), big=big, message=msg.splitlines()[0])), flush=True)
     return 0

@@ -32,4 +32,21 @@
     - 오차 상쇄 참고값은 corr(d1, d2) GNN −0.62(명령서 −0.64), XGB −0.49(−0.51), elst · pauli · oi 따로 더한 크기 3.63 / 3.70 / 3.98(명령서 3.64 / 3.74 / 4.02)로 조금 다르다. 판정 항목이 아니므로 정의 차이로 기록한다. 상쇄 후 크기 0.34 / 0.34 / 0.72와 corr(pauli, elst + oi)는 같다.
     - train_m TF · GNN run_unit, TF10 final + I-2(차 0) — 정상.
     - **버그(보고 후 수정)**: GNN smoke의 C-T `pt_state_4_outputs`가 ch3 `ct_checks`에서 TF 구조로 `.pt`를 불러와 거짓 실패했다. GNN 구조로 불러온 검사(`pt_state_GNN_4_outputs`)는 통과했다. GNN smoke에서는 TF 불러오기 항목을 빼고 GNN 항목을 쓴다.
+  - **학습 시작 (사용자 16:0x "학습 시작해줘")**: 코드 bc11392c를 commit하고 `launch_m.py c`(job 1070945)를 냈다. C 단계는 Ccpu 1070946, CRT 1070947, CRG 1070948, C8nn 1070949, CRX 1070950, C8x 1070951, Cm 1070952, R 1070953이다.
+  - **읽기 전용 코드 리뷰 (workflow, 에이전트 3개) → 보고 후 수정 (16:2x)**:
+    - 상황: CRT · CRX가 이미 bc11392c 학습 코드로 돌고 있다. 학습 코드(`train_m.py`, `xgb_m.py`, `ch3m_common.py`, C_tests · 단위 지문에 sha로 들어감)는 고치지 않고 다른 파일에서 막았다.
+    - (1) C-XB 실패 뒤에도 E가 돌 수 있었다 → `eval_m run`이 `KM_report` C_XB ok와 예측 sha를 요구한다.
+    - (2) 2차 제출기가 이미 끝나 지워진 job에 의존을 걸면 sbatch가 거부될 수 있었다 → 살아 있는 job만 의존에 넣는다.
+    - (3) 제출 전 대기열 여유(MaxSubmit 20)를 확인하지 않았다 → 확인하고 기다린다. 단계 기록은 제출마다 쓴다.
+    - (4) W의 TF10 경로는 단위가 없으면 비정상 종료했고, EM_report가 현재 KM으로 계산됐는지 확인하지 않았다 → 래퍼 `final_m.py`를 둔다(단위 · fold .pt 존재, KM sha, `WM_gate.json`).
+    - (5) C-RG2 판정이 오래된 파일이나 NaN을 받을 수 있었다 → 코드 sha, 관문, 유한값을 확인한다.
+    - (6) GNN smoke의 출력 폭은 run_unit 기록(10모드 10, 3모드 4)으로 병합에서 확인한다.
+    - (7) `commit_m`이 색인 전체를 commit했다 → 단계 파일만 commit한다.
+    - (8) Q1의 all 행 흔들림 기준은 같은 위치(all)의 TF10 대 dep으로 바꿨다(PREREG 전).
+  - **편차 기록 (리뷰 지적, 추천안 = 그대로 두고 기록)**:
+    - K는 최대 병렬로 낸다. GNN10과 TF10을 동시에 내고, GNN3는 TF10 뒤에 낸다. 명령서 7절의 "GPU 세 묶음 afterany 사슬"과 다르며, 결과에는 영향이 없다.
+    - XGB 10 · 3모드는 한 배열(`;;;`)로 돈다.
+    - 명령서 1-2 실패 시 재생성 · TF3 재학습 경로는 구현하지 않았다. S0에서 1-2가 통과해 해당하지 않는다. 실패했다면 s0_m이 STOP으로 멈춘다.
+    - XGB 단위 지문에는 LADDER 보조 파일(lad_common, fu2_common, tokens)의 sha가 빠져 있다. 이 파일들은 수정하지 않는다.
+    - XP는 S_folds sha · core NaN 검사를 따로 하지 않았다. 대신 PackData.split의 fold 0 GroupKFold 단언과 LADDER가 통과한 같은 commit 파일에 기댄다.
   - **EM 정의**: eval_ch3 정의를 그대로 쓴다(9-3 주 집합 P_sens_ref, 예측 자신의 barrier 부호). EM_ad는 TF · GNN · dep의 자기 타깃별 문턱이고, XGB는 seed 1개라 없다.

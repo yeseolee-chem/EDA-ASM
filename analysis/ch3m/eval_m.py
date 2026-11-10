@@ -56,7 +56,8 @@ def _defs():
         "q1": "EM_3v10: 모델마다 x3 대 x10합, 상대 차 r = (MAE(x3) − MAE(x10합)) / MAE(x10합), core 부트스트랩 2,000회 "
               "seed 20261019 95 % CI (eval_geo2.boot_diff 재표본, eval_ch3.boot_rel); P_main para(주) · all(보조) · m. "
               f"표시: 3 나음 = 상한 < 0 & r < −max(noise_t, {NOISE_FLOOR:g}); 10합 나음 = 하한 > 0 & r > +max(noise_t, "
-              f"{NOISE_FLOOR:g}); 그 밖 같음. noise_t = |r(TF10 대 dep)| (P_main para)",
+              f"{NOISE_FLOOR:g}); 그 밖 같음. noise_t = |r(TF10 대 dep)|, 같은 위치(para 행은 P_main para, all 행은 "
+              "P_main all)",
         "q2": f"EM_choice: 후보 {TIE_ORDER} 대 dep, P_main para r_t. 교체 = (a) 4타깃 모두 95 % 상한 ≤ +{REL_A * 100:g} % "
               f"그리고 (b) 2타깃 이상 r ≤ {REL_B * 100:g} % & 상한 < 0. 여럿이면 r_t 평균 최소, 동률 {TIE_ORDER} 순서. "
               "없으면 배포 모델 그대로",
@@ -144,16 +145,18 @@ def mark(r, lo, hi, noise):
 
 
 def q1(A, ids):
+    """8-2; noise_t per position (para rows: TF10 vs dep on para; all rows: on all) — review 11-10, before K."""
     nz = cmp_rows(A, ids, "TF10", "dep")
-    noise = {t: abs(float(nz[(nz.pos == "p") & (nz.target == t)].rel.iloc[0])) for t in T3}
+    noise_pos = {(r.pos, r.target): abs(float(r.rel)) for r in nz.itertuples()}
     rows = []
     for model in ("TF", "GNN", "XGB"):
         c = cmp_rows(A, ids, f"{model}3", f"{model}10").assign(model=model)
-        c["noise_t"] = c.target.map(noise)
-        c["mark"] = [mark(r.rel, r.rel_ci_lo, r.rel_ci_hi, noise[r.target]) if r.pos in ("p", "all") else None
+        c["noise_t"] = [noise_pos.get((r.pos, r.target)) for r in c.itertuples()]
+        c["mark"] = [mark(r.rel, r.rel_ci_lo, r.rel_ci_hi, noise_pos[(r.pos, r.target)]) if r.pos in ("p", "all") else None
                      for r in c.itertuples()]
         c["main"] = c.pos == "p"
         rows.append(c)
+    noise = {t: noise_pos[("p", t)] for t in T3}
     return pd.concat(rows, ignore_index=True), nz, noise
 
 
@@ -225,6 +228,14 @@ def code_sha():
 def cmd_run():
     if not KM.is_file():
         C.not_ready(f"{KM} missing (xgb_m.py collect)")
+    kr = C.RES / "KM_report.json"
+    if not kr.is_file():
+        C.not_ready(f"{kr} missing (xgb_m.py collect)")
+    k = C.read_json(kr)
+    if not (k.get("C_XB") or {}).get("ok"):
+        C.stop(f"spec 13 stage 7: C-XB failed in {kr.name}: {k.get('C_XB')}")
+    if k.get("predictions_sha256") != C.sha256(KM):
+        C.stop(f"{KM.name} changed after {kr.name}")
     import prereg_m as PR
     L, Y, attr = EV.labels()
     frames, info, raw10, KMp = load_all(L, Y)

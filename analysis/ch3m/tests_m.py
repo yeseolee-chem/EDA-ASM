@@ -84,8 +84,11 @@ def cmd_merge():
         if rg2 is None:
             C.not_ready("C-RG failed and C-RG2 (train_m.py cr GNN rg2) has not run")
         d = rg2.get("rg2_vs_rg_max_abs_dyhat")
-        if d is None:
-            C.stop("CR_gnn2.json has no rg2_vs_rg_max_abs_dyhat")
+        # review 11-10: CR_gnn2 must come from the current trainer code, pass its gates and give a finite difference
+        rg2_code = all((rg2.get("code_sha256") or {}).get(f) == TM.CODE_SHA[f] for f in TM.TRAINER_FILES)
+        if d is None or not np.isfinite(float(d)) or not rg2_code or not (rg2.get("checks") or {}).get("gates_C4"):
+            C.stop(f"CR_gnn2.json unusable for the C-RG exception: diff {d}, current code {rg2_code}, "
+                   f"gates {(rg2.get('checks') or {}).get('gates_C4')}")
         if d <= RG2_TOL:
             rg_pass = False                                              # deterministic but not LADDER: code difference
         else:
@@ -98,11 +101,16 @@ def cmd_merge():
                                                             max_abs_dval_kcal=rg.get("max_abs_dval_kcal")),
                        C_RG2=dict(checks=rg2.get("checks"), max_abs_dyhat=rg2.get("max_abs_dyhat"), chosen=rg2.get("chosen")))
             C.write_json(C.RES / "C_deviation.json", dev)
-    ct_gnn = ((snn.get("runs") or {}).get(C.uname("lf3", "GNN", 0)) or {}).get("C_T") or {}
+    runs = snn.get("runs") or {}
+    ct_gnn = (runs.get(C.uname("lf3", "GNN", 0)) or {}).get("C_T") or {}
+    # review 11-10: the GNN output width itself (train_ch3.ct_checks builds a TF model for 'model_output_4')
+    w10 = (runs.get(C.uname("lf10", "GNN", 0)) or {}).get("out_dims") or []
+    w3 = (runs.get(C.uname("lf3", "GNN", 0)) or {}).get("out_dims") or []
+    gnn_width = bool(w10 and w3 and all(d == 10 for d in w10) and all(d == 4 for d in w3))
     checks = {"C-RT TF regression (g2, fold 0)": bool(rt.get("ok")),
               "C-RG GNN regression (g2, fold 0; spec 5 exception)": rg_pass,
               "C-RX XGB regression (g2, fold 0)": bool(rx.get("ok")),
-              "C-T GNN 3 mode": bool(ct_gnn.get("ok")),
+              "C-T GNN 3 mode": bool(ct_gnn.get("ok")) and gnn_width,
               "C-T XGB 3 mode": all((sx.get("C_T") or {}).values()) and bool(sx.get("C_T")),
               "C-D data identity": bool(cpu.get("ok")),
               "C-4 / C-5 every fit (smoke + regressions)": bool(snn.get("ok")) and bool(sx.get("leak_C5"))
