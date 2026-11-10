@@ -90,4 +90,15 @@
   - PREREG · K는 내지 않았다(사슬이 C 병합에서 멈춤). 사용자 결정을 기다린다.
 - **결과 push (사용자 13:1x "결과 push")**: C 단계 결과(C_tests · C_part_cpu · C3r_regress · C8_smoke)와 이 기록을 commit하고 `git push -u origin ch3`.
   - `E3_selftest.json`은 지금 eval_ch3.py보다 앞선 판(정의 변경 전)이라 commit하지 않는다. PREREG job에서 다시 만든다.
+- **사용자 결정 (11-10 13:2x)**: "추천 방식대로 진행"에 이어 "모든 분기에서 추천안대로 진행".
+  - 추천안: D1이 deploy C-3를 그대로 재현하고 D2도 C-3′ 기준을 벗어나면, C-3′ 실패를 입력 미세 차이에 의한 편차로 기록하고 PREREG → K → E → W → I로 진행한다.
+  - 구현(학습 코드 파일은 고치지 않음, deploy `final_dev.py` 선례):
+    - `c_deviation.py write`: 조건 1–3을 판정해 `results/C_deviation.json`에 쓴다. 1 = C-3′만 실패하고 V 통과. 2 = D1 튜닝 검증값 차 ≤ 1e-12, epoch 같음. 3 = D2가 C-3′ 기준 하나 이상 벗어남. C_tests · V · D1 · D2 · C3r 파일의 sha256도 고정한다. 조건이 하나라도 아니면 STOP이 유지된다.
+    - `run_dev.py`: 이 프로세스 안에서만 `train_ch3.gate_c_tests`를 바꾼다. C_tests.json all_pass이면 원래 관문이고, 아니면 `c_deviation.check()` + trainer sha 일치를 요구한다. K · W는 이것으로 돈다(launch_k.py).
+    - `prereg_ch3.py write`: 편차를 받아들이고, PREREG md 4-1절에 편차와 근거를 적는다. C_tests.json과 C_deviation.json은 inputs_sha256으로 고정한다.
+- **D1 중간 확인 (13:3x)**: deploy C-3 재실행의 튜닝 3칸(2 × 64, 2 × 128, 3 × 64)이 검증값 · 최적 epoch 모두 LADDER 기록과 같다(예: 0.36633, ep 60). 지금 GPU와 학습 코드는 결정적이다.
+  - D2(seed + 1000)의 튜닝 검증값은 deploy와 최대 약 8 % 다르다.
+- **사슬 재개**: job R′가 D1 · D2(afterany) 뒤에 다음을 차례로 돈다. 조건이 맞지 않으면 c_deviation이 exit 3으로 멈춘다.
+  - c_deviation write → eval selftest → prereg write → commit PREREG → launch_k.
+  - launch_k가 내는 job: K(run_dev, 5 fold 동시) → collect → E · I-1 → W(run_dev) · I-2.
 - **GPU**: C-3′, C-8, K, W, I는 명령서대로 RTX 3090(gpu1)에서만 돌린다. 비어 있지 않으면 대기열에서 기다린다(deploy 때처럼 A10으로 옮기지 않는다).

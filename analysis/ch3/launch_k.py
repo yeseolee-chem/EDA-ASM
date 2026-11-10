@@ -42,8 +42,9 @@ def sbatch(args):
 def main():
     pre = PR.check()
     ids = {}
+    trainer = "run_dev.py" if (C3.RES / "C_deviation.json").is_file() else "train_ch3.py"   # recorded C-3′ deviation
     ids["K"] = sbatch(GPU + ["-J", "ch3_K", "--array=0-4%5", f"--output={LOGS}/%x_%A_%a.out",
-                             "jobs/gpu_ch3.slurm", "train_ch3.py", "run", "@I", "5"])
+                             "jobs/gpu_ch3.slurm", trainer, "run", "@I", "5"])
     ids["Kc"] = sbatch(CPU + ["-J", "ch3_Kc", "--export=ALL,CH3ENV=d1fu2", f"--dependency=afterany:{ids['K']}",
                               "jobs/cpu_ch3.slurm", "train_ch3.py", "collect", ":::", "commit_phase.py", "K"])
     ids["E"] = sbatch(CPU + ["-J", "ch3_E", "--export=ALL,CH3ENV=espley", f"--dependency=afterok:{ids['Kc']}",
@@ -52,7 +53,7 @@ def main():
     ids["I1"] = sbatch(GPU + ["-J", "ch3_I1", f"--dependency=afterok:{ids['Kc']}", "--kill-on-invalid-dep=yes",
                               "jobs/gpu_ch3.slurm", "predict_ch3.py", "check-i1"])
     ids["WI"] = sbatch(GPU + ["-J", "ch3_WI", f"--dependency=afterok:{ids['E']},afterany:{ids['I1']}",
-                              "--kill-on-invalid-dep=yes", "jobs/gpu_ch3.slurm", "train_ch3.py", "final", ":::",
+                              "--kill-on-invalid-dep=yes", "jobs/gpu_ch3.slurm", trainer, "final", ":::",
                               "commit_phase.py", "W", ":::", "predict_ch3.py", "check-i2", ";;;", "commit_phase.py",
                               "I"])
     rec = dict(written=C3.now(), prereg_git_head=pre.get("git_head"), prereg_md_sha256=pre.get("md_sha256"), jobs=ids)

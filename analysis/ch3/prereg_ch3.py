@@ -92,7 +92,11 @@ def cmd_write():
     if MD.is_file() and tracked(MD):
         C3.stop(f"{MD.name} is already tracked by git: the pre-registration is written once (spec 7)")
     v = _need("V_inputs.json")
-    c = _need("C_tests.json")
+    ct = C3.read_json(C3.RES / "C_tests.json") if (C3.RES / "C_tests.json").is_file() else {}
+    dev = None
+    if not ct.get("all_pass"):                                             # user 11-10: recorded C-3′ deviation
+        import c_deviation as CD
+        dev = CD.check()
     sys.path.insert(0, str(HERE))
     import eval_ch3 as EV                                                   # definitions (needs pandas: reactot / espley)
     st = C3.read_json(C3.RES / "E3_selftest.json") if (C3.RES / "E3_selftest.json").is_file() else {}
@@ -101,10 +105,11 @@ def cmd_write():
     s = seen_ch3()
     if any(s.values()):
         C3.stop(f"ch3 training results exist before the pre-registration: {s}")
-    miss = [str(p) for p in inputs() if not p.is_file()]
+    files = inputs() + ([C3.RES / "C_tests.json", C3.RES / "C_deviation.json"] if dev else [])
+    miss = [str(p) for p in files if not p.is_file()]
     if miss:
         C3.not_ready(f"inputs missing: {miss}")
-    ins = {str(p): C3.sha256(p) for p in inputs()}
+    ins = {str(p): C3.sha256(p) for p in files}
     spec = SPEC.read_text()
     q = dict(design=spec_section(spec, "### 0-2.", "### 0-3."), train=spec_section(spec, "## 8.", "## 9."),
              eval=spec_section(spec, "## 9.", "## 10."), final=spec_section(spec, "## 10.", "## 11."))
@@ -136,10 +141,29 @@ def cmd_write():
            "- 본 것: lf 합(비교 기준, deploy `K_predictions.parquet`)의 9-3 지표(selftest), C-3′(10타깃 deploy 재현, "
            f"fold 0; 결과 `C3r_regress.json` ok {c3r.get('ok')}), C-8 smoke(ch3 모드 fold 0, 2 epoch; 성능 판단에 쓰지 않음, "
            f"ok {sm.get('ok')})",
-           f"- 입력 재생성 확인 V: `results/V_inputs.json` all_pass {v.get('all_pass')}", "",
+           f"- 입력 재생성 확인 V: `results/V_inputs.json` all_pass {v.get('all_pass')}", ""]
+    if dev:
+        ev = dev.get("evidence") or {}
+        md += ["## 4-1. C-3′ 편차 (사용자 결정, `results/C_deviation.json`)", "",
+               f"- 사용자: {dev.get('user_decision')}",
+               f"- C 검사 실패 항목: {ev.get('c_tests_failed')} — 나머지 C 검사는 모두 통과",
+               f"- C-3′: 칸 {(ev.get('C3r') or {}).get('chosen', {}).get('cell')} (deploy "
+               f"{(ev.get('C3r') or {}).get('chosen_deploy', {}).get('cell')}), 최적 epoch 차 "
+               f"{(ev.get('C3r') or {}).get('best_epoch_diff')}, para MAE 상대 차 최대 "
+               f"{(ev.get('D2') or {}).get('max_abs_rel_c3r_vs_deploy')}",
+               f"- D1 deploy C-3 재실행: LADDER 단위와 튜닝 검증값 차 최대 {(ev.get('D1') or {}).get('max_abs_dval_vs_ladder')}"
+               f", epoch 차 {(ev.get('D1') or {}).get('best_epoch_diffs')} → 같은 입력이면 학습이 결정적",
+               f"- D2 seed만 바꾼 fold 0: 칸 {((ev.get('D2') or {}).get('chosen') or {}).get('null')}, epoch 차 "
+               f"{(ev.get('D2') or {}).get('best_epoch_diff')}, ±2 % 안 타깃 수 "
+               f"{(ev.get('D2') or {}).get('n_targets_within_2pct')}, 상대 차 최대 "
+               f"{(ev.get('D2') or {}).get('max_abs_rel_null_vs_deploy')}",
+               "- 해석: C-3′ 차이는 재생성 입력의 ≤ 8.6e-7 차(진동수 유래 B6 열)가 학습에서 증폭된 것이며, 같은 입력의 "
+               "seed 차이로도 C-3′ 기준을 넘는다. 조건 1–3이 모두 성립해 K · W를 진행한다(`run_dev.py`).", ""]
+    md += ["",
            "## 5. 비교 기준 파일과 입력 sha256", "", "| 파일 | sha256 |", "|---|---|"]
     md += [f"| `{p}` | `{h}` |" for p, h in ins.items()]
-    md += ["", f"- C 검사: `results/C_tests.json` sha256 `{C3.sha256(C3.RES / 'C_tests.json')}` (all_pass)",
+    md += ["", f"- C 검사: `results/C_tests.json` sha256 `{C3.sha256(C3.RES / 'C_tests.json')}` (all_pass "
+               f"{ct.get('all_pass')}{'; C-3′ 편차 = results/C_deviation.json' if dev else ''})",
            f"- eval selftest: `results/E3_selftest.json` sha256 `{C3.sha256(C3.RES / 'E3_selftest.json')}`", "",
            "## 6. 코드 sha256 (작성 시)", "", "| 파일 | sha256 |", "|---|---|"]
     code = {f"analysis/ch3/{p.name}": C3.sha256(p) for p in sorted(HERE.glob("*.py"))}
