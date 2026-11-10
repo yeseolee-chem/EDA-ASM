@@ -23,7 +23,7 @@
     - LADDER 명령의 코드 sha 관문(XG-G9)은 명령에만 있어 이 경로에는 해당하지 않는다.
   - **C-RG2**: C-RG가 실패하면 `train_m.py cr GNN`이 같은 프로세스에서 C-RG2를 바로 돌린다. 판정은 tests_m merge가 5절 규칙대로 한다.
   - **K 제출 (MaxSubmit 20)**:
-    - 1차: GNN10 · TF10 배열(gpu1)과 XGB 배열(CPU 32코어, `run 10 ::: run 3`)을 낸다.
+    - 1차: GNN10 · TF10 배열(gpu1)과 XGB 배열(CPU 32코어, `run 10 ;;; run 3`)을 낸다.
     - 2차: TF10이 끝나면 launch_m k2가 GNN3 배열, collect, E를 낸다.
     - 실행 10 상한 안에서 GPU · CPU를 동시에 쓴다.
   - **시험 실행 (job 1070941, $CH3M/dev, 결과 아님)**:
@@ -50,3 +50,14 @@
     - XGB 단위 지문에는 LADDER 보조 파일(lad_common, fu2_common, tokens)의 sha가 빠져 있다. 이 파일들은 수정하지 않는다.
     - XP는 S_folds sha · core NaN 검사를 따로 하지 않았다. 대신 PackData.split의 fold 0 GroupKFold 단언과 LADDER가 통과한 같은 commit 파일에 기댄다.
   - **EM 정의**: eval_ch3 정의를 그대로 쓴다(9-3 주 집합 P_sens_ref, 예측 자신의 barrier 부호). EM_ad는 TF · GNN · dep의 자기 타깃별 문턱이고, XGB는 seed 1개라 없다.
+- **5 C 통과 (17:30, Cm 1070952, commit 93669fb4)**:
+  - C-RT · C-RG · C-RX 모두 LADDER g2 fold 0과 칸 · 최적 epoch가 같고 예측 차는 0이다. C-RG가 통과해 C-RG2는 돌지 않았다(C_deviation 없음).
+  - CRT · CRX는 bc11392c, CRG · C8nn은 223fc718에서 돌았다. 학습 코드 sha는 같다("GPU / XGB parts ran the current trainer code" 통과).
+- **8-6 selftest · 6 PREREG (17:31, R 1070953)**: selftest (i) · (ii)가 모두 맞았다. PREREG_CH3M.md(sha256 540848d0…)를 commit(fdeb48f6)한 뒤 K를 냈다.
+- **7 K (17:31–22:01)**:
+  - 1차: G10 1071143, T10 1071144, X 1071145, L2 1071146. 2차(L2 → launch_m k2): G3 1071304, KCn 1071305, KCx 1071306, E 1071307.
+  - RTX 3090은 대체로 3장만 비어 GNN · TF 배열이 차례로 돌았다(A10으로 옮기지 않음).
+  - 25단위 모두 C-4 · C-5 통과. C-XB 통과(최대 차 0, 같은 칸). 10.88 GPU-h, XGB 66.0 CPU-h(예상 42). commit 666821e5.
+- **8 E (22:01, commit 791aa4bf)**: 8-3 교체 규칙을 통과한 후보가 없다(STOP 아님). 9절 "없음" 행이고 deploy 최종 모델 파일이 없으므로(1-8) `final TF10`으로 간다.
+- **9 W · I (22:01–22:14, WI 1071470)**: TF10 최종 모델(3층 × 64, 70 epoch, 학습 짝 7,334, seed 5개) commit 0b6cc53b. I-1 최대 차 3.2e-6(≤ 1e-4), I-2 최대 차 0(같은 GPU), commit f40b5177.
+- **10 S (11-11)**: `SUMMARY_CH3M.md`의 숫자를 읽기 전용 에이전트(Read만 사용)로 결과 파일 · 로그와 대조했다. 숫자 불일치는 없었다. 지적된 표현 두 곳(흔들림 크기 비교 문구, 위 1차 제출 구분자 `;;;`)만 고쳤다.
