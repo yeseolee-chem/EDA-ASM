@@ -170,3 +170,6 @@ strain 1.33, inter 0.74, solv 0.63, barrier 1.24 kcal/mol. 최종 모델 카드�
 - 배포 모델은 다음 둘 중에서 고른다.
   - (a) lf 8채널 모델 + 합(현행 deploy)
   - (b) ch3 직접 예측(항등식 일관성은 더 좋음)
+
+---
+push된 HEAD (요약 commit): `26a074f0d97675e992b09a0b818f3740a1b78210` (origin/ch3). 이 줄을 더한 commit이 그 다음 commit이다.
