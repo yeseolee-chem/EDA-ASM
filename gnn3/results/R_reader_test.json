@@ -1,0 +1,56 @@
+{
+ "spec": "docs/specs/GNN3_CLEAN.md 7",
+ "setup": "a new general-purpose subagent per round, allowed to read only gnn3/ (Read tool + `git ls-files gnn3`; no other commands); graded against the spec and the original results (analysis/ch3m, analysis/abs3, code at 04642c1c)",
+ "rounds": [
+  {
+   "round": 1,
+   "date": "2026-11-11",
+   "score": "9 / 10",
+   "answers": {
+    "1": {"answer": "strain = ΔΔ(d1+d2), inter = ΔΔ(elst+pauli+oi+disp+c_ghost), solv = ΔΔ(cpcm+cds), barrier = ΔΔ(ΔE‡) predicted directly; kcal/mol, B3LYP-D3(BJ)/def2-TZVP SMD(water) electronic energies", "correct": true},
+    "2": {"answer": "H reference (X = H, same family and position); the H reference must be computed with the same g2 + finalize / feature / token procedure", "correct": true},
+    "3": {"answer": "tokens [N, 29] per reaction (9 one-hot + 6 flags + 14 numeric), globals [182]; g2 TS -> finalize -> metadata -> features -> tokens", "correct": true},
+    "4": {"answer": "DFT only for labels / scoring; inputs are GFN2-xTB (g2 TS, xTB single points, xTB-level ORCA Freq)", "correct": true, "note": "reader confused by TZVP vs SVP"},
+    "5": {"answer": "output flips sign exactly, f(a,a) = 0, by the half-difference head; checked in float64", "correct": true},
+    "6": {"answer": "standardised L1 + 0.1 x identity penalty |barrier - sum of channels| / s_barrier", "correct": true},
+    "7": {"answer": "core (dipole x skeleton), 5 folds; reactions of a core share skeleton / references, so a reaction split leaks near-copies", "correct": true},
+    "8": {"answer": "per fold lowest inner-validation cell + its best epoch; final = mode cell (ties: mean tuning val, grid order), median epochs -> 6 x 64, 49 (not trained)", "correct": true},
+    "9": {"answer": "no SMILES entry point; D1 job-id path given; manifest format and job_id -> rxn_id mapping outside the folder", "correct": false, "not_in_docs": true},
+    "10": {"answer": "across skeletons / families; cyclooctyne D; outside the D1 domain (+ ortho / meta, experiment, other solvents, g2 failures)", "correct": true}
+   },
+   "fixes": [
+    "README §7 rewritten: numbered command sequence for one pair given as SMILES (manifest format with every column, LIST / PAIRS files, ts-search, input chain, predict), the job_id <-> rxn_id mapping (G_status.csv / d1_manifest meta_rxn_id), where the existing code stops for non-D1 reactions, and which networks to use (fold whose test set contains the pair; in-sample warning) (+ README_ko)",
+    "README §1: DFT levels separated (geometries def2-SVP, energies def2-TZVP) (+ README_ko)",
+    "c_ghost described the same way in README §1 and constants.py (interaction from fragment single points minus EDA bonding energy: BSSE shift + cavity move)",
+    "glossary: anchor pairs are in training and test_all (not only training); core counts 46 (+4 anchor-only) vs the 44 cores of P_main para; P_main hygiene is per reaction for a and b",
+    "README §4: units and meaning of the 14 numeric atom features (Mulliken charges, Wiberg valences, rel / frag / TS, |atomic dipole|, Fukui indices, bond distance)",
+    "glossary cr2: level of theory and conformer search; README §5: cosine T_max 300 also in fixed-length fits (CODE_MAP P-13)",
+    "MODEL_CARD: 'trained on' row reworded to the cross-validation networks (final model not trained)"
+   ]
+  },
+  {
+   "round": 2,
+   "date": "2026-11-11",
+   "score": "10 / 10",
+   "answers": {
+    "1": {"correct": true}, "2": {"correct": true}, "3": {"correct": true}, "4": {"correct": true},
+    "5": {"correct": true}, "6": {"correct": true}, "7": {"correct": true}, "8": {"correct": true},
+    "9": {"answer": "README §7 sequence: M.csv / LIST.csv / PAIRS.csv -> prepare_inputs.py ts-search (cpu_d1.slurm) -> jobs/prepare_inputs.sh -> scripts/predict.py; works end to end for D1 reactions, stops at the input chain for non-D1 SMILES (code change needed, P-1 / P-2)", "correct": true, "not_in_docs": false},
+    "10": {"correct": true}
+   },
+   "minor_confusions_fixed": [
+    "label closure: constants.py now says d1 + d2 + e_bond + c_ghost = barrier exactly and the 10 labels close within 0.1 kcal/mol",
+    "glossary: P_sens vs P_sens_ref and T_main defined",
+    "edge-type embedding has 3 types (0 none masked out)",
+    "applicability thresholds: per-pair spread from the 5 seeds of its fold, percentile over all folds; families without an H reaction",
+    "MODEL_CARD: screening use limited by the D1-only input code; recomputed metric copies in results/eval/",
+    "README: data and input code live outside gnn3/ by design (paths in constants.py, CODE_MAP §4)"
+   ],
+   "not_changed": [
+    "E_equivalence.json / E-3 missing during the test: written after E-3 finished",
+    "E-2b n_out_of_range counts rows (pair x target): result file kept as produced"
+   ]
+  }
+ ],
+ "final_score": "10 / 10 (round 2)"
+}
