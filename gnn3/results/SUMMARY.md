@@ -117,4 +117,4 @@ workflow 하나로 문서의 모든 주장을 코드 · 결과 파일과 대조�
 
 ## HEAD
 
-push 뒤에 기록한다.
+push 시점 HEAD: `05ec49c339e7f17bfbc56e9ee3d8af26f4145fe9` (origin/gnn3-clean). 이 줄을 더한 commit이 그 위에 하나 더 있다.
