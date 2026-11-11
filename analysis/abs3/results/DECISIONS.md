@@ -1,0 +1,58 @@
+# ABS3 결정 기록 (docs/specs/ABS3_MODELS.md)
+
+- **0-user (2026-11-11)**: 사용자가 ABS3_MODELS.md를 붙이며 "명령서대로 진행 후 push, 모든 분기마다 추천 옵션으로 진행"이라고 했다.
+  - 앞선 지시("최대 병렬", 자동 점검 · 알림)를 이어서 적용한다. STOP(12절)에서만 멈추고 묻는다.
+  - 자동 점검 cron e3025269(매시 17분 · 47분)를 걸었다. 알림은 새 사건만 보내고 `$ABS3/monitor_state.json`에 기록한다.
+- **2 브랜치**: `git worktree add -b abs3 …-abs3 36b8e17b`(origin/ch3m = 36b8e17b 확인).
+  - 지시서 원문은 세션 기록에서 job 1071724로 바이트 그대로 추출해 commit했다(e4330a92, sha256 9218bbae…).
+  - `$ABS3/{logs,units,smoke,pack}`는 job 1071723(sbatch mkdir)으로 만들었다.
+- **3 코드 구현 메모 (추천안)**:
+  - **abs_data.py**: `DeployData('lf')`(data_ch3가 `$CH3/lf`를 묶음)의 토큰 · 사용 가능 규칙 · 분할을 그대로 쓴다.
+    - fold별 반응 집합 = 각 목록(train · test · inner_train · inner_val)의 사용 가능 짝의 a와 b(토큰 행, 정렬).
+    - 반응 라벨 = `labels_d1_cr2.json`의 10 키(V_report pairs.code.d1_pairs와 같은지 확인) @ M.
+    - 반응 속성: dipole · skeleton · series · attach는 `labels_d1_cr2.parquet`에서 가져온다.
+    - core는 반응이 속한 사용 가능 짝들의 S_folds core다. 하나가 아니면 STOP한다.
+    - role은 reference 짝의 b 반응이면 'H', 아니면 'sub'다(Q-A의 "치환 반응 대 H 기준 반응" 나눠 보기).
+  - **표준화 (AbsStd)**: `fu2 train.Std`를 상속해 `tensors()`를 그대로 쓴다.
+    - 토큰 수치 · 전역 통계는 그 fit의 학습 반응만으로 낸다. 같은 fold의 짝 모델이 학습 짝의 반응으로 낸 통계와 같은 값이다.
+    - y는 학습 반응의 평균과 표준편차(ddof 0)로 표준화한다.
+  - **AbsNet (abs_model.py)**: 인코더는 `models.build`를 그대로 쓰고, 짝 머리와 TF `cross`는 쓰지 않는다.
+    - 반응 벡터: GNN은 readout(3·width), TF는 pooled(tokens)(2·width).
+    - 새 머리 = `mlp(d_r, 2·width, 4, n_hidden=2)`. d_r은 더미 배치(eval 모드, 난수 사용 없음)로 확인한다.
+    - 옵티마이저에는 `enc.head.*` · `enc.cross.*`를 뺀 파라미터만 넣는다.
+  - **학습 (train_abs.py)**: `fu2 train.fit`의 반응 단위판이다.
+    - 배치 64반응, 매 epoch 무작위 순서, 증강 없음.
+    - 손실 = 표준화 L1 + 0.1 · 평균 |kc_barrier − Σ kc_ch| / s_barrier (kc = μ + s · ŷ).
+    - 검증 지표 = 4타깃 표준화 MAE 평균(fu2 상수를 data_ch3.use_targets(TARGETS3)로 3모드에 둔다).
+    - 그 밖(grid, AdamW, cosine 300, patience 30, seed 5개, 튜닝 → final)은 짝 모델과 같다.
+  - **XGB (xgb_abs.py, abs_xgbcore.py)**: 추정기와 grid는 `clone(train_ml_single.GRIDS["XGB"][0])`와 `d1_train.grid_cells("XGB")` 12칸이다.
+    - X = 182열을 학습 반응 평균 · 표준편차로 z-score한다. 표준편차 < 1e-12인 열은 버린다(d1_train.Scale 규칙).
+    - y는 표준화하고, 예측 = μ + s · predict(float64)다.
+    - inner 4 fold = 짝 XGB 규칙(거르기 전 바깥 학습 짝 → core GroupKFold(4) → 사용 가능 짝 → 반응)이다. fold 0이 TF · GNN의 inner 반응 집합과 같은지, inner 반응 집합이 겹치지 않는지 확인하고 아니면 STOP한다.
+  - **C-O (과적합 시험)**: fold 0 학습 반응에서 64개를 rng(seed 20261019)로 뽑아 정렬한다.
+    - 기준은 "그 64개 학습 MAE ≤ 그 64개의 타깃 표준편차(ddof 0) × 10 %"다.
+    - 가장 큰 칸 = grid 마지막 칸(TF 3×128, GNN 6×128, XGB lr 0.1 · 깊이 7 · 500).
+  - **C-X**: fold 0 · barrier · grid 0칸을 두 번 fit해 시험 반응 예측이 같아야 한다.
+  - **C-P**: `abs_pairs.assemble`(fold k 모델의 ŷ(a) − ŷ(b))을 독립 merge 계산과 비교한다. 정답은 F_pairs_cr2.csv를 다시 읽어 dd @ M과 비교한다(≤ 1e-9).
+  - **XGB의 yhat_seed_sd**: 반응 · 짝 모두 NaN이다(fit 1번).
+  - **Q-D 표시**: p · all 행에만 붙인다(m 행은 설명용, CH3M과 같음). "가장 좋은 절대값 모델" 동률은 A-TF → A-GNN → A-XGB 순서로 정한다.
+  - **8-6 selftest**: CH3M EM_metrics의 P_main para MAE 행과 EM_rank의 para 행(GNN3 · TF3 · XGB3)을 비교한다.
+  - **K 제출 (최대 병렬, MaxSubmit 20)**: launch_abs k가 GNN · TF 배열(gpu1)과 XGB 배열(CPU 32)을 함께 낸다(15작업 + collect 2 + E 1).
+- **개발 시험 실행 (11-11 08:33, job 1071731–35, `$ABS3/dev`, 결과 아님)**: 실제 데이터로 코드 경로 전부를 돌렸다.
+  - LS-1..LS-5가 모두 통과했다.
+    - 반응은 7,610개(H 기준 147개)이고 core는 48개다.
+    - 시험 반응 7,491개는 모두 fold 하나에만 들어 있다.
+    - 반응 항등식 잔차 최대는 0.098이다.
+  - C-E · C-O · C-X · C-8 · C-T · C-P는 TF · GNN · XGB 모두 통과했다.
+  - selftest는 CH3M EM_metrics · EM_rank 행을 소수 넷째 자리까지 재현했다(공통 짝 7,279).
+  - fold 0 smoke 예측으로 만든 작은 KA로 `eval_abs.py run`도 끝까지 돌았다.
+- **읽기 전용 코드 리뷰 (workflow, 리뷰 5관점 + 지적마다 반박 검증 2개)**: 학습(TF · GNN) · 평가 관점에서는 결함 지적이 없었다. 운영 관점 지적을 고쳤다(보고 후 수정, 개발 단계라 commit된 결과 없음).
+  - (1) launch_abs를 다시 내면 대기 중인 배열을 한 번 더 낼 수 있었다 → 기존 `launch_<stage>.json`을 읽고, 아직 대기열에 있는 job은 다시 내지 않는다. sbatch · squeue 일시 오류는 재시도하고, 그래도 안 되면 STOP한다.
+  - (2) R job을 다시 내면 `prereg_abs write`가 STOP했다 → 이미 commit된 md가 바뀌지 않았으면 no-op으로 끝난다.
+  - (3) C 병합이 이전 회차의 part 파일을 읽을 수 있었다 → part가 시작할 때 자기 파일을 지우고, pack · LS_report sha256과 job id를 기록한다. 병합은 그 sha256이 지금 파일과 같아야 통과한다. part 코드 sha에 tests_abs · abs_pairs · abs_pack · abs_data도 넣었다.
+  - (4) XGB C-T가 X 표준화 통계를 직접 대조하지 않았다 → 최종 fit의 X 통계 sha를 기록하고, 학습 반응으로 다시 계산한 값과 대조한다(시험 반응 1개를 넣으면 달라지는지도 확인).
+  - (5) PREREG가 코드 commit 여부를 확인하지 않았다 → `analysis/abs3/*.py` · `jobs/*.slurm`이 commit되어 있고 바뀌지 않았는지, S0 all_pass인지 확인한다. 코드는 S0 전에 손으로 commit한다(ch3m bc11392c와 같은 방식).
+  - (6) abs_pairs의 STOP이 exit 1이었다 → `abs_common.stop`(exit 3)을 쓴다.
+  - (7) 시험 반응이 inner 집합에 없다는 C-5 확인을 run_unit(TF · GNN · XGB)에 명시적으로 넣었다.
+  - (8) eval_abs가 pack json의 ok를 확인한다.
+  - 기각된 지적(반박 검증 2개 모두 기각): 옵티마이저 검사가 동어반복이라는 지적, XGB inner fold 1–3, E 단계의 PREREG 재확인 등. 기존 ch3m 규칙과 같거나 실패 경로가 없다.
