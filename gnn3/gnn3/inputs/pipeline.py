@@ -14,9 +14,9 @@ Environments (the interpreter that runs this module must be the one the stage ne
     features     analysis/d1_pair/jobs/g.slurm (analysis/d1_pair),      venv5: python 3.10.14, tblite 0.7.0, xtb 6.7.1
     tokens       --export=ALL,PYENV=venv5,D1PAIR_PHASE=F                (edcfbbe), the Si patch (site_si)
 
-Scope: reactions of the D1 set (the 9,266 targets of analysis/d1_g2/results/G_status.csv). ``finalize`` (report)
-and ``metadata`` read that target list and the D1 manifest, so a reaction outside D1 can get a TS
-(``ts-search``) but not the later stages without a code change (CODE_MAP.md, problems found).
+Scope: reactions of the D1 set (the 9,266 targets of analysis/d1_g2/results/G_status.csv). ``finalize`` (run,
+report) and ``metadata`` read that target list (run and metadata also the D1 manifest), so a reaction outside D1 can
+get a TS (``ts-search``) but not the later stages without a code change (CODE_MAP.md P-1, P-2).
 """
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def prepare_root(root: Path) -> None:
 def reuse_finalized(root: Path, job_list: Path, source_root: Path) -> dict:
     """Copy finished ``finalize`` folders (``source_root/g2lf_final/<rxn_id>``) into ``root`` so that finalize_lf.py
     skips them (it skips every folder with a .done marker). Use this to avoid rerunning the ORCA frequency job, whose
-    result is not bit-for-bit reproducible (the B6 features nu_imag / mode_share / mode_async move by ~1e-7)."""
+    result is not bit-for-bit reproducible (B6 features: nu_imag moves by ~1e-7, mode_share / mode_async by ~1e-11)."""
     copied, present = [], []
     for row in job_rows(job_list):
         source, target = Path(source_root) / "g2lf_final" / row["rxn_id"], Path(root) / "g2lf_final" / row["rxn_id"]

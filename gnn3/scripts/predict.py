@@ -9,7 +9,8 @@ and position, X = H). Both reactions need token files made by ``scripts/prepare_
 
 Output columns: pair_id, a_rxn, b_rxn, target, yhat (seed mean), yhat_sd (seed spread), out_of_range (spread above the
 95th percentile seen in cross-validation: treat the value as unreliable). Pairs whose reactions fail the input checks
-are written to <out>.excluded.csv with the reason.
+are written, with a column ``reason``, to <out> with its suffix replaced by .excluded.csv (predictions.csv ->
+predictions.excluded.csv).
 """
 from __future__ import annotations
 

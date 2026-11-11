@@ -1,6 +1,7 @@
 """Start conditions 1-1 .. 1-4 of docs/specs/GNN3_CLEAN.md -> gnn3/results/S0_start.json.
 
-Run on an RTX 3090 node in env_d1fu2 (jobs/s0.slurm); exits 0 when every condition holds, 3 otherwise (STOP).
+Run on an RTX 3090 node in env_d1fu2 (sbatch -p gpu1 --gres=gpu:rtx3090:1 --time=48:00:00 gnn3/jobs/run.slurm
+gnn3/tests/check_start.py); exits 0 when every condition holds, 3 otherwise (STOP).
 Also records which developer tools exist in the environment (pytest, ruff) for the later steps.
 """
 from __future__ import annotations

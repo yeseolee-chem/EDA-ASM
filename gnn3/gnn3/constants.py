@@ -21,7 +21,10 @@ from pathlib import Path
 
 # --------------------------------------------------------------------------- targets
 #: The 10 per-reaction labels of the D1 data set, in the column order of the label file (ch3_common.TARGETS10).
-#: All are energies in kcal/mol; "c_ghost" is the counterpoise (BSSE) shift of the interaction energy.
+#: All are energies in kcal/mol. "c_ghost" (bsse_shift_kcal) = interaction energy from the separate fragment single
+#: points minus the EDA bonding energy e_bond: the ghost-basis (BSSE) shift plus the move of the fragments into the TS
+#: cavity; d1 + d2 + e_bond + c_ghost = barrier exactly. The 6 EDA terms reproduce e_bond to < 0.1 kcal/mol (ORCA
+#: table closure), so the 10 labels add up to the barrier within 0.1 kcal/mol (max 0.096).
 LABEL_CHANNELS: tuple[str, ...] = ("d1", "d2", "elst", "pauli", "oi", "disp", "cpcm", "cds", "c_ghost", "barrier")
 
 #: The 4 quantities GNN3 predicts, in output-column order (ch3_common.TARGETS3).
