@@ -199,5 +199,8 @@ XGB 칸(grid 번호; 7 = lr 0.1 · 깊이 3, 9 = lr 0.1 · 깊이 5, 3 = lr 0.03
 | PREREG | 70b32650 |
 | K | 8919cbb5 |
 | E | 635dc201 |
+| S | 943004d2 |
 
 `$ABS3/`(pack, 단위, `.pt`, 로그)는 commit하지 않았다. KA_predictions.parquet와 KA_pairs.parquet는 50 MB 아래라 commit했다.
+
+**push된 HEAD (`git push -u origin abs3`, 2026-11-11): `943004d265b59ebe3875645b6fd30b8701e484d6`**
