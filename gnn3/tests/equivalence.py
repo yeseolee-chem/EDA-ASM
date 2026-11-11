@@ -144,6 +144,42 @@ def check_e2() -> int:
                                   max_abs_diff_yhat=worst, max_abs_diff_seed_sd=worst_sd, folds=per_fold, gpu=gpu))
 
 
+# --------------------------------------------------------------------------- E-2b (extra: the prediction command)
+def check_e2_cli() -> int:
+    """scripts/predict.py (the README command) on fold 0's test pairs from the published token files, vs KM_predictions.
+    Extra check, not in the spec: tolerance 1e-4 kcal/mol (= the deploy I-1 check); new reactions are padded to their
+    own batch, so GPU kernels may see other shapes than in training."""
+    import subprocess
+    import torch
+    from gnn3.data import PairDataset
+    dataset = PairDataset()
+    test = dataset.fold_split(0).test
+    pairs = pd.DataFrame(dict(pair_id=dataset.pair_ids(test), a_rxn=dataset.pairs.a_rxn.to_numpy()[test],
+                              b_rxn=dataset.pairs.b_rxn.to_numpy()[test]))
+    work = K.SCRATCH / "e2_cli"
+    work.mkdir(parents=True, exist_ok=True)
+    pairs.to_csv(work / "pairs.csv", index=False)
+    argv = [sys.executable, str(PACKAGE_ROOT / "scripts" / "predict.py"), "--models",
+            str(K.ORIGINAL_UNITS / "D__lf3__S__GNN__f0__s*.pt"), "--tokens", str(K.LF_INPUTS / "fu2_lf" / "tokens"),
+            "--table", str(K.LF_INPUTS / "X182_lf.parquet"), "--pairs", str(work / "pairs.csv"),
+            "--out", str(work / "predictions.csv")]
+    rc = subprocess.run(argv).returncode
+    km = pd.read_parquet(K.ORIGINAL_RESULTS / "KM_predictions.parquet")
+    km = km[(km.rung == "lf3") & (km.model == "GNN") & (km.fold == 0)]
+    record = dict(rc=rc, n_pairs=len(pairs))
+    if rc == 0:
+        new = pd.read_csv(work / "predictions.csv", dtype={"pair_id": str})
+        merged = km.merge(new, on=["pair_id", "target"], how="left")
+        record.update(n_missing=int(merged.yhat_y.isna().sum()),
+                      max_abs_diff_yhat=float((merged.yhat_x - merged.yhat_y).abs().max()),
+                      max_abs_diff_seed_sd=float((merged.yhat_seed_sd - merged.yhat_sd).abs().max()),
+                      n_out_of_range=int(new.out_of_range.sum()),
+                      n_excluded=int(len(pd.read_csv(work / "predictions.excluded.csv"))))
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
+    ok = rc == 0 and record["n_missing"] == 0 and record["n_excluded"] == 0 and record["max_abs_diff_yhat"] <= 1e-4
+    return write_part("E-2b", dict(record, ok=bool(ok), tolerance=1e-4, gpu=gpu, command=" ".join(argv[1:])))
+
+
 # --------------------------------------------------------------------------- E-3
 def check_e3() -> int:
     import torch
@@ -344,9 +380,14 @@ def merge() -> int:
     for name in ("E-1", "E-2", "E-3", "E-4", "E-5", "E-6"):
         path = PARTS / f"{name}.json"
         parts[name] = json.loads(path.read_text()) if path.is_file() else dict(ok=False, missing=True)
+    extra = {}
+    path = PARTS / "E-2b.json"                       # extra check of the prediction command (not in the spec)
+    if path.is_file():
+        extra["E-2b"] = json.loads(path.read_text())
     record = dict(spec="docs/specs/GNN3_CLEAN.md 5", written=time.strftime("%Y-%m-%d %H:%M:%S"),
                   all_pass=all(p.get("ok") for p in parts.values()),
-                  summary={k: bool(v.get("ok")) for k, v in parts.items()}, checks=parts)
+                  summary={k: bool(v.get("ok")) for k, v in parts.items()}, checks=parts,
+                  extra_summary={k: bool(v.get("ok")) for k, v in extra.items()}, extra=extra)
     path = PACKAGE_ROOT / "results" / "E_equivalence.json"
     path.write_text(json.dumps(record, indent=1, default=_json_default) + "\n")
     print(json.dumps(record["summary"], indent=1))
@@ -355,8 +396,8 @@ def merge() -> int:
 
 if __name__ == "__main__":
     command = sys.argv[1] if len(sys.argv) > 1 else ""
-    handlers = {"e1": check_e1, "e2": check_e2, "e3": check_e3, "e4": check_e4, "e5-select": check_e5_select,
-                "e5": check_e5, "merge": merge}
+    handlers = {"e1": check_e1, "e2": check_e2, "e2-cli": check_e2_cli, "e3": check_e3, "e4": check_e4,
+                "e5-select": check_e5_select, "e5": check_e5, "merge": merge}
     if command not in handlers:
         print(__doc__)
         sys.exit(2)
