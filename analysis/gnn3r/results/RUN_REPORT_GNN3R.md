@@ -1,6 +1,6 @@
 # GNN3R 실행 보고 — g2r 입력과 다시 만든 짝으로 GNN3 다시 학습
 
-- 지시서: `docs/specs/GNN3R.md` · 브랜치 `gnn3r` · 결과 commit `b7401a56`
+- 지시서: `docs/specs/GNN3R.md` · 브랜치 `gnn3r` · 결과 commit `b7401a56` · push한 HEAD `98cbe350204e71463db7252068973ac22feef1db`
 - scratch `/gpfs/tmp_cpu2/yeseo1ee/gnn3r` (cv/, final/ = .pt), 결과 `analysis/gnn3r/results/`, manifest `results/gnn3r.json`
 - 데이터셋 고정 파일: `results/F_pairs_r.csv` sha256 `5597ad11558efb1bc3fc6322f99b5920026166e161a1df383662c6905b95a467` (`B_label_report.json`에 기록, gnn3 로더가 이 값으로 확인)
 
