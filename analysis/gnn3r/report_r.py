@@ -76,7 +76,8 @@ def main() -> int:
          f"| 1 시작 조건 | {'통과' if s0['all_pass'] else 'STOP'} | 1-1 … 1-11, RDKit "
          f"{s0['checks']['1-10']['reactot']['rdkit']}, 여유 {s0['checks']['1-11']['free_gb']:.0f} GB |",
          f"| A 행 속성 | {'통과' if a['all_pass'] else 'STOP'} | A-1 … A-6; B′ need {a['gates']['A-3']['n_bp']}행 "
-         f"{a['gates']['A-3']['counts']}; F 안 Ph 중복 {a['gates']['A-6']['ref_aryl_duplicated_in_F_before']} → "
+         f"{a['gates']['A-3']['counts']} (빈칸 {a['gates']['A-3'].get('n_bp_h_reference', 0)}행 = X = H 기준 행, "
+         f"DEC-1); F 안 Ph 중복 {a['gates']['A-6']['ref_aryl_duplicated_in_F_before']} → "
          f"{a['gates']['A-6']['after']} |",
          f"| B 짝 | {'통과' if b.get('all_pass') else 'STOP'} | B-0 … B-7, B-R |",
          f"| S 분할 | {'통과' if s['all_pass'] else 'STOP'} | S-1 … S-4, sklearn {s['sklearn']} |",
@@ -112,7 +113,10 @@ def main() -> int:
           f"- 반응 **{n(cb['reactions'])}** (기대 8,604, 허용 8,432–8,776), 짝 **{n(cb['pairs'])}** (기대 8,355, 허용 "
           f"8,188–8,522): 기준 짝 {n(cb['by_ref_kind'].get('reference', 0))}, anchor 짝 "
           f"{n(cb['by_ref_kind'].get('anchor', 0))}",
-          f"- 계열(fam 문자열) {n(cb['distinct_fam'])}개 (기대 323), core {cb['cores']}개, 기준 반응(b) "
+          f"- 계열: fam 문자열 {n(cb['distinct_fam'])}개, 짝이 있는 계열 묶음 "
+          f"{sum(g['with_pairs'] for g in cb['groups'].values())}개 ("
+          + ", ".join(f"{k} {g['with_pairs']}" for k, g in cb['groups'].items())
+          + f"). 지시서의 로컬 추정 '계열 323개'와는 세는 단위가 다를 수 있다. core {cb['cores']}개, 기준 반응(b) "
           f"{cb['reference_b']}개, anchor b {cb['anchor_b']}개",
           f"- anchor 짝의 출처: {cb['anchor_from']} (anchor_family = D1PAIR anchor 계열, reference_not_usable = 기준이 "
           "g2r에서 쓸 수 없어 F로 다시 묶은 계열)", ""]
@@ -120,9 +124,9 @@ def main() -> int:
     kind_table(L, "쌍극자별", cb["by_dipole"], DIPOLES, EXPECT_DIPOLE)
     kind_table(L, "위치별", cb["by_pos"], ["p", "m", "o", "direct"], EXPECT_POS)
     L += ["**참조 목록(`docs/specs/gnn3r_ref/`)과의 차이** (`results/B_diff_vs_est.csv`, 이유별 수)", "",
-          "| 종류 · 추정에 있음 · 서버에 있음 · 이유 | 수 |", "|---|---|"]
+          "| 종류 | 추정에 있음 | 서버에 있음 | 이유 | 수 |", "|---|---|---|---|---|"]
     for kk, v in sorted(b["diff_vs_est"]["by_reason"].items(), key=lambda t: -t[1]):
-        L.append(f"| {kk} | {n(v)} |")
+        L.append(f"| {kk} | {n(v)} |")                  # kk = 'kind | in_est | in_server | reason'
     L += ["", f"test 크기 (실제 / 로컬 추정): " + ", ".join(
         f"f{kk} {n(s['test_sizes'][kk])} / {n(s['expected_test_sizes'][kk])}" for kk in ["0", "1", "2", "3", "4"])
           + f", 늘 학습 {n(s['test_sizes']['-1'])} / {n(s['expected_test_sizes']['-1'])}", ""]

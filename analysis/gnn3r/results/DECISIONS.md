@@ -27,3 +27,10 @@
 - 사실: 네 행 모두 X = H 기준 행(R1 = H, pos `ref_direct`; azomethine ylide/Bp exo·endo, nitrone/Bp endo, carbonyl ylide/Bp endo)이다. C3에 치환기가 없으므로 c3는 정의되지 않는다. 원래 `c3_orientation`도 ""를 내고, 참조 목록 `ref_reactions_est.csv`도 이 네 행의 `c3_est`를 비워 두었다(`family_basis` D1PAIR_family, 직접 계열의 H 기준). 지시서 B-2도 "H 행의 c3·orient는 비어 있을 수 있음"이라고 적고 있다.
 - 선택지: (a, 추천) A-3을 C3 치환기가 있는 Bp 행 918개에 적용하고(전부 cis/trans), H 기준 4행은 c3 = ""여야 통과로 판정한다. 데이터는 바뀌지 않는다. (b) H 행에도 c3를 억지로 붙인다(정의 없음, D1PAIR 직접 짝 규칙과 어긋남). (c) STOP 유지.
 - 결정: (a). `rowattr_r.py` A-3 판정에 반영(`n_bp_substituted`, `n_bp_h_reference` 기록).
+
+## B 단계 — STOP 밖의 차이 (지시서 12: 기록하고 진행)
+
+- 반응 8,589 / 짝 8,339 (기대 8,604 / 8,355, B-6 허용 범위 안). 모든 B 검사와 B-R 통과.
+- P-4 mismatch로 버린 짝 16 (로컬 추정 4). 지시서 0-3(f) 2대로 새 짝의 P-4는 서버에서만 돌릴 수 있었다. 16 중 14가 anchor 짝(그중 10짝이 B′ anchor 계열: AY/Bp anchor b T10116 5짝, nitrone/Bp anchor b T04955 5짝; 나머지 nitrone/B anchor b T04796 3짝, AY/B T01264 1짝), 기준 짝 2(T09972→T01302, T10078→T01421). D1PAIR와 같은 짝 6,592개의 v2는 `P4_stereo.csv`와 같다(B-3).
+- 사용 가능하지만 짝이 없는 반응 28 (로컬 추정 13): p4_dropped 16, singleton 6, no_family 6. 로컬 추정의 13개 중 T10679·T10704·T01507은 서버에서 데이터셋에 들어갔다. 표는 `RUN_REPORT_GNN3R.md` 2절.
+- 계열 수: fam 문자열 244, 짝이 있는 계열 묶음 250(기준 154, anchor 81, 기준 사용 불가 재묶음 15). 지시서의 "계열 323개"와 세는 단위가 다를 수 있어 판정에 쓰지 않았다(검사 항목 아님).
