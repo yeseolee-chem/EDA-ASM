@@ -198,19 +198,28 @@ def main() -> int:
     need = r.dipole.isin(list(C.NEED_DIPOLES)) & (r.series == "R1") & r.skeleton.isin(list(C.NEED_SKELETONS))
     bp = need & (r.skeleton == "Bp")
     # 3. A-2: the copied c3_orientation reproduces the stored c3 on every need row
-    again = r[need].apply(c3_orientation, axis=1)
+    again = r[need].apply(c3_orientation, axis=1).astype(str).to_numpy()
     stored = r.loc[need, "c3"].fillna("").astype(str)
-    diff = r.loc[need].loc[again.astype(str) != stored, ["job_id"]].assign(stored=stored, recomputed=again)
-    gates["A-2"] = dict(n_need=int(need.sum()), expect_need=EXPECT_NEED, n_differ=int(len(diff)),
+    neq = again != stored.to_numpy()
+    diff = pd.DataFrame(dict(job_id=r.loc[need, "job_id"].to_numpy()[neq], stored=stored.to_numpy()[neq],
+                             recomputed=again[neq]))
+    gates["A-2"] = dict(n_need=int(need.sum()), expect_need=EXPECT_NEED, n_differ=int(neq.sum()),
                         differ=diff.head(20).to_dict("records"), stored_counts=stored.value_counts().to_dict(),
-                        ok=len(diff) == 0)
+                        ok=int(neq.sum()) == 0)
     # 4. the B' rule on need & Bp rows only
     new = r[bp].apply(c3_orientation_bp, axis=1)
     out = r.copy()
     out.loc[bp, "c3"] = new
-    c3_new = out.loc[bp, "c3"].astype(str)
-    gates["A-3"] = dict(n_bp=int(bp.sum()), expect_bp=EXPECT_BP, counts=c3_new.value_counts().to_dict(),
-                        ok=bool(int(bp.sum()) == EXPECT_BP and c3_new.isin(["cis", "trans"]).all()))
+    # A-3 (decision DEC-1, results/DECISIONS.md): the X = H reference rows (pos ref_direct) have no C3 substituent, so
+    # c3 is '' for them by construction (c3_orientation and the reference list agree); every other Bp row: cis / trans
+    bp_h = bp & (r.pos == "ref_direct")
+    bp_x = bp & ~bp_h
+    c3_x, c3_h = out.loc[bp_x, "c3"].astype(str), out.loc[bp_h, "c3"].astype(str)
+    gates["A-3"] = dict(n_bp=int(bp.sum()), expect_bp=EXPECT_BP, counts=out.loc[bp, "c3"].astype(str).value_counts().to_dict(),
+                        n_bp_substituted=int(bp_x.sum()), counts_substituted=c3_x.value_counts().to_dict(),
+                        n_bp_h_reference=int(bp_h.sum()), h_reference_jobs=r.loc[bp_h, "job_id"].tolist(),
+                        h_reference_c3=c3_h.value_counts().to_dict(), decision="DEC-1",
+                        ok=bool(int(bp.sum()) == EXPECT_BP and c3_x.isin(["cis", "trans"]).all() and (c3_h == "").all()))
     est = pd.read_csv(C.REF_REACTIONS, dtype=str, keep_default_na=False)
     est = est[est.c3_est != ""]
     mine = out.set_index("job_id").c3.reindex(est.job_id).fillna("<absent>").astype(str).to_numpy()
