@@ -6,7 +6,7 @@
 특성 112개(engine gate 96, 쌍극자 합 16)와 토큰 2개(rxn 1007205, 1007289).
 
 명령서: `docs/specs/D1G2R.md`. 브랜치 `g2r`. 새 g2 = `$G2R=/gpfs/tmp_cpu2/yeseo1ee/g2r`(TS 원본 `$G2R/jobs`, 모델 입력 `$G2R/lf`).
-push한 HEAD: 12절 뒤에 적는다(맨 아래).
+S 단계 push: `origin/g2r` = `5936c44e45122899edff2825b74d2dab9ac9eb7b`(결과·보고서 commit). D 단계 push는 D 절에 적는다.
 
 ## 0. 단계별 수 (`U_funnel.csv`)
 
