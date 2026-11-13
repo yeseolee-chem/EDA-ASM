@@ -82,6 +82,8 @@ def main() -> int:
         bytes_source=sum(r["bytes"] for r in ok), bytes_destination=sum(r["dst_bytes"] for r in ok),
         n_missing=sum(len(r["missing"]) for r in ok), n_extra=sum(len(r["extra"]) for r in ok),
         n_sha256_mismatch=sum(len(r["differ"]) for r in ok), errors=errors[:20],
+        n_symlinks=sum(1 for row in rows if str(row[3]).startswith("link:")),
+        symlinks=[row[:2] + (row[3],) for row in rows if str(row[3]).startswith("link:")][:20],
         examples=[dict(job_id=r["job_id"], missing=r["missing"][:5], extra=r["extra"][:5], differ=r["differ"][:5])
                   for r in ok if r["missing"] or r["extra"] or r["differ"]][:20],
         manifest=str(C.G2R_X / "C_manifest.csv.gz"), manifest_sha256=C.sha256(C.G2R_X / "C_manifest.csv.gz"),
