@@ -214,8 +214,9 @@ def main() -> int:
     # c3 is '' for them by construction (c3_orientation and the reference list agree); every other Bp row: cis / trans
     bp_h = bp & (r.pos == "ref_direct")
     bp_x = bp & ~bp_h
+    c3_new = out.loc[bp, "c3"].astype(str)
     c3_x, c3_h = out.loc[bp_x, "c3"].astype(str), out.loc[bp_h, "c3"].astype(str)
-    gates["A-3"] = dict(n_bp=int(bp.sum()), expect_bp=EXPECT_BP, counts=out.loc[bp, "c3"].astype(str).value_counts().to_dict(),
+    gates["A-3"] = dict(n_bp=int(bp.sum()), expect_bp=EXPECT_BP, counts=c3_new.value_counts().to_dict(),
                         n_bp_substituted=int(bp_x.sum()), counts_substituted=c3_x.value_counts().to_dict(),
                         n_bp_h_reference=int(bp_h.sum()), h_reference_jobs=r.loc[bp_h, "job_id"].tolist(),
                         h_reference_c3=c3_h.value_counts().to_dict(), decision="DEC-1",
