@@ -102,9 +102,25 @@ S 단계 push: `origin/g2r` = `5936c44e45122899edff2825b74d2dab9ac9eb7b`(결과�
 사용 가능 8,617 / 9,252. 빠진 635 = X 단계 618(D-6 599 + D-4 19) + R 17. sha256: `labels_lf.json` 3f2bf2cc…,
 `input_meta_lf.csv` a3968398…, `X182_lf.parquet` 66c40316…, 토큰 manifest f424d12d….
 
-## D. 기존 g2 삭제
+## D. 기존 g2 삭제 (`D_check.json`, `D_before.json`, `D_report.json`)
 
-(12절 뒤에 채운다.)
+- 12-1 조건(job 1075702): D-a 모든 STOP 관문 통과(다시 읽음), D-b `git ls-remote` = push한 `1698ddfd…` = HEAD, D-c `$G2R/jobs`
+  9,266폴더가 C_manifest와 같음(Phase R이 바꾼 `ref_result.json`·`.fail_ref` 제외, 무작위 200파일 sha256 불일치 0), D-d 다른
+  job 없음, D-e symlink 94,442개 중 두 경로를 가리키는 것 0, realpath = 두 상수.
+- 삭제 전 기록: `D_before.json`, 전체 파일 목록 `$G2R/x/D_listing_{d1_g2,ch3_lf}.txt.gz`.
+- 삭제(job 1075749, `sbatch --time=48:00:00 --wrap "rm -rf /gpfs/tmp_cpu2/yeseo1ee/d1_g2 /gpfs/tmp_cpu2/yeseo1ee/ch3/lf"`):
+
+| 경로 | 파일 수 | 바이트 |
+|---|---|---|
+| `/gpfs/tmp_cpu2/yeseo1ee/d1_g2` | 539,013 | 11,638,700,835 |
+| `/gpfs/tmp_cpu2/yeseo1ee/ch3/lf` | 156,181 | 10,980,734,588 |
+
+- 확인(job 1075750, 2026-11-13 18:48): 두 경로 없음, `$G2R` 279,385파일 11,270,631,819바이트로 삭제 전과 같음(`$G2R/logs` 제외).
+- `$CH3`의 다른 항목, `$LAD`, `$D1PAIR_SCRATCH`, D1 run은 지우지 않았다.
+- 앞으로(0-5절): g2는 `$G2R` 하나다. TS 원본 `$G2R/jobs`(9,266개 전부), 모델 입력 `$G2R/lf`. deploy·d1_g2 코드의 기본 경로는
+  지워진 `$G2`를 가리키므로 기본값으로 돌리면 경로가 없어 실패한다. 다음 지시서는 `DEP_G2_JOBS=$G2R/jobs`,
+  `DEP_SCRATCH=$G2R/lf`를 넘긴다. LADDER g2 rung, D1HF@G2, GEO2·D1G3가 `$G2`에서 읽던 중간 산출물은 다시 읽을 수 없고, commit된
+  결과 파일만 남는다. deploy `feat_lf`의 F-1과 `tokens_lf.t_check`가 읽던 `$G2/X182_d1_g2.parquet`도 없어졌다.
 
 ## 비용
 
