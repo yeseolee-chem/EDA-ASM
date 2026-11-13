@@ -66,8 +66,10 @@ def main() -> int:
     tol = sorted((C.RES / "F_tol").glob("*.json")) if (C.RES / "F_tol").is_dir() else []
     recs = [C.read_json(p) for p in tol]
     f_recs = [r for r in recs if str(r.get("tag", "")).startswith(("g2r_F_", "g2r_Fm_"))]
-    slice_tasks = sorted({str(r.get("slurm_array_task")) for r in f_recs if str(r.get("tag", "")).startswith("g2r_F_")})
-    merge_n = sum(str(r.get("tag", "")).startswith("g2r_Fm_") for r in f_recs)
+    ok_recs = [r for r in f_recs if r.get("ok")]          # a failed preflight exits before any compute (g_g2r.slurm)
+    failed_pre = sorted(str(r.get("tag")) for r in f_recs if not r.get("ok"))
+    slice_tasks = sorted({str(r.get("slurm_array_task")) for r in ok_recs if str(r.get("tag", "")).startswith("g2r_F_")})
+    merge_n = sum(str(r.get("tag", "")).startswith("g2r_Fm_") for r in ok_recs)
     e = pd.read_parquet(EXT)
     st = e.ext_status.astype(str) if "ext_status" in e else pd.Series([], dtype=str)
     below = []
@@ -77,11 +79,12 @@ def main() -> int:
             below.append(dict(rxn_id=rid, status=s[:160]))
         if m2 and float(m2.group(1)) < NEW_DIP:
             below.append(dict(rxn_id=rid, status=s[:160]))
-    f2 = dict(records=[p.name for p in tol], n_f_records=len(f_recs), slice_tasks=slice_tasks, n_merge_records=merge_n,
-              all_records_ok=all(r.get("ok") for r in f_recs), tolerances=(f_recs[0]["tolerances"] if f_recs else None),
+    f2 = dict(records=[p.name for p in tol], n_f_records=len(f_recs), n_ok_records=len(ok_recs),
+              slice_tasks_ok=slice_tasks, n_merge_records_ok=merge_n,
+              failed_preflight_records=failed_pre, tolerances=(ok_recs[0]["tolerances"] if ok_recs else None),
               n_ext_fail_below_new_tolerance=len(below), ext_fail_below_new_tolerance=below[:20],
-              ok=bool(f_recs) and all(r.get("ok") for r in f_recs) and slice_tasks == ["0", "1"] and merge_n >= 1
-              and not below)
+              rule="an ok preflight record for slice tasks 0 and 1 and the merge (failed preflights computed nothing)",
+              ok=slice_tasks == ["0", "1"] and merge_n >= 1 and not below)
     # F-3
     f3 = dict(n_done=fr.get("n_done"), n_feat=fr.get("n_feat"), F_fail_rate=fr.get("F_fail_rate"), max=F3_MAX,
               feat_lf_F3=fr.get("F3"), reasons=fr.get("reasons"),

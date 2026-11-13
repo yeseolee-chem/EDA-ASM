@@ -72,8 +72,8 @@ def d_a():
          "L": lr.get("all_pass") is True and lc.get("all_pass") is True,
          "M": mr.get("all_pass") is True and mc.get("all_pass") is True,
          "F": fr.get("stop") is False and fc.get("all_pass") is True,
-         "T": (tl.get("gate") or {}).get("stop") is False and (tl.get("tokens") or {}).get("stop") is False
-         and tc.get("all_pass") is True}
+         "T": (tl.get("gate") or {}).get("stop") is False and (tl.get("gate") or {}).get("gate_rc") == 0
+         and (tl.get("tokens") or {}).get("stop") is False and tc.get("all_pass") is True}
     return gate("D-a", all(v.values()), phases=v)
 
 
@@ -130,22 +130,27 @@ def d_c():
 def d_d():
     me = os.environ.get("SLURM_JOB_ID", "")
     user = os.environ.get("USER") or "yeseo1ee"
-    rc, out, err = sh("squeue", "-u", user, "-h", "-o", "%i %j %o")
-    hits, seen = [], []
+    rc, out, err = sh("squeue", "-r", "-u", user, "-h", "-o", "%i %j %o")      # -r: one line per array task
+    hits, seen, not_inspected = [], [], []
     for line in out.splitlines():
         jid = line.split()[0] if line.split() else ""
         base = jid.split("_")[0]
         if not jid or base == me or jid == me:
             continue
-        rc2, sc, _ = sh("scontrol", "show", "job", jid)
+        rc2, sc, _ = sh("scontrol", "show", "job", jid if "[" not in jid else base)
+        if rc2 != 0 or not sc.strip():
+            rc3, still, _ = sh("squeue", "-h", "-j", base, "-o", "%i")
+            if rc3 != 0 or still.strip():
+                not_inspected.append(jid)                         # still queued but its paths could not be read
+            continue
         text = line + "\n" + sc
         seen.append(jid)
         why = [t for t in TARGETS.values() if t in text]
         why += [s for s in DEFAULT_G2_SCRIPTS if f"/{s}" in text or f" {s}" in text]
         if why:
             hits.append(dict(job=jid, why=why, line=line[:300]))
-    return gate("D-d", rc == 0 and not hits, squeue_rc=rc, squeue_err=err.strip()[:300], own_job=me,
-                n_jobs_checked=len(seen), jobs=seen[:50], hits=hits)
+    return gate("D-d", rc == 0 and not hits and not not_inspected, squeue_rc=rc, squeue_err=err.strip()[:300],
+                own_job=me, n_jobs_checked=len(seen), jobs=seen[:50], hits=hits, not_inspected=not_inspected)
 
 
 def d_e():
@@ -167,9 +172,10 @@ def d_e():
     return gate("D-e", not found, roots=list(LINK_ROOTS), n_links_seen=n_links, n_found=len(found), found=found[:200])
 
 
-def tree(root):
+def tree(root, skip=()):
     n, b, lines = 0, 0, []
     for folder, _d, names in os.walk(root):
+        _d[:] = [x for x in _d if Path(folder, x) not in set(map(Path, skip))]
         for nm in names:
             p = Path(folder) / nm
             s = 0 if p.is_symlink() else p.lstat().st_size
@@ -192,8 +198,9 @@ def cmd_check(sha):
             C.write_atomic(C.G2R_X / f"D_listing_{k}.txt.gz", gzip.compress(("\n".join(sorted(lines)) + "\n").encode()))
             before[k] = dict(path=v, realpath=rp[k], n_files=n, bytes=b, top_level=sorted(os.listdir(v)),
                              listing=str(C.G2R_X / f"D_listing_{k}.txt.gz"))
-        n, b, _ = tree(C.G2R)
-        before["g2r"] = dict(path=str(C.G2R), n_files=n, bytes=b)
+        n, b, _ = tree(C.G2R, skip=(C.G2R_LOGS,))
+        before["g2r"] = dict(path=str(C.G2R), n_files=n, bytes=b, excluded=[str(C.G2R_LOGS)],
+                             note="$G2R/logs excluded: job logs keep growing (check, rm, verify jobs)")
         C.write_json(C.RES / "D_before.json", dict(spec="docs/specs/D1G2R.md 12-2-1", written=time.strftime("%F %T"),
                                                    slurm_job=os.environ.get("SLURM_JOB_ID"), **before))
     rep = dict(spec="docs/specs/D1G2R.md 12-1", started=started, written=time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -207,13 +214,14 @@ def cmd_check(sha):
 def cmd_verify(rm_job):
     b = C.read_json(C.RES / "D_before.json")
     gone = {k: not os.path.lexists(v) for k, v in TARGETS.items()}
-    n, by, _ = tree(C.G2R)
+    n, by, _ = tree(C.G2R, skip=(C.G2R_LOGS,))
     same = n == b["g2r"]["n_files"] and by == b["g2r"]["bytes"]
     rep = dict(spec="docs/specs/D1G2R.md 12-2-4/5", written=time.strftime("%Y-%m-%d %H:%M:%S"),
                slurm_job=os.environ.get("SLURM_JOB_ID"), rm_job=rm_job,
                deleted={k: dict(path=v, n_files=b[k]["n_files"], bytes=b[k]["bytes"], gone=gone[k])
                         for k, v in TARGETS.items()},
-               g2r_before=b["g2r"], g2r_after=dict(n_files=n, bytes=by), g2r_unchanged=same,
+               g2r_before=b["g2r"], g2r_after=dict(n_files=n, bytes=by, excluded=[str(C.G2R_LOGS)]),
+               g2r_unchanged=same,
                all_pass=all(gone.values()) and same)
     C.write_json(C.RES / "D_report.json", rep)
     print(json.dumps(rep, indent=1))

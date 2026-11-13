@@ -9,8 +9,8 @@ L-R  every reuse reaction: $G2R/lf/g2lf_final/<rid>/{ts,rel1,rel2}.xyz byte-equa
      |lowest imaginary frequency (new) - (old)| <= 1e-3 cm-1 from the two result.json files.              STOP
 L-K  repaired reactions (repaired_ok_ids): marker; if .done, n_imag >= 1 and imag_mode_forming_share
      -> results/L_repaired.csv (deploy L-2 / L-4 do not apply: no $G2/g2_final structure to compare).  report
-Also: every lf_ids reaction has a marker in $G2R/lf/g2lf_final. Output results/L_check.json. Exit 0 / 2 (not complete)
-/ 3 (STOP).
+Also: every lf_ids reaction has a marker in $G2R/lf/g2lf_final. Output results/L_check.json. Exit 0 / 2 (not complete,
+or results/lf/L_report.json missing or incomplete) / 3 (STOP).
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ def main() -> int:
     w.writeheader()
     w.writerows(rows)
     C.write_atomic(C.RES / "L_repaired.csv", buf.getvalue())
-    lk = dict(n_repaired_ok=len(rep_ok), markers={m: sum(r["lf_marker"] == m for r in rows)
+    lk = dict(n_repaired_ok=len(rep_ok), markers={m: sum(str(r["lf_marker"]) == m for r in rows)
                                                    for m in sorted({str(r["lf_marker"]) for r in rows})},
               n_done=sum(r["lf_marker"] == ".done" for r in rows),
               n_done_n_imag_ge_1=sum(r["n_imag_ge_1"] is True for r in rows), table="results/L_repaired.csv",
@@ -118,7 +118,7 @@ def main() -> int:
     C.write_json(C.RES / "L_check.json", rep)
     print(json.dumps(dict(all_pass=rep["all_pass"], complete=complete, L1=l1["ok"], LR=lr["ok"],
                           n_compared=n_cmp, max_d=dmax, LK=lk["markers"]), indent=1))
-    if not complete:
+    if not complete or lrep.get("complete") is not True:              # deploy L report missing / not run yet
         return 2
     return 0 if rep["all_pass"] else 3
 

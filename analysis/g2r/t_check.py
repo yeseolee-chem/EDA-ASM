@@ -5,8 +5,8 @@
     python analysis/g2r/t_check.py          env_d1fu2 (numpy, pandas); py_g2r.slurm
 
 T-1  results/lf/T_lf_check.json (deploy spec 6 = DEPLOY 6: elements [1, 6, 7, 8, 9, 14, 16, 17, 35], d_in 29, columns,
-     Q-a / Q-b / T-a): gate and tokens without STOP, every tokens check true; and the tolerance records of the T jobs
-     (results/F_tol/g2r_T*.json) ok.                                                                         STOP
+     Q-a / Q-b / T-a): gate (exit 0) and tokens without STOP, every tokens check true; and an ok tolerance record
+     (results/F_tol/g2r_T*.json) for every atoms task 0-7 (job g2r_Ta), the gate (g2r_Tg) and tokens (g2r_Tt).  STOP
 T-R  the reactions usable before (CH3 T_manifest rows that are targets: 8,500): the new token
      $G2R/lf/fu2_lf/tokens/<rid>.npz has the same arrays (names, shapes, dtypes) as $CH3/lf/fu2_lf/tokens/<rid>.npz;
      Z, bin, edges, etype, n_bonds_rel, rxn_id, token_version equal exactly; num, pos, glob max |diff| <= 1e-6 (NaN at
@@ -30,6 +30,7 @@ TOL = 1e-6
 EXACT = ("Z", "bin", "edges", "etype", "n_bonds_rel", "rxn_id", "token_version")
 FLOAT = ("num", "pos", "glob")
 TN = (1007205, 1007289)
+N_ATOM_SLICES = 8                                     # tokens_lf.py atoms @I 8 (array 0-7), job name g2r_Ta
 NEW_TOK, OLD_TOK = C.G2R_LF / "fu2_lf" / "tokens", C.CH3_LF_OLD / "fu2_lf" / "tokens"
 NEW_RES = C.RES / "lf" / "fu2_lf"
 
@@ -67,21 +68,28 @@ def main() -> int:
     tc = C.read_json(C.RES / "lf" / "T_lf_check.json")
     g, t = tc.get("gate") or {}, tc.get("tokens") or {}
     trecs = [C.read_json(p) for p in sorted((C.RES / "F_tol").glob("g2r_T*.json"))]
+    okr = [r for r in trecs if r.get("ok")]               # a failed preflight exits before any compute (g_g2r.slurm)
+    tag = lambda r: str(r.get("tag", ""))                                         # noqa: E731
+    atoms_tasks = sorted({str(r.get("slurm_array_task")) for r in okr if tag(r).startswith("g2r_Ta_")})
+    have = dict(atoms_tasks=atoms_tasks, gate=sum(tag(r).startswith("g2r_Tg_") for r in okr),
+                tokens=sum(tag(r).startswith("g2r_Tt_") for r in okr))
+    tol_ok = atoms_tasks == [str(i) for i in range(N_ATOM_SLICES)] and have["gate"] >= 1 and have["tokens"] >= 1
     t1 = dict(gate_stop=g.get("stop"), gate_rc=g.get("gate_rc"), n_target=g.get("n_target"), n_use=g.get("n_use"),
               n_qa_fail=g.get("n_qa_fail"), n_qb_fail=g.get("n_qb_fail"), ext_used=g.get("ext_used"),
               ext_pass_rate=g.get("ext_pass_rate"), tokens_stop=t.get("stop"), tokens_checks=t.get("checks"),
-              elements=t.get("elements"), d_in=t.get("d_in"), n_tol_records=len(trecs),
-              tol_records_ok=bool(trecs) and all(r.get("ok") for r in trecs),
-              ok=(g.get("stop") is False and t.get("stop") is False and bool(t.get("checks"))
-                  and all((t.get("checks") or {}).values()) and bool(trecs) and all(r.get("ok") for r in trecs)))
+              elements=t.get("elements"), d_in=t.get("d_in"), n_tol_records=len(trecs), tol_records_ok_by_job=have,
+              failed_preflight_records=sorted(tag(r) for r in trecs if not r.get("ok")), tol_records_ok=tol_ok,
+              ok=(g.get("stop") is False and g.get("gate_rc") == 0 and t.get("stop") is False
+                  and bool(t.get("checks")) and all((t.get("checks") or {}).values()) and tol_ok))
     # T-R
     old_m = pd.read_csv(C.LF_REPORTS / "fu2_lf" / "T_manifest.csv")
     new_m = pd.read_csv(NEW_RES / "T_manifest.csv")
     old_t = sorted(int(r) for r in old_m.rxn_id if int(r) in tgt)
+    in_new = set(int(r) for r in new_m.rxn_id)
     miss, bad, dmax = [], [], 0.0
     for r in old_t:
         a, b = NEW_TOK / f"{r}.npz", OLD_TOK / f"{r}.npz"
-        if not a.is_file():
+        if not a.is_file() or r not in in_new:
             miss.append(r)
             continue
         bd, d = cmp_npz(a, b, np)

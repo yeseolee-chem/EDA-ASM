@@ -67,6 +67,7 @@ D1 venv의 rdkit 2024.3.2 `rdkit/Chem/AllChem.py`를 읽어 정리했다. 줄 �
 ## 검사
 
 - R-T1·R-T2(`tests_g2r.py` → `results/R_tests.json`): 예외 없는 입력에서 원래 함수 1회 호출·결과 그대로(mock과 실제
-  TS 조각 3개), 묶음 A(T10518 TS 조각, 그리고 T09757 TS 조각에서 CH2⁻ 탄소를 카보닐 C 1.60 Å로 옮긴 구조)와
+  TS 조각 5개), 묶음 A(T10518 TS 조각, 보조로 T09757 TS 조각에서 CH2⁻ 기(탄소 + H 2개)를 한 덩어리로 카보닐 C
+  쪽으로 0.05 Å씩 옮겨 원래 함수가 처음 AtomValenceException을 내는 구조)와
   묶음 B(T10518 `coley_port` KeyError)의 우회 경로를 xtb 없이 함수 단위로.
 - 실행 결과: `results/R_status.csv`, `results/R_report.json`.

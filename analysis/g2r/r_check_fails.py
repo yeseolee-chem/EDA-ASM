@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """D1-G2R 5-5 (docs/specs/D1G2R.md): the 19 excluded_check reactions (TS check / partition failures, D-4) -> which
-check failed and its values, from $G2R/jobs/<job_id>/ts_result.json (when present) and the .fail_ts text. No compute.
+check failed and its values, from $G2R/jobs/<job_id>/ts_result.json (when present) and the .fail_ts text. No compute. The failed check names come from the .fail_ts text
+('TS check failed: a, b' as written by run_ts.analyse; 'partition:<status>' -> partition); under the G2 gate
+(extra_imag_tol_cm set, config_g2.yaml) one_imag is informational, so a False one_imag goes to other_false_checks.
 
     python analysis/g2r/r_check_fails.py          stdlib only; after Phase X (results/X_targets.csv)
 
@@ -20,7 +22,9 @@ import g2r_common as C  # noqa: E402
 N_CHECK = 19
 SPEC_CHECKS = ("one_imag", "imag_below_min", "extra_imag_small", "no_foreign_bond", "not_product_like",
                "forming_bond_present", "imag_mode_on_forming_bonds")
-COLS = ["job_id", "rxn_id", "g2_marker", "fail_ts_text", "failed_checks", "other_false_checks", "partition_status",
+PREFIX = "TS check failed: "
+COLS = ["job_id", "rxn_id", "g2_marker", "fail_ts_text", "failed_checks", "text_checks_false_in_ts_result",
+        "other_false_checks", "partition_status",
         "n_imag", "imag_freqs_cm", "formed_d1_A", "formed_d2_A", "imag_mode_forming_share", "foreign",
         "flag_async", "included"]
 
@@ -44,13 +48,18 @@ def main() -> int:
         ck = tr.get("checks") or {}
         fd = tr.get("formed_d") or [None, None]
         part = (tr.get("partition") or {}).get("status")
-        failed = [k for k in SPEC_CHECKS if ck.get(k) is False]
+        if fail.startswith(PREFIX):                          # authoritative: run_ts.analyse builds this text
+            failed = [k.strip() for k in fail[len(PREFIX):].split(",") if k.strip()]
+        else:                                                # G2 gate (extra_imag_tol_cm set): one_imag is not hard
+            soft = {"one_imag"} if "extra_imag_small" in ck else set()
+            failed = [k for k in SPEC_CHECKS if ck.get(k) is False and k not in soft]
         if (part is not None and part != "ok") or fail.startswith("partition"):
             failed.append("partition")
         out.append(dict(job_id=r["job_id"], rxn_id=r["rxn_id"], g2_marker=r["g2_marker"], fail_ts_text=fail,
                         failed_checks=" ".join(failed),
+                        text_checks_false_in_ts_result=all(ck.get(k) is False for k in failed if k != "partition"),
                         other_false_checks=" ".join(k for k, v in ck.items()
-                                                    if v is False and k not in SPEC_CHECKS and not k.startswith("flag_")),
+                                                    if v is False and k not in failed and not k.startswith("flag_")),
                         partition_status=part, n_imag=tr.get("n_imag"), imag_freqs_cm=tr.get("imag_freqs_cm"),
                         formed_d1_A=fd[0] if len(fd) > 0 else None, formed_d2_A=fd[1] if len(fd) > 1 else None,
                         imag_mode_forming_share=tr.get("imag_mode_forming_share"), foreign=tr.get("foreign"),

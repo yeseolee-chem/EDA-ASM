@@ -4,14 +4,16 @@
 
 R-T1  no exception -> the original is called once and its result is returned unchanged:
       (a) mock originals for both wrappers (identity of the returned object, call count, arguments);
-      (b) real code: stereo_utils.config_tags on stored TS cuts that do not raise (T00001, T09757, T11023), wrapped
-          vs original give equal tags / dihedrals / quadruples and no bypass is logged.
+      (b) real code: stereo_utils.config_tags on stored TS cuts that do not raise and have tracked dihedrals (so
+          template_match is reached: T09757, T11023 and the first 3 reuse reactions with a non-empty
+          ts_dipole_dihedrals), wrapped vs original give equal tags / dihedrals / quadruples, no bypass is logged.
 R-T2  one reaction per cause group, the bypass path at function level:
       A  (AtomValenceException in template_match, 19 + T10518's TS stage): the run_ts.py:240 call on the stored T10518
          TS cut (the only stored geometry that reproduces the error; the 19 alt conformers were not kept): original
          raises AtomValenceException, wrapped returns tags with the extra perceived bond logged;
-         A2 group member T09757: its stored TS dipole cut with the ylide CH2- carbon (map 1) moved to 1.60 A of the
-         ortho acetyl carbon (map 11) along their line (the contact the alt conformer made): same as A.
+         A2 group member T09757 (supplementary): its stored TS dipole cut with the ylide CH2 group (map 1 carbon and
+         its two H, rigid) moved along the line to the ortho acetyl carbon (map 11) in 0.05 A steps until the original
+         raises AtomValenceException (the contact the alt conformer made); then as A. Not judged if no step reproduces.
       B  (KeyError in coley_port, T10518): the unwrapped make_reference.coley_port with T10518's ts_result.json raises
          KeyError('dipole_mapped_smiles') before any xtb call or folder; the wrapper (original replaced by a recorder
          that raises like make_reference.py:158 when a key is missing) calls it twice, the second time with the values
@@ -98,7 +100,16 @@ def main():
     # ---------------- R-T1 (b) real code, no exception
     real_log = []
     t1b = {}
-    for T in ("T00001", "T09757", "T11023"):
+    import csv
+    with open(C.RES / "X_targets.csv", newline="") as fh:
+        reuse = [r["job_id"] for r in csv.DictReader(fh) if r["group"] == "reuse"]
+    picked = []
+    for T in reuse:
+        if json.loads((C.G2R_JOBS / T / "ts_result.json").read_text()).get("ts_dipole_dihedrals"):
+            picked.append(T)
+        if len(picked) == 3:
+            break
+    for T in ["T09757", "T11023"] + picked:
         try:
             syms, xyz, dip_smi, bb, q, _, _ = ts_cut(GA, T)
             blk = su.xyz_block_from_atoms(syms, xyz)
@@ -107,8 +118,8 @@ def main():
             a = su.config_tags(blk, dip_smi, bb, q)
             reinstall(real_log)
             b = su.config_tags(blk, dip_smi, bb, q)
-            t1b[T] = dict(tags=a[0], dihedrals=a[1], equal=same(a, b), bypass_logged=len(real_log) - n0,
-                          ok=same(a, b) and len(real_log) == n0)
+            t1b[T] = dict(tags=a[0], dihedrals=a[1], n_quads=len(a[2]), equal=same(a, b),
+                          bypass_logged=len(real_log) - n0, ok=same(a, b) and len(real_log) == n0 and len(a[2]) > 0)
         except Exception as e:                                                    # noqa: BLE001
             t1b[T] = dict(ok=False, error=f"{type(e).__name__}: {e}", traceback=traceback.format_exc())
     out["R-T1"] = dict(mock=t1a, real_no_exception=t1b, ok=t1a["ok"] and all(v["ok"] for v in t1b.values()))
@@ -143,17 +154,36 @@ def main():
         syms, xyz, dip_smi, bb, q, _, _ = ts_cut(GA, "T09757")
         unwrap()
         _, t2g, tmpl = orig_tm(su.xyz_block_from_atoms(syms, xyz), dip_smi, q)
-        by_map = {tmpl.GetAtomWithIdx(i).GetAtomMapNum(): g for i, g in t2g.items()}
-        i1, i11 = by_map[1], by_map[11]
-        sym11 = [tmpl.GetAtomWithIdx(i) for i in t2g if tmpl.GetAtomWithIdx(i).GetAtomMapNum() == 11][0]
+        tidx = {tmpl.GetAtomWithIdx(i).GetAtomMapNum(): i for i in t2g if tmpl.GetAtomWithIdx(i).GetAtomMapNum()}
+        t1, t11 = tidx[1], tidx[11]
+        i1, i11 = t2g[t1], t2g[t11]
+        grp = [i1] + [t2g[n.GetIdx()] for n in tmpl.GetAtomWithIdx(t1).GetNeighbors() if n.GetAtomicNum() == 1]
+        a11 = tmpl.GetAtomWithIdx(t11)
         d0 = float(np.linalg.norm(xyz[i1] - xyz[i11]))
-        x2 = np.array(xyz, dtype=float)
-        u = (x2[i1] - x2[i11]) / d0
-        x2[i1] = x2[i11] + 1.60 * u
-        a2 = cause_a(syms, x2, dip_smi, bb, q)
-        a2.update(job_id="T09757", geometry=f"stored TS cut, CH2- carbon (map 1, cut index {i1}) moved from "
-                                            f"{d0:.3f} to 1.600 A of map 11 (cut index {i11}, {sym11.GetSymbol()} "
-                                            f"with =O: {any(n.GetSymbol() == 'O' for n in sym11.GetNeighbors())})")
+        u = (np.asarray(xyz[i1], float) - np.asarray(xyz[i11], float)) / d0
+        scan, x_hit, d_hit = [], None, None
+        for d in np.round(np.arange(np.floor(d0 / 0.05) * 0.05, 1.399, -0.05), 2):
+            x2 = np.array(xyz, dtype=float)
+            x2[grp] += (x2[i11] + d * u) - x2[i1]                    # the CH2 group moved as one rigid unit
+            unwrap()
+            try:
+                su.config_tags(su.xyz_block_from_atoms(syms, x2), dip_smi, bb, q)
+                res_ = "no exception"
+            except Exception as e:                                                # noqa: BLE001
+                res_ = f"{type(e).__name__}: {e}"
+            scan.append([float(d), res_[:100]])
+            if res_.startswith("AtomValenceException"):
+                x_hit, d_hit = x2, float(d)
+                break
+        geom = (f"stored TS cut; CH2 group (map 1 C, cut index {i1}, + its H {grp[1:]}) moved rigidly along the line to "
+                f"map 11 (cut index {i11}, {a11.GetSymbol()}, =O {any(n.GetSymbol() == 'O' for n in a11.GetNeighbors())}) "
+                f"from {d0:.3f} A in 0.05 A steps until the original raises AtomValenceException")
+        if x_hit is None:
+            a2 = dict(job_id="T09757", geometry=geom, scan=scan, reproduced=False, ok=None,
+                      note="no scanned geometry reproduced the exception: supplementary case not judged")
+        else:
+            a2 = cause_a(syms, x_hit, dip_smi, bb, q)
+            a2.update(job_id="T09757", geometry=geom, d_A=d_hit, scan=scan, reproduced=True)
     except Exception as e:                                                        # noqa: BLE001
         a2 = dict(job_id="T09757", ok=False, error=f"{type(e).__name__}: {e}", traceback=traceback.format_exc())
 
@@ -199,7 +229,9 @@ def main():
         work.parent.rmdir() if work.parent.is_dir() and not any(work.parent.iterdir()) else None
     except Exception as e:                                                        # noqa: BLE001
         b = dict(job_id="T10518", ok=False, error=f"{type(e).__name__}: {e}", traceback=traceback.format_exc())
-    out["R-T2"] = dict(A=a1, A2=a2, B=b, ok=bool(a1.get("ok") and a2.get("ok") and b.get("ok")))
+    out["R-T2"] = dict(A=a1, A2=a2, B=b, ok=bool(a1.get("ok") and a2.get("ok") is not False and b.get("ok")),
+                       rule="A (T10518 stored cut) and B must pass; A2 (constructed geometry) must pass when it "
+                            "reproduces the exception")
     unwrap()
     rep = dict(spec="docs/specs/D1G2R.md 5-3", written=time.strftime("%Y-%m-%d %H:%M:%S"),
                slurm_job=os.environ.get("SLURM_JOB_ID"), tests=out, all_pass=all(v["ok"] for v in out.values()))
