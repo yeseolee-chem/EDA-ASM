@@ -1,6 +1,6 @@
 # GNN3R2 실행 보고 — c3 판정 오류 2건을 고친 짝으로 GNN3 다시 학습
 
-- 지시서: `docs/specs/GNN3R2.md` · 브랜치 `gnn3r2` · 결과 commit `2890f2c5`
+- 지시서: `docs/specs/GNN3R2.md` · 브랜치 `gnn3r2` · 결과 commit `2890f2c5` · push한 HEAD `8e49198362b4fc809f784652c52f58b35f6f0fdf`
 - scratch `/gpfs/tmp_cpu2/yeseo1ee/gnn3r2` (cv/, final/ = .pt), 결과 `analysis/gnn3r2/results/`, manifest `results/gnn3r2.json`, GNN3R 대조 사본 `analysis/gnn3r2/ref_gnn3r/`
 - 데이터셋 고정 파일: `results/F_pairs_r.csv` sha256 `9d75fae8b7ba39ab7d83112342a7ddd299017ad7eb3b05f97a4409deec4f3455` (`B_label_report.json`에 기록, gnn3 로더가 이 값으로 확인)
 - 결정·편차: `results/DECISIONS.md`
@@ -23,7 +23,7 @@
 ## 2. c3 수정 (D-12)
 
 - 규칙 `c3_core`: C3·X 첫 원자(xs)·C4·C4 기준 치환기는 예전과 같이 고른다(B′는 메틸 규칙). X 가지를 xs 하나로 줄이고 xs를 CH₃로 바꾼 뼈대(core, 다른 입체 표기 유지)를 정규 원자 순서로 놓고, seed 7·11·23·42·97로 각각 EmbedMolecule + MMFF 배치한다. 고리 5원자 법선(SVD)에서 u·v > 0이면 cis. 5개가 모두 같아야 한다. X = H 행은 빈칸.
-- `need` 2,667행: C3 치환기 있음 2,653 (cis/trans {'trans': 1355, 'cis': 1298, '': 14}), X = H 14행(모두 `ref_direct`: True).
+- `need` 2,667행: C3 치환기 있음 2,653 (cis 1,298, trans 1,355), X = H 14행은 빈칸 (모두 `ref_direct`: True).
 - 서로 다른 core 72개(지시서 로컬 72), seed 5개가 모두 같은 행 2,653 / 2,653, 서로 거울상인 core 쌍 36개(c3 충돌 0), 같은 core 안 c3 충돌 0.
 - GNN3R c3와 다른 행 2개 (A-5 기대: T10104 cis→trans, T10116 cis→trans):
 
