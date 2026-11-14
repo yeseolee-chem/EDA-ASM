@@ -97,8 +97,9 @@ def main() -> int:
           "- 규칙 `c3_core`: C3·X 첫 원자(xs)·C4·C4 기준 치환기는 예전과 같이 고른다(B′는 메틸 규칙). X 가지를 xs 하나로 줄이고 "
           "xs를 CH₃로 바꾼 뼈대(core, 다른 입체 표기 유지)를 정규 원자 순서로 놓고, seed 7·11·23·42·97로 각각 "
           "EmbedMolecule + MMFF 배치한다. 고리 5원자 법선(SVD)에서 u·v > 0이면 cis. 5개가 모두 같아야 한다. X = H 행은 빈칸.",
-          f"- `need` {n(a['counts']['need'])}행: C3 치환기 있음 {n(a3['n_substituted'])} (cis/trans "
-          f"{a3['counts']}), X = H {a3['n_h']}행(모두 `ref_direct`: {a3['h_rows_all_ref_direct']}).",
+          f"- `need` {n(a['counts']['need'])}행: C3 치환기 있음 {n(a3['n_substituted'])} (cis "
+          f"{n(a3['counts'].get('cis', 0))}, trans {n(a3['counts'].get('trans', 0))}), X = H {a3['n_h']}행은 빈칸 "
+          f"(모두 `ref_direct`: {a3['h_rows_all_ref_direct']}).",
           f"- 서로 다른 core {a3['n_cores']}개(지시서 로컬 72), seed 5개가 모두 같은 행 {n(a3['n_seed_unanimous'])} / "
           f"{n(a3['n_substituted'])}, 서로 거울상인 core 쌍 {a3['n_mirror_core_pairs']}개(c3 충돌 "
           f"{len(a3['mirror_conflicts'])}), 같은 core 안 c3 충돌 {len(a3['same_core_conflicts'])}.",
