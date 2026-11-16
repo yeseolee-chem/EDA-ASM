@@ -30,7 +30,7 @@ import matplotlib  # noqa: E402
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib import font_manager  # noqa: E402
+from matplotlib import font_manager, patheffects  # noqa: E402
 
 from gnn3 import metrics as M  # noqa: E402
 
@@ -133,8 +133,10 @@ def fig1(long, prim, sec, chosen):
         ax.set_ylabel("MAE of ΔΔ (kcal/mol)")
         ax.set_title(panel, loc="left", color=INK)
     handles = [plt.Rectangle((0, 0), 1, 1, color=GNN3_COL), plt.Rectangle((0, 0), 1, 1, color=ESP_COL)]
-    axes[1].legend(handles, ["GNN3", "ESPB (Espley-type)"], frameon=False, loc="upper right")
-    fig.tight_layout()
+    # figure-level legend below the panels: inside an axis it covers the d / Holm p notes
+    fig.legend(handles, ["GNN3", "ESPB (Espley-type)"], frameon=False, loc="lower center", ncol=2,
+               bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
     save(fig, "fig1_primary", pd.DataFrame(rows))
 
 
@@ -178,7 +180,8 @@ def fig3(long, sel):
                 mae = float(np.abs(f.yhat - f.y).mean())
                 xi = j + (i - 0.5) * 0.3
                 ax.scatter([xi], [mae], marker=mk, s=16, color=ESP_COL, edgecolors="white", linewidths=0.5, zorder=3)
-                ax.text(xi, mae, f" {int(s.loc[nm, 'rank'])}", fontsize=5.5, color=GREY, va="center", ha="left")
+                ax.text(xi, mae, f" {int(s.loc[nm, 'rank'])}", fontsize=5.5, color=GREY, va="center", ha="left",
+                        zorder=4, path_effects=[patheffects.withStroke(linewidth=1.5, foreground="white")])
                 rows.append(dict(target=t, candidate=nm, arm=arm, model=m, mae_P_main=mae, inner_score=float(s.loc[nm, "score"]),
                                  inner_rank=int(s.loc[nm, "rank"]), mae_gnn3=g, mae_zero=zero))
         ax.axhline(g, color=GNN3_COL, linewidth=1.0, label="GNN3")
@@ -216,8 +219,10 @@ def fig4(long):
         ax.set_xticklabels(pos)
         ax.set_title(LABEL[t], loc="left")
     axes[0].set_ylabel("P_main MAE of ΔΔ (kcal/mol)")
-    axes[-1].legend(frameon=False, loc="upper right")
-    fig.tight_layout()
+    # figure-level legend below the panels: inside the last axis it covers the "direct" bars
+    handles, labels = axes[-1].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, loc="lower center", ncol=2, bbox_to_anchor=(0.5, -0.02))
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
     save(fig, "fig4_positions", pd.DataFrame(rows))
 
 
