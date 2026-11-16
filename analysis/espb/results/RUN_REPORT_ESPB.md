@@ -1,6 +1,6 @@
 # ESPB 실행 보고 — Espley-type baseline을 D1 짝 ΔΔ task에 맞춰 학습하고 GNN3R2와 비교
 
-- 지시서 `docs/specs/ESPB.md` · 브랜치 `espb` · 결과 commit `08497f5b`
+- 지시서 `docs/specs/ESPB.md` · 브랜치 `espb` · 결과 commit `eac5c21e` · push한 HEAD `eac5c21e`
 - scratch `/gpfs/tmp_cpu2/yeseo1ee/espb` (units, NN 작업 폴더), 결과 `analysis/espb/results/`, manifest `results/espb.json`, 사전 등록 `results/PREREG_ESPB.md`
 - 대상: GNN3R2 데이터셋(반응 8,594, 짝 8,344, test 짝 8,175), 같은 core 5-fold 분할, 같은 채점 코드(`gnn3.metrics`).
 
