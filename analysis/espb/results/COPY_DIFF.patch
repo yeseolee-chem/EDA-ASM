@@ -1,0 +1,1425 @@
+diff --git a/analysis/d1_pair/d1_f0.py b/analysis/espb/ea_train.py
+index f5e3c970..823c6992 100644
+--- a/analysis/d1_pair/d1_f0.py
++++ b/analysis/espb/ea_train.py
+@@ -1,24 +1,25 @@
+ #!/usr/bin/env python3
+-"""d1_f0.py — D1PAIR Phase F0 (§3-4): the D0 models f0, trained once on all 4,963 rev 6 appendix A rows, then frozen.
+-
+-  python d1_f0.py list                  # the 60 units (10 targets x 6 models), NN first
+-  python d1_f0.py fit <i> <n>           # slice i of n: Ridge / KRR / SVR / XGB fitted + saved; NN tuned + 5-fold CV
+-  python d1_f0.py nn <stage> <json>     # internal: one NN stage in a fresh process (tune | cv | fit)
+-  python d1_f0.py report                # f0_cv.csv, representative per target, gate F0-1 -> f0_report.json (exit 3 = STOP)
+-  python d1_f0.py predict <i> <n>       # after Phase F: predictions on every D1 row of X182_d1.parquet (NN: final fit)
+-  python d1_f0.py collect               # f0_d1.parquet (D1 rxn_id x 10 targets x 6 models) + sha256 in f0_report.json
+-
+-Rows = the union of rxn_id in results_rev6/S_splits_appendixA.csv (must be 4,963); features = the 182 columns of
+-X182_all.parquet (rev6_common.our_columns(train_ml_single.FEATURE_SETS)); targets = the rev 6 r6_train.tcol columns of
+-S_targets.parquet. Ridge / KRR / SVR / XGB = train_ml_single.GRIDS + _make_pipe + GridSearchCV(cv=KFold(5,
+-shuffle=True, random_state=22), neg MAE) on all rows; the best_estimator_ is saved (joblib); CV MAE = -best_score_.
+-NN-2 / NN-4 = r6_nn.tune + r6_nn.fit_predict unchanged: a fixed 10 % (train_test_split(rows, test_size=0.1,
+-random_state=22)) is validation_data only (Hyperband objective and the fit history), never trained on; tuning with
+-seed 23 (TF_ENABLE_ONEDNN_OPTS=0, as r6_train); CV MAE = KFold(5, shuffle=True, random_state=22) on the 90 % training
+-rows, each fold fitted with fit_predict (validation_data = the held-out fold), as r6_train's cv stage; the final fit
+-(seed 22) runs in `predict` with X_pred = the D1 rows (fit_predict returns predictions, not the model).
+-Every NN stage runs in its own process (their scripts seed once per process). Cache: $D1PAIR_SCRATCH/f0/; each unit
+-record carries an input fingerprint; a record made from other inputs exits 3.
++"""ea_train.py — ESPB Phase A (docs/specs/ESPB.md 5-1, E-A): Espley single-reaction models per outer fold; the pair
++prediction is f(a) - f(b) (collect.py). Copied from analysis/d1_pair/d1_f0.py (D1PAIR Phase F0) and changed per spec 2-3.
++
++  python ea_train.py list                  # the 125 units (5 models x 5 targets x 5 outer folds), NN first
++  python ea_train.py run <i> <n>           # slice i of n (idempotent; exit 3 = STOP)
++  python ea_train.py nn <stage> <json>     # internal: one NN stage in a fresh process (tune | cv | final)
++
++Rows = the training reactions of outer fold k (a and b of the training pairs of results/splits/T1__f<k>.json of GNN3R2,
++fold -1 pairs included); predicted = the test reactions (a and b of the test pairs); features = ESPLEY46
++($EB/P/X46.parquet); targets = d1, d2, inter, solv, barrier (results/P_reactions.csv). Inner CV = the 4 core inner folds
++of results/P_inner_folds.csv (GroupKFold(4) over the training pairs by core = the GNN3 inner split, P-6), not KFold(5).
++Ridge / KRR (RBF) / SVR (RBF) = train_ml_single._make_pipe + GridSearchCV(cv = the 4 inner folds, neg MAE,
++refit=False) over eb_common.EA_GRIDS; best = lowest mean inner MAE (ties: grid order); final fit on every training
++reaction; inner OOF = the best cell refitted on each inner fold. NN-2 / NN-4 = r6_nn.tune + r6_nn.fit_predict
++unchanged: tune (seed 23, TF_ENABLE_ONEDNN_OPTS=0) on inner fold 1 (train -> val); cv (seed 22) = one process per inner
++fold, fit_predict with validation_data = that inner val, predictions = the OOF; final = seeds 22, 23, 14, 1, 2, each in
++its own process, trained on every training reaction with validation_data = the inner fold 1 val reactions (Hyperband
++objective / fit history only; no training row removed), prediction = the five-seed mean. Every NN stage runs in its own
++process (their scripts seed once per process). Units: $EB/units/EA/<model>__<target>__f<k>.{json,parquet}; each json
++carries an input fingerprint; a record made from other inputs exits 3.
++Gate: results/PREREG_ESPB.md + prereg_espb.json committed and every registered sha256 unchanged (prereg.gate).
+ """
+ from __future__ import annotations
+ 
+@@ -36,175 +37,229 @@ import pandas as pd
+ 
+ HERE = Path(__file__).resolve().parent
+ sys.path.insert(0, str(HERE))
+-import d1pair_common as C  # noqa: E402
+-
+-CODE_VERSION = "d1pair-f0-1"
+-F0 = C.SCRATCH / "f0"
+-D0_X182 = Path("/gpfs/tmp_cpu2/yeseo1ee/espley_rev6/xtb_r6/X182_all.parquet")      # = rev6_common.X182_ALL
+-D0_TARGETS = Path("/gpfs/tmp_cpu2/yeseo1ee/espley_rev6/S/S_targets.parquet")        # = rev6_common.S_TARGETS
+-D0_SPLITS_A = C.ESP_DIR / "results_rev6" / "S_splits_appendixA.csv"                # = rev6_common.S_SPLITS_A
+-SHA_EXPECT = {"X182_all": "e79791b76ea6257cb9d19f0f7e6cd2a16d467b6d2fe9c40ca205f1717f8be254",
+-              "S_targets": "6b02630fd73dd37d6fdb9792063e3094e8e8d8b2cd1353bc13b1ad91b90272bf",
+-              "S_splits_appendixA": "b08a700fb47d32fca7e7c9086328a8073a7e87e8830cf8817fa149f5fc777a78"}
+-GKEY = {"Ridge": "Ridge", "KRR": "KRR_rbf", "SVR": "SVR_rbf", "XGB": "XGB"}
+-N_JOBS = int(os.environ.get("D1PAIR_NJOBS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
++import eb_common as C  # noqa: E402
++
++C.path_setup()
++CODE_VERSION = "espb-ea-1"
++N_JOBS = int(os.environ.get("ESPB_NJOBS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
++TCOL = {"d1": "d1_kcal", "d2": "d2_kcal", "inter": "inter", "solv": "solv", "barrier": "barrier"}   # P_reactions.csv
+ _CACHE = {}
+ 
+ 
+ def inputs():
+-    """(X DataFrame 4,963 x 182 indexed by rxn_id, Y DataFrame, rows list, sha dict); exits 3 on a sha256 / row error."""
++    """(X46 indexed by rxn_id, P_reactions indexed by rxn_id, P_inner_folds, pair ends indexed by pair_id, sha dict)."""
+     if "inp" in _CACHE:
+         return _CACHE["inp"]
+-    sha = {"X182_all": C.sha256(D0_X182), "S_targets": C.sha256(D0_TARGETS), "S_splits_appendixA": C.sha256(D0_SPLITS_A)}
+-    if sha != SHA_EXPECT:
+-        print(f"STOP: D0 input sha256 {sha} != {SHA_EXPECT}", file=sys.stderr); sys.exit(3)
+-    import train_ml_single as T
+-    cols = C.R6.our_columns(T.FEATURE_SETS)
+-    rows = sorted(int(r) for r in pd.read_csv(D0_SPLITS_A).rxn_id.unique())
+-    if len(rows) != C.N_D0:
+-        print(f"STOP: {len(rows)} f0 rows != {C.N_D0}", file=sys.stderr); sys.exit(3)
+-    X = pd.read_parquet(D0_X182).set_index("rxn_id")
+-    Y = pd.read_parquet(D0_TARGETS).set_index("rxn_id")
+-    if set(rows) - set(X.index) or set(rows) - set(Y.index):
+-        print("STOP: f0 rows missing in X182_all / S_targets", file=sys.stderr); sys.exit(3)
+-    X = X.loc[rows, cols]
+-    Y = Y.loc[rows, [C.D0_TCOL[t] for t in C.TARGETS]]
+-    if X.isna().any().any() or Y.isna().any().any():
+-        print("STOP: NaN in the f0 rows", file=sys.stderr); sys.exit(3)
+-    _CACHE["inp"] = (X, Y, rows, sha)
++    X = pd.read_parquet(C.X46).set_index("rxn_id")
++    R = pd.read_csv(C.P_REACTIONS).set_index("rxn_id")
++    inner = pd.read_csv(C.P_INNER)
++    pairs = pd.read_csv(C.PAIRS, usecols=["pair_id", "a_rxn", "b_rxn"]).set_index("pair_id")
++    sha = {"X46": C.sha256(C.X46), "P_reactions": C.sha256(C.P_REACTIONS), "P_inner_folds": C.sha256(C.P_INNER),
++           "F_pairs_r": C.sha256(C.PAIRS), **{f"T1__f{k}": C.sha256(C.SPLIT_DIR / f"T1__f{k}.json") for k in range(C.N_FOLDS)}}
++    _CACHE["inp"] = (X, R, inner, pairs, sha)
+     return _CACHE["inp"]
+ 
+ 
+-def nn_split(rows):
+-    from sklearn.model_selection import train_test_split
+-    tr, va = train_test_split(np.asarray(rows), test_size=0.1, random_state=C.CV_SEED)
+-    return [int(r) for r in tr], [int(r) for r in va]
++def rows(k):
++    """(training reactions, test reactions, inner fold of each training reaction) of outer fold k, with the A-3 check."""
++    key = ("rows", k)
++    if key in _CACHE:
++        return _CACHE[key]
++    X, R, inner, pairs, _ = inputs()
++    unit = C.split_unit(k)
++    ends = lambda ids: sorted({int(r) for r in pairs.loc[ids, ["a_rxn", "b_rxn"]].to_numpy().ravel()})   # noqa: E731
++    rtr, rte = ends(unit["train"]), ends(unit["test"])
++    if set(rtr) & set(rte):
++        print(f"STOP (A-3): fold {k}: {len(set(rtr) & set(rte))} test reactions are also training reactions", file=sys.stderr)
++        sys.exit(3)
++    cmap = inner[inner.outer_fold == k].set_index("core").inner_fold
++    j = R.loc[rtr, "core"].map(cmap)
++    if j.isna().any():
++        print(f"STOP: fold {k}: training reactions without an inner fold", file=sys.stderr)
++        sys.exit(3)
++    _CACHE[key] = (np.asarray(rtr, dtype=int), np.asarray(rte, dtype=int), j.to_numpy(int))
++    return _CACHE[key]
++
++
++def inner_cv(inner_fold):
++    """the 4 inner folds as (train positions, val positions) into the training reactions; j = 0 is 'inner fold 1'"""
++    return [(np.where(inner_fold != j)[0], np.where(inner_fold == j)[0]) for j in range(C.N_INNER)]
+ 
+ 
+ def unit_list():
+-    out = [dict(target=t, model=m) for t in C.TARGETS for m in C.MODELS]
+-    return sorted(out, key=lambda u: (not u["model"].startswith("NN"), C.MODELS.index(u["model"]), C.TARGETS.index(u["target"])))
++    out = [dict(model=m, target=t, fold=k) for m in C.MODELS for t in C.TARGETS_EA for k in range(C.N_FOLDS)]
++    only = [m for m in os.environ.get("ESPB_MODELS", "").split("+") if m]          # job packing only
++    if only:
++        out = [u for u in out if u["model"] in only]
++    rank = {m: i for i, m in enumerate(["NN4", "NN2", "SVR", "KRR", "Ridge"])}       # long ones first
++    return sorted(out, key=lambda u: (rank[u["model"]], C.TARGETS_EA.index(u["target"]), u["fold"]))
+ 
+ 
+ def uname(u):
+-    return f"{u['target']}__{u['model']}"
++    return f"{u['model']}__{u['target']}__f{u['fold']}"
+ 
+ 
+ def versions():
+     from importlib.metadata import version
+-    return {k: version(k) for k in ("scikit-learn", "xgboost", "numpy", "pandas", "tensorflow", "keras", "keras_tuner")}
++    return {k: version(k) for k in ("scikit-learn", "numpy", "pandas", "tensorflow", "keras", "keras_tuner")}
++
++
++def estimator(model):
++    from sklearn.kernel_ridge import KernelRidge
++    from sklearn.linear_model import Ridge
++    from sklearn.svm import SVR
++    return {"Ridge": Ridge(), "KRR": KernelRidge(kernel="rbf"), "SVR": SVR(kernel="rbf")}[model]
+ 
+ 
+ def fingerprint(u):
+-    import train_ml_single as T
+-    X, Y, rows, sha = inputs()
+-    grid = "r6_nn.HP_STORAGE/HB" if u["model"].startswith("NN") else repr(T.GRIDS[GKEY[u["model"]]][1])
+-    return hashlib.sha256(json.dumps(dict(u=u, sha=sha, cols=list(X.columns), target=C.D0_TCOL[u["target"]], grid=grid,
+-                                          rows=C.list_sha([(r,) for r in rows]), versions=versions(), code=CODE_VERSION),
+-                                     sort_keys=True).encode()).hexdigest()
++    X, R, inner, pairs, sha = inputs()
++    rtr, rte, j = rows(u["fold"])
++    nn = u["model"].startswith("NN")
++    grid = "r6_nn.HP_STORAGE/HB" if nn else repr(C.EA_GRIDS[u["model"]])
++    return hashlib.sha256(json.dumps(dict(u=u, sha=sha, cols=list(X.columns), target=TCOL[u["target"]], grid=grid,
++                                          tr=C.list_sha([(r,) for r in rtr]), te=C.list_sha([(r,) for r in rte]),
++                                          inner=C.list_sha([(int(v),) for v in j]),
++                                          seeds=list(C.NN_FINAL_SEEDS) if nn else None, versions=versions(),
++                                          code=CODE_VERSION), sort_keys=True).encode()).hexdigest()
+ 
+ 
+ def rec_path(u):
+-    return F0 / "units" / f"{uname(u)}.json"
++    return C.UNITS_EA / f"{uname(u)}.json"
+ 
+ 
+ def load_rec(u, fp):
+     f = rec_path(u)
+-    if not f.is_file():
++    if not (f.is_file() and f.with_suffix(".parquet").is_file()):
+         return None
+     rec = json.loads(f.read_text())
+     if rec.get("fingerprint") != fp:
+-        print(f"STOP: f0 record {f.name} was made from other inputs; move {f.parent} away", file=sys.stderr)
++        print(f"STOP (A-1): unit record {f.name} was made from other inputs; move {f.parent} away", file=sys.stderr)
+         sys.exit(3)
++    if rec.get("gate_A2_finite") is False or rec.get("gate_A4_seeds") is False:     # a recorded failure stays a STOP
++        raise SystemExit(f"STOP (A-2/A-4): {f.stem} (cached failure)")
+     return rec
+ 
+ 
+ # ---------------------------------------------------------------- sklearn
+ def fit_sklearn(u):
+-    import joblib
+     import train_ml_single as T
+-    from sklearn.model_selection import GridSearchCV, KFold
+-    X, Y, rows, _ = inputs()
+-    y = Y[C.D0_TCOL[u["target"]]].to_numpy(float)
+-    est, grid = T.GRIDS[GKEY[u["model"]]]
+-    gs = GridSearchCV(T._make_pipe(est), grid, cv=KFold(5, shuffle=True, random_state=C.CV_SEED),
+-                      scoring="neg_mean_absolute_error", n_jobs=N_JOBS, error_score="raise")
+-    gs.fit(X.to_numpy(float), y)
+-    mp = F0 / "models" / f"{uname(u)}.joblib"
+-    C.write_atomic(mp, lambda t: joblib.dump(gs.best_estimator_, t))
+-    i = gs.best_index_
+-    folds = [float(-gs.cv_results_[f"split{k}_test_score"][i]) for k in range(5)]
+-    best = {k: (v if isinstance(v, (str, type(None))) else float(v)) for k, v in gs.best_params_.items()}
+-    edge = {k: bool(T._edge_hit(k, v, grid[k])) for k, v in gs.best_params_.items()}
+-    return dict(cv_mae=float(-gs.best_score_), cv_fold_mae=folds, best_params=best, edge_hits=edge,
+-                model_path=str(mp), model_sha256=C.sha256(mp),
+-                train_mae=float(np.mean(np.abs(gs.best_estimator_.predict(X.to_numpy(float)) - y))))
++    from sklearn.base import clone
++    from sklearn.model_selection import GridSearchCV
++    X, R, _, _, _ = inputs()
++    rtr, rte, j = rows(u["fold"])
++    Xtr, Xte = X.loc[rtr].to_numpy(float), X.loc[rte].to_numpy(float)
++    ytr = R.loc[rtr, TCOL[u["target"]]].to_numpy(float)
++    cv = inner_cv(j)
++    grid = C.EA_GRIDS[u["model"]]
++    gs = GridSearchCV(T._make_pipe(estimator(u["model"])), grid, cv=cv, scoring="neg_mean_absolute_error",
++                      n_jobs=N_JOBS, refit=False, error_score="raise")
++    gs.fit(Xtr, ytr)
++    mean = -np.asarray(gs.cv_results_["mean_test_score"], float)
++    b = int(np.argmin(mean))                                                 # ties: the first cell in grid order
++    best = dict(gs.cv_results_["params"][b])
++    folds = [float(-gs.cv_results_[f"split{i}_test_score"][b]) for i in range(C.N_INNER)]
++    final = clone(T._make_pipe(estimator(u["model"]))).set_params(**best).fit(Xtr, ytr)
++    yte = final.predict(Xte)
++    oof = np.full(len(rtr), np.nan)
++    for a, v in cv:
++        m = clone(T._make_pipe(estimator(u["model"]))).set_params(**best).fit(Xtr[a], ytr[a])
++        oof[v] = m.predict(Xtr[v])
++    oof_mae = [float(np.mean(np.abs(oof[v] - ytr[v]))) for _, v in cv]
++    cells = [dict(params=dict(p), inner_mae=float(m_)) for p, m_ in zip(gs.cv_results_["params"], mean)]
++    edge = {k: bool(T._edge_hit(k, val, grid[k])) for k, val in best.items()}
++    pred = pd.concat([pd.DataFrame(dict(rxn_id=rte, role="test", inner_fold=-1, yhat=yte)),
++                      pd.DataFrame(dict(rxn_id=rtr, role="oof", inner_fold=j, yhat=oof))], ignore_index=True)
++    info = dict(best_params=best, inner_cv_mae=float(mean[b]), inner_fold_mae=folds, oof_fold_mae=oof_mae,
++                edge_hits=edge, grid=cells, n_cells=len(cells),
++                train_mae=float(np.mean(np.abs(final.predict(Xtr) - ytr))))
++    return pred, info
+ 
+ 
+ # ---------------------------------------------------------------- NN (r6_nn unchanged, one stage per process)
+ def nn_stage(stage, payload):
+     import r6_nn as NN
+     u = payload["u"]
+-    X, Y, rows, _ = inputs()
+-    tname = C.D0_TCOL[u["target"]]
+-    y = Y[tname]
++    X, R, _, _, _ = inputs()
++    rtr, rte, j = rows(u["fold"])
++    tname = u["target"]
++    y = R[TCOL[tname]]
+     size = C.NN_SIZE[u["model"]]
+-    tr, va = nn_split(rows)
++    cv = inner_cv(j)
++    tr0, va0 = rtr[cv[0][0]], rtr[cv[0][1]]                                 # inner fold 1
+     if stage == "tune":
+         NN.set_seeds(NN.TUNE_SEED)
+         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as td:
+-            hps = NN.tune(X.loc[tr], y.loc[tr], X.loc[va], y.loc[va], size, tname, td, "kt")
++            hps = NN.tune(X.loc[tr0], y.loc[tr0], X.loc[va0], y.loc[va0], size, tname, td, "kt")
+         return dict(hps=hps)
+     hps = payload["hps"]
+-    NN.set_seeds(C.CV_SEED)
+     if stage == "cv":
+-        from sklearn.model_selection import KFold
+-        trn = np.asarray(tr)
+-        errs = []
+-        for a, b in KFold(5, shuffle=True, random_state=C.CV_SEED).split(trn):
+-            pr, _ = NN.fit_predict(X.loc[trn[a]], y.loc[trn[a]], X.loc[trn[b]], y.loc[trn[b]], {"held": X.loc[trn[b]]},
+-                                   size, hps, tname)
+-            errs.append(float(np.mean(np.abs(pr["held"] - y.loc[trn[b]].to_numpy(float)))))
+-        return dict(cv_fold_mae=errs, val_mae=float(np.mean(errs)))
+-    if stage == "fit":
+-        Xd1 = pd.read_parquet(payload["x_d1"]).set_index("rxn_id")[list(X.columns)]
+-        pr, hist = NN.fit_predict(X.loc[tr], y.loc[tr], X.loc[va], y.loc[va], {"d1": Xd1, "d0": X}, size, hps, tname)
+-        return dict(pred_d1=[float(v) for v in pr["d1"]], rxn_d1=[int(r) for r in Xd1.index],
+-                    train_mae=float(np.mean(np.abs(pr["d0"][[rows.index(r) for r in tr]] - y.loc[tr].to_numpy(float)))),
++        NN.set_seeds(C.CV_SEED)
++        a, v = cv[int(payload["inner_fold"])]
++        trj, vaj = rtr[a], rtr[v]
++        pr, hist = NN.fit_predict(X.loc[trj], y.loc[trj], X.loc[vaj], y.loc[vaj], {"held": X.loc[vaj]}, size, hps, tname)
++        return dict(rxn=[int(r) for r in vaj], pred=[float(p) for p in pr["held"]],
++                    mae=float(np.mean(np.abs(pr["held"] - y.loc[vaj].to_numpy(float)))), final_loss=hist["loss"][-1])
++    if stage == "final":
++        NN.set_seeds(int(payload["seed"]))
++        pr, hist = NN.fit_predict(X.loc[rtr], y.loc[rtr], X.loc[va0], y.loc[va0], {"test": X.loc[rte], "train": X.loc[rtr]},
++                                  size, hps, tname)
++        return dict(rxn=[int(r) for r in rte], pred=[float(p) for p in pr["test"]],
++                    train_mae=float(np.mean(np.abs(pr["train"] - y.loc[rtr].to_numpy(float)))),
+                     final_loss=hist["loss"][-1], final_val_loss=hist["val_loss"][-1])
+     raise ValueError(stage)
+ 
+ 
+-def nn_call(stage, payload, wd):
++def nn_call(stage, payload, wd, tag):
+     wd.mkdir(parents=True, exist_ok=True)
+     psha = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+-    out = wd / f"{stage}.out.json"
++    out = wd / f"{tag}.out.json"
+     if out.is_file():
+         rec = json.loads(out.read_text())
+         if rec.get("payload_sha") == psha:
+             return rec["result"]
+-    inp = wd / f"{stage}.in.json"
++    inp = wd / f"{tag}.in.json"
+     C.write_json_safe(inp, payload)
+     env = dict(os.environ)
+     if stage == "tune":
+         env["TF_ENABLE_ONEDNN_OPTS"] = "0"
+     t0 = time.time()
+-    r = subprocess.run([sys.executable, str(HERE / "d1_f0.py"), "nn", stage, str(inp)], env=env, capture_output=True,
++    r = subprocess.run([sys.executable, str(HERE / "ea_train.py"), "nn", stage, str(inp)], env=env, capture_output=True,
+                        text=True)
+     if r.returncode != 0:
+-        raise RuntimeError(f"nn {stage} failed: {r.stderr[-3000:]}")
++        raise RuntimeError(f"nn {tag} failed: {r.stderr[-3000:]}")
+     res = json.loads(r.stdout.strip().splitlines()[-1])
+     C.write_json_safe(out, dict(payload_sha=psha, result=res, seconds=time.time() - t0))
+     return res
+ 
+ 
+ def fit_nn(u, fp):
+-    wd = F0 / "nn_work" / uname(u)
++    rtr, rte, j = rows(u["fold"])
++    wd = C.NN_WORK / "EA" / uname(u)
+     base = dict(u=u, fp=fp)
+-    hps = nn_call("tune", base, wd)["hps"]
+-    cv = nn_call("cv", dict(base, hps=hps), wd)
+-    return dict(cv_mae=cv["val_mae"], cv_fold_mae=cv["cv_fold_mae"], best_params=hps, edge_hits=None,
+-                val_source="nn_5fold_cv_on_90pct_train")
++    hps = nn_call("tune", base, wd, "tune")["hps"]
++    oof = pd.Series(np.nan, index=rtr)
++    cv_mae = []
++    for i in range(C.N_INNER):
++        r = nn_call("cv", dict(base, hps=hps, inner_fold=i), wd, f"cv_j{i}")
++        oof.loc[r["rxn"]] = r["pred"]
++        cv_mae.append(r["mae"])
++    seeds = {}
++    for s in C.NN_FINAL_SEEDS:
++        r = nn_call("final", dict(base, hps=hps, seed=s), wd, f"final_s{s}")
++        if r["rxn"] != [int(x) for x in rte]:
++            raise RuntimeError(f"nn final seed {s}: test reactions out of order")
++        seeds[s] = (np.asarray(r["pred"], float), r["train_mae"])
++    test = pd.DataFrame(dict(rxn_id=rte, role="test", inner_fold=-1,
++                             yhat=np.mean([seeds[s][0] for s in C.NN_FINAL_SEEDS], axis=0)))
++    for s in C.NN_FINAL_SEEDS:
++        test[f"yhat_s{s}"] = seeds[s][0]
++    ofr = pd.DataFrame(dict(rxn_id=rtr, role="oof", inner_fold=j, yhat=oof.to_numpy(float)))
++    for s in C.NN_FINAL_SEEDS:
++        ofr[f"yhat_s{s}"] = np.nan
++    info = dict(best_params=hps, inner_cv_mae=float(np.mean(cv_mae)), inner_fold_mae=cv_mae, oof_fold_mae=cv_mae,
++                edge_hits=None, grid="r6_nn.HP_STORAGE/HB", val_source="inner fold 1 (Hyperband); 4 inner folds (cv)",
++                seeds=list(C.NN_FINAL_SEEDS), train_mae_per_seed={str(s): seeds[s][1] for s in C.NN_FINAL_SEEDS})
++    return pd.concat([test, ofr], ignore_index=True), info
+ 
+ 
+ def run_unit(u):
+@@ -212,12 +267,21 @@ def run_unit(u):
+     if load_rec(u, fp) is not None:
+         return "cached"
+     t0 = time.time()
+-    info = fit_nn(u, fp) if u["model"].startswith("NN") else fit_sklearn(u)
+-    X, _, rows, sha = inputs()
+-    rec = dict(u, fingerprint=fp, n_train=len(rows), inputs_sha256=sha, seconds=time.time() - t0,
+-               host=os.uname().nodename, versions=versions(), **info)
++    pred, info = fit_nn(u, fp) if u["model"].startswith("NN") else fit_sklearn(u)
++    rtr, rte, _ = rows(u["fold"])
++    vals = pred.drop(columns=["rxn_id", "role", "inner_fold"])
++    finite = bool(np.isfinite(pred.yhat.to_numpy(float)).all() and np.isfinite(info["inner_fold_mae"]).all())
++    seeds_ok = (not u["model"].startswith("NN")) or all(
++        np.isfinite(pred.loc[pred.role == "test", f"yhat_s{s}"].to_numpy(float)).all() for s in C.NN_FINAL_SEEDS)
++    rec = dict(u, fingerprint=fp, n_train=len(rtr), n_test=len(rte), seconds=time.time() - t0, host=os.uname().nodename,
++               versions=versions(), gate_A2_finite=finite, gate_A4_seeds=seeds_ok, value_columns=list(vals.columns), **info)
++    C.write_atomic(C.UNITS_EA / f"{uname(u)}.parquet", lambda t: pred.to_parquet(t, index=False))
+     C.write_json_safe(rec_path(u), rec)
+-    return f"done cv {rec['cv_mae']:.3f}"
++    if not finite:
++        raise SystemExit(f"STOP (A-2): {uname(u)} has NaN / inf predictions or inner MAE")
++    if not seeds_ok:
++        raise SystemExit(f"STOP (A-4): {uname(u)} misses a seed prediction")
++    return f"done inner {rec['inner_cv_mae']:.3f}"
+ 
+ 
+ def _worker(u):
+@@ -225,111 +289,40 @@ def _worker(u):
+     try:
+         return uname(u), run_unit(u), time.time() - t0
+     except SystemExit as e:
+-        return uname(u), f"STOP exit {e.code}", time.time() - t0
++        return uname(u), f"STOP {e.code}", time.time() - t0
+ 
+ 
+-def cmd_fit(i, n):
+-    """slice i of n of the units; D1PAIR_WORKERS units in parallel spawn processes (NN stages: TF intra 2 / inter 1),
+-    sklearn GridSearchCV n_jobs = D1PAIR_NJOBS."""
++def cmd_run(i, n):
++    """slice i of n of the units; ESPB_WORKERS units in parallel spawn processes (NN stages: TF intra 2 / inter 1),
++    sklearn GridSearchCV n_jobs = ESPB_NJOBS."""
+     import multiprocessing as mp
+-    from concurrent.futures import ProcessPoolExecutor
+-    only = [m for m in os.environ.get("D1PAIR_F0_MODELS", "").split("+") if m]     # e.g. NN2+NN4 (sbatch --export splits at commas)
+-    us = [u for u in unit_list() if not only or u["model"] in only][i::n]
+-    workers = int(os.environ.get("D1PAIR_WORKERS", "1"))
+-    print(f"[f0 fit {i}/{n}] {len(us)} units, {workers} workers, n_jobs {N_JOBS}, versions {versions()}", flush=True)
++    from concurrent.futures import ProcessPoolExecutor, as_completed
++    import prereg
++    prereg.gate()
++    us = unit_list()[i::n]
++    workers = int(os.environ.get("ESPB_WORKERS", "1"))
++    print(f"[EA run {i}/{n}] {len(us)} units, {workers} workers, n_jobs {N_JOBS}, versions {versions()}", flush=True)
+     stop = []
+-    with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
+-        for nm, st, dt in ex.map(_worker, us):
++    if workers == 1:
++        for u in us:
++            nm, st, dt = _worker(u)
+             print(f"  {nm}: {st} ({dt:.0f} s)", flush=True)
+             if st.startswith("STOP"):
+                 stop.append(nm)
++                break
++    else:
++        with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn")) as ex:
++            futs = [ex.submit(_worker, u) for u in us]
++            for fu in as_completed(futs):
++                nm, st, dt = fu.result()
++                print(f"  {nm}: {st} ({dt:.0f} s)", flush=True)
++                if st.startswith("STOP"):
++                    stop.append(nm)
++                    ex.shutdown(wait=True, cancel_futures=True)    # running units finish (atomic), queued ones cancelled
++                    break
+     return 3 if stop else 0
+ 
+ 
+-# ---------------------------------------------------------------- report / predict
+-def cmd_report():
+-    rows = []
+-    for u in unit_list():
+-        rec = load_rec(u, fingerprint(u))
+-        rows.append(dict(target=u["target"], model=u["model"], cv_mae=None if rec is None else rec["cv_mae"],
+-                         cv_fold_mae=None if rec is None else json.dumps(rec["cv_fold_mae"]),
+-                         best_params=None if rec is None else json.dumps(rec["best_params"]),
+-                         edge_hits=None if rec is None else json.dumps(rec.get("edge_hits")),
+-                         train_mae=None if rec is None else rec.get("train_mae"),
+-                         seconds=None if rec is None else rec["seconds"]))
+-    df = pd.DataFrame(rows)
+-    C.write_atomic(C.RES / "f0_cv.csv", lambda t: df.to_csv(t, index=False))
+-    missing = df[df.cv_mae.isna()][["target", "model"]].to_dict("records")
+-    rep = dict(n_rows=C.N_D0, inputs_sha256=inputs()[3], missing=missing, representative={}, gate_F0_1={})
+-    for t, g in df.dropna(subset=["cv_mae"]).groupby("target"):
+-        b = g.sort_values(["cv_mae", "model"]).iloc[0]
+-        lim = C.F0_FACTOR * C.F0_REF_MAE[t]
+-        rep["representative"][t] = b.model
+-        rep["gate_F0_1"][t] = dict(model=b.model, cv_mae=float(b.cv_mae), limit=lim, ok=bool(b.cv_mae <= lim))
+-    rep["stop"] = bool(missing) or not all(v["ok"] for v in rep["gate_F0_1"].values()) or \
+-        len(rep["gate_F0_1"]) != len(C.TARGETS)
+-    C.write_json_safe(C.RES / "f0_report.json", rep)
+-    print(json.dumps(rep, indent=1, default=str))
+-    return 3 if rep["stop"] else 0
+-
+-
+-def pred_path(u):
+-    return F0 / "pred_d1" / f"{uname(u)}.parquet"
+-
+-
+-def cmd_predict(i, n):
+-    import joblib
+-    if not C.X182_D1.is_file():
+-        print(f"{C.X182_D1} missing (Phase F)", file=sys.stderr); return 2
+-    X, Y, rows, _ = inputs()
+-    Xd1 = pd.read_parquet(C.X182_D1).set_index("rxn_id")[list(X.columns)]
+-    xsha = C.sha256(C.X182_D1)
+-    for u in unit_list()[i::n]:
+-        fp = fingerprint(u)
+-        rec = load_rec(u, fp)
+-        if rec is None:
+-            print(f"STOP: {uname(u)} not fitted", file=sys.stderr); return 3
+-        pp = pred_path(u)
+-        pj = pp.with_suffix(".json")
+-        if pp.is_file() and pj.is_file() and json.loads(pj.read_text()).get("x_d1_sha256") == xsha \
+-                and json.loads(pj.read_text()).get("unit_fingerprint") == fp \
+-                and json.loads(pj.read_text()).get("model_sha256") == rec.get("model_sha256"):
+-            print(f"  {uname(u)}: cached", flush=True); continue
+-        t0 = time.time()
+-        if u["model"].startswith("NN"):
+-            res = nn_call("fit", dict(u=u, fp=fp, hps=rec["best_params"], x_d1=str(C.X182_D1), x_d1_sha256=xsha),
+-                          F0 / "nn_work" / uname(u))
+-            yhat, rid, extra = np.asarray(res["pred_d1"]), res["rxn_d1"], dict(train_mae=res["train_mae"])
+-        else:
+-            m = joblib.load(rec["model_path"])
+-            yhat, rid, extra = m.predict(Xd1.to_numpy(float)), [int(r) for r in Xd1.index], {}
+-        df = pd.DataFrame(dict(rxn_id=rid, target=u["target"], model=u["model"], yhat=yhat))
+-        C.write_atomic(pp, lambda t: df.to_parquet(t, index=False))
+-        C.write_json_safe(pp.with_suffix(".json"), dict(x_d1_sha256=xsha, unit_fingerprint=fp, model_sha256=rec.get("model_sha256"),
+-                                                        n=len(df), seconds=time.time() - t0, **extra))
+-        print(f"  {uname(u)}: {len(df)} D1 predictions ({time.time() - t0:.0f} s)", flush=True)
+-    return 0
+-
+-
+-def cmd_collect():
+-    xsha = C.sha256(C.X182_D1)
+-    parts = []
+-    for u in unit_list():
+-        pp = pred_path(u)
+-        meta = json.loads(pp.with_suffix(".json").read_text()) if pp.with_suffix(".json").is_file() else {}
+-        if meta.get("x_d1_sha256") != xsha or meta.get("unit_fingerprint") != fingerprint(u):
+-            print(f"STOP: {pp.name} missing or made from another X182_d1", file=sys.stderr); return 3
+-        parts.append(pd.read_parquet(pp))
+-    df = pd.concat(parts, ignore_index=True)
+-    out = C.RES / "f0_d1.parquet"
+-    C.write_atomic(out, lambda t: df.to_parquet(t, index=False))
+-    rep = json.loads((C.RES / "f0_report.json").read_text())
+-    rep.update(f0_d1=dict(path=str(out), sha256=C.sha256(out), n_rows=len(df), x_d1_sha256=xsha))
+-    C.write_json_safe(C.RES / "f0_report.json", rep)
+-    print(json.dumps(rep["f0_d1"], indent=1))
+-    return 0
+-
+-
+ if __name__ == "__main__":
+     a = sys.argv[1:]
+     cmd = a[0] if a else ""
+@@ -340,8 +333,6 @@ if __name__ == "__main__":
+         for u in unit_list():
+             print(uname(u))
+         sys.exit(0)
+-    fn = {"fit": lambda: cmd_fit(int(a[1]), int(a[2])), "report": cmd_report,
+-          "predict": lambda: cmd_predict(int(a[1]), int(a[2])), "collect": cmd_collect}.get(cmd)
+-    if fn is None:
+-        raise SystemExit(__doc__)
+-    sys.exit(fn())
++    if cmd == "run":
++        sys.exit(cmd_run(int(a[1]), int(a[2])))
++    raise SystemExit(__doc__)
+diff --git a/analysis/d1_pair/d1_train.py b/analysis/espb/eb_train.py
+index d3c9ef08..3604f5a4 100644
+--- a/analysis/d1_pair/d1_train.py
++++ b/analysis/espb/eb_train.py
+@@ -1,18 +1,15 @@
+ #!/usr/bin/env python3
+-"""d1_train.py — D1PAIR Phase M (§3, §9): the pair-difference models g (arms B, C, B_ref) and the pooled model (arm P).
++"""eb_train.py — ESPB Phase B (docs/specs/ESPB.md 5-2, E-B): Espley-type models trained on the pair differences directly
++(antisymmetric pair models of D1PAIR arm C). Copied from analysis/d1_pair/d1_train.py and changed per spec 2-3.
+ 
+-  python d1_train.py list <group>            # units of a group (stable order)
+-  python d1_train.py run <group> <i> <n>     # slice i of n of the group's units (idempotent; exit 3 = STOP)
+-  python d1_train.py nn <stage> <json>       # internal: one NN stage in a fresh process (tune | cv | fit)
+-  python d1_train.py collect                 # M_predictions.parquet, M_units.csv, tuning-cache audit (exit 3 = STOP)
++  python eb_train.py list                    # the 100 units (arm EB x 5 models x 4 targets x 5 outer folds)
++  python eb_train.py run <i> <n>             # slice i of n of the units (idempotent; exit 3 = STOP)
++  python eb_train.py nn <stage> <json>       # internal: one NN stage in a fresh process (tune | cv | fit)
+ 
+-Groups: T1 / LODO / LOSO = arms B, C x 6 models x 10 targets x outer folds; T2 = arm B x 6 x 10 x 5 (training without
+-the 11 V families); PB = arm P (KRR f_pool) and arm B_ref (KRR g on P_main only) x 10 targets x T1 folds.
+-D1PAIR_MODELS=<m+m> restricts a run to some models (job packing only).
+-
+-Pairs (results/S_folds.csv + F_pairs.csv): training = training side T_main (P_main + A_main; B_ref: P_main; T2: minus
+-t2_exclude); test = held-out P_sens + A_main (primary metrics use P_main, anchors separately). Target y = dd_t (C) or
+-dd_t - [f0(x_a) - f0(x_b)] (B, B_ref; f0 = the f0 representative model, results/f0_d1.parquet).
++Pairs = the GNN3R2 data set (results/F_pairs_r.csv + S_folds_r.csv of analysis/gnn3r2, 8,344 pairs); outer fold k:
++training = the train list of results/splits/T1__f<k>.json, test = its test list. Target y = the channel ΔΔ (strain,
++inter, solv, barrier = gnn3.channels.labels_to_channels of the dd columns = gnn3.metrics.channel_truth); nothing is
++subtracted. Features = ESPLEY46 ($EB/P/X46.parquet). ESPB_MODELS=<m+m> restricts a run to some models (job packing only).
+ Scale (§3-2) on the (inner) training pairs: z = [dx / s_delta, (xbar - mu) / s], no mean removed from dx; columns with
+ s < 1e-12 dropped; y / s_y without mean removal; recomputed in every inner fold.
+ g models (§3-3), all antisymmetric g(-dx, xbar) = -g(dx, xbar), g(0, xbar) = 0:
+@@ -20,16 +17,14 @@ g models (§3-3), all antisymmetric g(-dx, xbar) = -g(dx, xbar), g(0, xbar) = 0:
+   KRR    KernelRidge(alpha, kernel="precomputed"), K(p,q) = [k(dx_p, dx_q) - k(dx_p, -dx_q)] k(xbar_p, xbar_q), RBF k
+   SVR    SVR(C, epsilon, kernel="precomputed") on the same kernel, trained both ways ((dx, y), (-dx, -y)),
+          prediction 1/2 [s(dx) - s(-dx)]
+-  XGB    train_ml_single.GRIDS["XGB"] estimator settings, both ways, prediction 1/2 [h(dx) - h(-dx)]
+   NN-2/4 shared sub-network h = r6_nn._layers (ELU + L2 + dropout, Espley structure), g = h([dx, xbar]) - h([-dx, xbar]);
+          Hyperband (r6_nn.HP_STORAGE, r6_nn.HB, seed 23) on inner fold 1, CV MAE = the 4 inner folds refitted (500
+-         epochs, batch 32, shuffle off), final fit on all training pairs (seed 22)
++         epochs, batch 32, shuffle off, seed 22), final fit on all training pairs with seeds 22, 23, 14, 1, 2 (one
++         process each), prediction = the five-seed mean
+ Tuning: GroupKFold(4), group = core, on the training pairs; best = lowest mean inner MAE (kcal/mol; ties: grid order).
+-Gate M-1 per unit on 200 random test pairs: |g(dx) + g(-dx)| <= 1e-6 and |g(0)| <= 1e-6 kcal/mol, else exit 3.
+-Arm P: train_ml_single.GRIDS["KRR_rbf"] + _make_pipe on the D0 4,963 rows + the training-side D1 reactions (a and b of
+-the training T_main pairs); inner GroupKFold(4) over the D1 reactions by core, D0 rows in every inner training fold.
+-Cache: $D1PAIR_SCRATCH/M/units/<group>/<unit>.{json,parquet}; the json carries an input fingerprint (exit 3 on a mismatch).
+-Gate: results/PREREG_D1PAIR.md + prereg_d1pair.json committed and every input unchanged (d1_split.gate_prereg).
++Gate M-1 per unit (NN: per seed) on 200 random test pairs: |g(dx) + g(-dx)| <= 1e-6 and |g(0)| <= 1e-6 kcal/mol, else
++exit 3. Cache: $EB/units/EB/<model>__<target>__f<k>.{json,parquet}; the json carries an input fingerprint (exit 3 on a
++mismatch). Gate: results/PREREG_ESPB.md + prereg_espb.json committed and every registered sha256 unchanged (prereg.gate).
+ """
+ from __future__ import annotations
+ 
+@@ -47,106 +42,70 @@ import pandas as pd
+ 
+ HERE = Path(__file__).resolve().parent
+ sys.path.insert(0, str(HERE))
+-import d1pair_common as C  # noqa: E402
+-
+-CODE_VERSION = "d1pair-train-1"
+-M_DIR = C.SCRATCH / "M"
+-UNITS = M_DIR / "units"
+-SKIP_FILE = M_DIR / "SKIP_GROUPS"          # one group name per line; user decision 2026-10-20 (FU1 F1): T2
+-
+-
+-ALLOWED_SKIP = frozenset({"T2"})               # FU1 D-1: only T2 may be skipped
+-
+-
+-def skipped():
+-    return set(SKIP_FILE.read_text().split()) if SKIP_FILE.is_file() else set()
++import eb_common as C  # noqa: E402
+ 
+-N_JOBS = int(os.environ.get("D1PAIR_NJOBS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+-GROUPS = ("T1", "LODO", "LOSO", "T2", "PB")
+-GCOL = {"T1": "core", "T2": "core", "LODO": "dipole", "LOSO": "skeleton"}
++C.path_setup()
++CODE_VERSION = "espb-eb-1"
++UNITS = C.UNITS_EB
++N_JOBS = int(os.environ.get("ESPB_NJOBS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+ _C = {}
+ 
+ 
+ # ================================================================ inputs
+ def data():
+-    """(S pairs table with dd columns, X182_d1 indexed by rxn_id, f0 representative predictions, sha dict)."""
++    """(S pairs table with the channel ΔΔ columns, X46 indexed by rxn_id, sha dict)."""
+     if "d" in _C:
+         return _C["d"]
+-    S = pd.read_csv(C.RES / "S_folds.csv")
+-    F = pd.read_csv(C.RES / "F_pairs.csv", usecols=["pair_id"] + [f"dd_{t}" for t in C.TARGETS])
+-    S = S.merge(F, on="pair_id", how="left", validate="1:1")
+-    X = pd.read_parquet(C.X182_D1).set_index("rxn_id")
+-    f0rep = json.loads((C.RES / "f0_report.json").read_text())["representative"]
+-    f0 = pd.read_parquet(C.RES / "f0_d1.parquet")
+-    f0 = pd.concat([f0[(f0.target == t) & (f0.model == m)] for t, m in f0rep.items()])
+-    f0 = f0.pivot(index="rxn_id", columns="target", values="yhat")
+-    sha = {k: C.sha256(p) for k, p in (("S_folds", C.RES / "S_folds.csv"), ("F_pairs", C.RES / "F_pairs.csv"),
+-                                       ("X182_d1", C.X182_D1), ("f0_d1", C.RES / "f0_d1.parquet"))}
+-    _C["d"] = (S, X, f0, f0rep, sha)
++    from gnn3.channels import labels_to_channels
++    F = pd.read_csv(C.PAIRS)
++    A = pd.read_csv(C.S_FOLDS, usecols=["pair_id", "fold_T1", "in_P_main"])
++    S = F[["pair_id", "ref_kind", "a_job", "a_rxn", "b_job", "b_rxn", "core", "pos"]
++          + [f"dd_{t}" for t in C.D1_TCOL]].merge(A, on="pair_id", how="left", validate="1:1")
++    ch = labels_to_channels(S[[f"dd_{t}" for t in C.D1_TCOL]].to_numpy(float))
++    for i, c in enumerate(C.CHANNELS):
++        S[c] = ch[:, i]
++    X = pd.read_parquet(C.X46).set_index("rxn_id")
++    sha = {"F_pairs_r": C.sha256(C.PAIRS), "S_folds_r": C.sha256(C.S_FOLDS), "X46": C.sha256(C.X46),
++           **{f"T1__f{k}": C.sha256(C.SPLIT_DIR / f"T1__f{k}.json") for k in range(C.N_FOLDS)}}
++    _C["d"] = (S, X, sha)
+     return _C["d"]
+ 
+ 
+-def unit_list(group):
+-    out = []
+-    if group in ("T1", "LODO", "LOSO", "T2"):
+-        nf = {"T1": 5, "T2": 5, "LODO": 5, "LOSO": 10}[group]
+-        arms = ("B",) if group == "T2" else C.ARMS_G
+-        for arm in arms:
+-            for m in C.MODELS:
+-                for t in C.TARGETS:
+-                    for k in range(nf):
+-                        out.append(dict(group=group, split=group, arm=arm, model=m, target=t, fold=k))
+-    elif group == "PB":
+-        for arm in ("P", "B_ref"):
+-            for t in C.TARGETS:
+-                for k in range(5):
+-                    out.append(dict(group=group, split="T1", arm=arm, model="KRR", target=t, fold=k))
+-    else:
+-        raise KeyError(group)
+-    only = [m for m in os.environ.get("D1PAIR_MODELS", "").split("+") if m]
++def unit_list():
++    out = [dict(arm="EB", model=m, target=t, fold=k) for m in C.MODELS for t in C.TARGETS_EB for k in range(C.N_FOLDS)]
++    only = [m for m in os.environ.get("ESPB_MODELS", "").split("+") if m]
+     if only:
+         out = [u for u in out if u["model"] in only]
+-    rank = {m: i for i, m in enumerate(["NN4", "NN2", "SVR", "KRR", "XGB", "Ridge"])}       # long ones first
+-    return sorted(out, key=lambda u: (rank[u["model"]], u["arm"], C.TARGETS.index(u["target"]), u["fold"]))
++    rank = {m: i for i, m in enumerate(["NN4", "NN2", "SVR", "KRR", "Ridge"])}       # long ones first
++    return sorted(out, key=lambda u: (rank[u["model"]], C.TARGETS_EB.index(u["target"]), u["fold"]))
+ 
+ 
+ def uname(u):
+-    return f"{u['split']}__{u['arm']}__{u['model']}__{u['target']}__f{u['fold']}"
++    return f"{u['model']}__{u['target']}__f{u['fold']}"
+ 
+ 
+ def masks(u):
+-    """(train index, test index) of the S rows for a unit, with the in-unit leak checks."""
++    """(train index, test index) of the S rows for a unit (split-file order), with the in-unit leak checks."""
+     S = data()[0]
+-    col = f"fold_{u['split']}"
+-    te = S[(S[col] == u["fold"]) & (S.in_P_sens | S.in_A_main)].index
+-    trm = (S[col] != u["fold"]) & S.in_T_main
+-    if u["arm"] == "B_ref":
+-        trm &= S.in_P_main
+-    if u["split"] == "T2":
+-        trm &= ~S.t2_exclude
+-    tr = S[trm].index
+-    g = GCOL[u["split"]]
+-    if set(S.loc[te, g]) & set(S.loc[tr, g]):
+-        raise SystemExit(f"STOP: {uname(u)} test {g} also in training")
++    row = {q: i for i, q in enumerate(S.pair_id)}
++    unit = C.split_unit(u["fold"])
++    tr = np.asarray([row[q] for q in unit["train"]])
++    te = np.asarray([row[q] for q in unit["test"]])
++    if set(S.loc[te, "core"]) & set(S.loc[tr, "core"]):
++        raise SystemExit(f"STOP: {uname(u)} test core also in training")
+     if (set(S.loc[te, "a_job"]) | set(S.loc[te, "b_job"])) & (set(S.loc[tr, "a_job"]) | set(S.loc[tr, "b_job"])):
+         raise SystemExit(f"STOP: {uname(u)} test reaction also in training")
+-    return np.asarray(tr), np.asarray(te)
++    return tr, te
+ 
+ 
+ def pair_x(idx):
+-    """(x_a, x_b) arrays (n, 182) of the S rows idx."""
++    """(x_a, x_b) arrays (n, 46) of the S rows idx."""
+     S, X = data()[0], data()[1]
+     return X.loc[S.loc[idx, "a_rxn"]].to_numpy(float), X.loc[S.loc[idx, "b_rxn"]].to_numpy(float)
+ 
+ 
+-def dfo(idx, t):
+-    S, f0 = data()[0], data()[2]
+-    return f0.loc[S.loc[idx, "a_rxn"], t].to_numpy(float) - f0.loc[S.loc[idx, "b_rxn"], t].to_numpy(float)
+-
+-
+ def target_y(u, idx):
+-    y = data()[0].loc[idx, f"dd_{u['target']}"].to_numpy(float)
+-    return y - dfo(idx, u["target"]) if u["arm"] in ("B", "B_ref") else y
++    return data()[0].loc[idx, u["target"]].to_numpy(float)
+ 
+ 
+ def inner_folds(tr):
+@@ -224,37 +183,15 @@ def _svr_cell(Dtr, Dte, ytr_s, yte, sy, gd, gm, cs, epss):
+     return out
+ 
+ 
+-def _xgb_fit(zd, zm, ys, params):
+-    import train_ml_single as T
+-    from sklearn.base import clone
+-    est = clone(T.GRIDS["XGB"][0]).set_params(**params)
+-    Z = np.r_[np.c_[zd, zm], np.c_[-zd, zm]]
+-    return est.fit(Z, np.r_[ys, -ys])
+-
+-
+-def _xgb_g(m, zd, zm):
+-    return 0.5 * (m.predict(np.c_[zd, zm]) - m.predict(np.c_[-zd, zm]))
+-
+-
+-def _xgb_cell(zd, zm, ys, td, tm, yte, sy, params):
+-    m = _xgb_fit(zd, zm, ys, params)
+-    return float(np.mean(np.abs(_xgb_g(m, td, tm) * sy - yte)))
+-
+-
+ def grid_cells(model):
+     if model == "Ridge":
+-        return [dict(alpha=a) for a in C.grid_values("Ridge")["alpha"]]
++        return [dict(alpha=a) for a in C.EB_RIDGE_ALPHA]
+     if model == "KRR":
+         return [dict(alpha=a, gamma_delta=gd, gamma_xbar=gm) for gd in C.GAMMAS for gm in C.GAMMAS
+-                for a in C.grid_values("KRR_rbf")["alpha"]]
++                for a in C.EB_KRR_ALPHA]
+     if model == "SVR":
+         return [dict(C=c, epsilon=e, gamma_delta=gd, gamma_xbar=gm) for gd in C.GAMMAS for gm in C.GAMMAS
+                 for c in C.SVR_C for e in C.SVR_EPS]
+-    if model == "XGB":
+-        g = C.grid_values("XGB")
+-        import itertools
+-        ks = sorted(g)
+-        return [dict(zip(ks, v)) for v in itertools.product(*[g[k] for k in ks])]
+     raise KeyError(model)
+ 
+ 
+@@ -278,7 +215,7 @@ def mm(arrs):
+ 
+ 
+ def tune_grid(u, tr):
+-    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"), prefix="d1m_") as d:
++    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR"), prefix="ebm_") as d:
+         _MMDIR.append(d)
+         try:
+             return _tune_grid(u, tr)
+@@ -310,20 +247,14 @@ def _tune_grid(u, tr):
+             from sklearn.linear_model import Ridge
+             per_fold.append([float(np.mean(np.abs(Ridge(alpha=c["alpha"], fit_intercept=False).fit(zd, ys).predict(td) * sc.sy
+                                                   - yte))) for c in cells])
+-        elif u["model"] in ("KRR", "SVR"):
++        elif u["model"] == "KRR":
+             Dtr, Dte = mm(dist3(zd, zm, zd, zm)), mm(dist3(td, tm, zd, zm))
+             gg = [(gd, gm) for gd in C.GAMMAS for gm in C.GAMMAS]
+-            if u["model"] == "KRR":
+-                al = C.grid_values("KRR_rbf")["alpha"]
+-                res = Parallel(n_jobs=N_JOBS, max_nbytes="1M")(delayed(_krr_cell)(Dtr, Dte, ys, yte, sc.sy, gd, gm, al)
+-                                                               for gd, gm in gg)
+-            else:
+-                res = Parallel(n_jobs=N_JOBS, max_nbytes="1M")(delayed(_svr_cell)(Dtr, Dte, ys, yte, sc.sy, gd, gm, C.SVR_C,
+-                                                                                  C.SVR_EPS) for gd, gm in gg)
++            res = Parallel(n_jobs=N_JOBS, max_nbytes="1M")(delayed(_krr_cell)(Dtr, Dte, ys, yte, sc.sy, gd, gm,
++                                                                               C.EB_KRR_ALPHA) for gd, gm in gg)
+             per_fold.append([v for r in res for v in r])               # order = grid_cells order
+         else:
+-            res = Parallel(n_jobs=N_JOBS)(delayed(_xgb_cell)(zd, zm, ys, td, tm, yte, sc.sy, c) for c in cells)
+-            per_fold.append(res)
++            raise KeyError(u["model"])
+     pf = np.asarray(per_fold)
+     return cells, pf.mean(axis=0), pf
+ 
+@@ -354,8 +285,7 @@ def fit_final(u, tr, te, best):
+                 Ka = kern(dist3(a, b, zd, zm), best["gamma_delta"], best["gamma_xbar"])
+                 return 0.5 * (m.predict(np.c_[Ka, -Ka]) - m.predict(np.c_[-Ka, Ka]))
+     else:
+-        m = _xgb_fit(zd, zm, ys, best)
+-        g = lambda a, b: _xgb_g(m, a, b)                              # noqa: E731
++        raise KeyError(u["model"])
+     gte, gtr = g(td, tm) * sc.sy, g(zd, zm) * sc.sy
+     anti = np.abs(g(sd, sm) + g(-sd, sm)) * sc.sy
+     zero = np.abs(g(np.zeros_like(sd), sm)) * sc.sy
+@@ -417,8 +347,8 @@ def nn_stage(stage, payload):
+             best = tuner.get_best_hyperparameters(num_trials=1)[0]
+         return dict(hps=dict(best.values))
+     hps = payload["hps"]
+-    NN.set_seeds(C.CV_SEED)
+     if stage == "cv":
++        NN.set_seeds(C.CV_SEED)
+         errs = []
+         for itr, ite in folds:
+             sc, (zd, zm, ys, _), (td, tm) = prep(itr, ite, u)
+@@ -428,6 +358,7 @@ def nn_stage(stage, payload):
+             errs.append(float(np.mean(np.abs(m.predict(np.c_[td, tm], verbose=0).ravel() * sc.sy - yte))))
+         return dict(cv_fold_mae=errs, val_mae=float(np.mean(errs)))
+     if stage == "fit":
++        NN.set_seeds(int(payload["seed"]))                   # ESPB: final fit per seed 22, 23, 14, 1, 2
+         sc, (zd, zm, ys, ytr), (td, tm) = prep(tr, te, u)
+         m = nn_model(zd.shape[1], zm.shape[1], size, hps.__getitem__, tname)
+         h = m.fit(x=np.c_[zd, zm], y=ys, **NN.FIT)
+@@ -442,81 +373,59 @@ def nn_stage(stage, payload):
+     raise ValueError(stage)
+ 
+ 
+-def nn_call(stage, payload, wd):
++def nn_call(stage, payload, wd, tag=None):
++    tag = tag or stage
+     wd.mkdir(parents=True, exist_ok=True)
+     psha = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+-    out = wd / f"{stage}.out.json"
++    out = wd / f"{tag}.out.json"
+     if out.is_file():
+         rec = json.loads(out.read_text())
+         if rec.get("payload_sha") == psha:
+             return rec["result"]
+-    inp = wd / f"{stage}.in.json"
++    inp = wd / f"{tag}.in.json"
+     C.write_json_safe(inp, payload)
+     env = dict(os.environ)
+     if stage == "tune":
+         env["TF_ENABLE_ONEDNN_OPTS"] = "0"
+     t0 = time.time()
+-    r = subprocess.run([sys.executable, str(HERE / "d1_train.py"), "nn", stage, str(inp)], env=env, capture_output=True,
++    r = subprocess.run([sys.executable, str(HERE / "eb_train.py"), "nn", stage, str(inp)], env=env, capture_output=True,
+                        text=True)
+     if r.returncode != 0:
+-        raise RuntimeError(f"nn {stage} failed: {r.stderr[-3000:]}")
++        raise RuntimeError(f"nn {tag} failed: {r.stderr[-3000:]}")
+     res = json.loads(r.stdout.strip().splitlines()[-1])
+     C.write_json_safe(out, dict(payload_sha=psha, result=res, seconds=time.time() - t0))
+     return res
+ 
+ 
+-# ================================================================ arm P (pooled single-reaction KRR)
+-def run_pool_arm(u, tr, te):
+-    import train_ml_single as T
+-    from sklearn.model_selection import GridSearchCV, GroupKFold
+-    S, X = data()[0], data()[1]
+-    import d1_f0 as F0
+-    X0, Y0, rows0, _ = F0.inputs()
+-    lab = {int(d["rxn_id"]): d for d in C.load_d1_labels()}
+-    rx = sorted(set(S.loc[tr, "a_rxn"]) | set(S.loc[tr, "b_rxn"]))
+-    core = {}
+-    for i in tr:
+-        core[int(S.loc[i, "a_rxn"])] = S.loc[i, "core"]; core[int(S.loc[i, "b_rxn"])] = S.loc[i, "core"]
+-    Xp = np.r_[X0.to_numpy(float), X.loc[rx].to_numpy(float)]
+-    yp = np.r_[Y0[C.D0_TCOL[u["target"]]].to_numpy(float), np.array([lab[r][C.D1_TCOL[u["target"]]] for r in rx], float)]
+-    n0 = len(rows0)
+-    d1i = np.arange(n0, n0 + len(rx))
+-    cv = [(np.r_[np.arange(n0), d1i[a]], d1i[b]) for a, b in
+-          GroupKFold(C.N_INNER).split(d1i, groups=[core[r] for r in rx])]
+-    est, grid = T.GRIDS["KRR_rbf"]
+-    gs = GridSearchCV(T._make_pipe(est), grid, cv=cv, scoring="neg_mean_absolute_error", n_jobs=N_JOBS, error_score="raise")
+-    gs.fit(Xp, yp)
+-    f = lambda idx: gs.predict(X.loc[S.loc[idx, "a_rxn"]].to_numpy(float)) - gs.predict(X.loc[S.loc[idx, "b_rxn"]].to_numpy(float))  # noqa: E731
+-    best = {k: float(v) for k, v in gs.best_params_.items()}
+-    return f(te), f(tr), dict(best_params=best, inner_cv_mae=float(-gs.best_score_), n_train_rows=len(yp), n_d0=n0,
+-                              n_d1_reactions=len(rx), edge_hits={k: bool(T._edge_hit(k, v, grid[k])) for k, v in gs.best_params_.items()})
+-
+-
+ # ================================================================ one unit
+ def versions():
+     from importlib.metadata import version
+-    return {k: version(k) for k in ("scikit-learn", "xgboost", "numpy", "pandas", "tensorflow", "keras", "keras_tuner")}
++    return {k: version(k) for k in ("scikit-learn", "numpy", "pandas", "tensorflow", "keras", "keras_tuner")}
+ 
+ 
+ def fingerprint(u, tr, te):
+-    S, X, f0, f0rep, sha = data()
+-    grid = "nn" if u["model"].startswith("NN") else repr(grid_cells(u["model"]))
+-    return hashlib.sha256(json.dumps(dict(u={k: v for k, v in u.items() if k != "group"}, sha=sha, cols=list(X.columns),
+-                                          f0rep=f0rep, grid=grid, tr=C.list_sha([(i,) for i in S.loc[tr, "pair_id"]]),
+-                                          te=C.list_sha([(i,) for i in S.loc[te, "pair_id"]]), versions=versions(),
++    S, X, sha = data()
++    nn = u["model"].startswith("NN")
++    grid = "nn" if nn else repr(grid_cells(u["model"]))
++    return hashlib.sha256(json.dumps(dict(u=u, sha=sha, cols=list(X.columns), grid=grid,
++                                          tr=C.list_sha([(i,) for i in S.loc[tr, "pair_id"]]),
++                                          te=C.list_sha([(i,) for i in S.loc[te, "pair_id"]]),
++                                          seeds=list(C.NN_FINAL_SEEDS) if nn else None, versions=versions(),
+                                           code=CODE_VERSION), sort_keys=True).encode()).hexdigest()
+ 
+ 
+ def cached(u, fp):
+-    f = UNITS / u["group"] / f"{uname(u)}.json"
++    f = UNITS / f"{uname(u)}.json"
+     if not (f.is_file() and f.with_suffix(".parquet").is_file()):
+         return False
+     rec = json.loads(f.read_text())
+     if rec.get("fingerprint") != fp:
+-        print(f"STOP: cached unit {f.name} was made from other inputs; move {f.parent} away", file=sys.stderr)
++        print(f"STOP (B-1): cached unit {f.name} was made from other inputs; move {f.parent} away", file=sys.stderr)
+         sys.exit(3)
+     if rec.get("gate_M1") is False:                       # a recorded M-1 failure stays a STOP on every rerun
+         raise SystemExit(f"STOP: gate M-1 {f.stem} (cached failure): {rec.get('antisym')}")
++    if rec.get("gate_B2_finite") is False or rec.get("gate_B4_seeds") is False:     # likewise B-2 / B-4
++        raise SystemExit(f"STOP (B-2/B-4): {f.stem} (cached failure)")
+     return True
+ 
+ 
+@@ -527,58 +436,66 @@ def run_unit(u):
+         return "cached"
+     t0 = time.time()
+     S = data()[0]
+-    y_te = S.loc[te, f"dd_{u['target']}"].to_numpy(float)
+-    y_tr = S.loc[tr, f"dd_{u['target']}"].to_numpy(float)
++    y_te = target_y(u, te)
++    y_tr = target_y(u, tr)
+     info = dict(n_train=len(tr), n_test=len(te), n_test_P_main=int(S.loc[te, "in_P_main"].sum()),
+                 n_train_anchor=int((S.loc[tr, "ref_kind"] == "anchor").sum()))
+-    if u["arm"] == "P":
+-        pte, ptr, extra = run_pool_arm(u, tr, te)
+-        info.update(extra)
++    seed_cols = {}
++    if u["model"].startswith("NN"):
++        wd = C.NN_WORK / "EB" / uname(u)
++        base = dict(u=u, fp=fp)
++        hps = nn_call("tune", base, wd)["hps"]
++        cv = nn_call("cv", dict(base, hps=hps), wd)
++        fits = {s: nn_call("fit", dict(base, hps=hps, seed=s), wd, f"fit_s{s}") for s in C.NN_FINAL_SEEDS}
++        gtes = {s: np.asarray(fits[s]["g_test"], float) for s in C.NN_FINAL_SEEDS}
++        gte = np.mean([gtes[s] for s in C.NN_FINAL_SEEDS], axis=0)
++        gtr = np.mean([np.asarray(fits[s]["g_train"], float) for s in C.NN_FINAL_SEEDS], axis=0)
++        seed_cols = {f"yhat_s{s}": gtes[s] for s in C.NN_FINAL_SEEDS}
++        anti = dict(max_sum=float(np.max([fits[s]["antisym"]["max_sum"] for s in C.NN_FINAL_SEEDS])),     # NaN propagates
++                    max_zero=float(np.max([fits[s]["antisym"]["max_zero"] for s in C.NN_FINAL_SEEDS])),
++                    n=fits[C.NN_FINAL_SEEDS[0]]["antisym"]["n"],
++                    per_seed={str(s): fits[s]["antisym"] for s in C.NN_FINAL_SEEDS})
++        scl = fits[C.NN_FINAL_SEEDS[0]]["scale"]
++        info.update(best_params=hps, inner_cv_mae=cv["val_mae"], inner_fold_mae=cv["cv_fold_mae"],
++                    seeds=list(C.NN_FINAL_SEEDS), final_loss_per_seed={str(s): fits[s]["final_loss"] for s in C.NN_FINAL_SEEDS})
+     else:
+-        base_te = dfo(te, u["target"]) if u["arm"] in ("B", "B_ref") else np.zeros(len(te))
+-        base_tr = dfo(tr, u["target"]) if u["arm"] in ("B", "B_ref") else np.zeros(len(tr))
+-        if u["model"].startswith("NN"):
+-            wd = UNITS / u["group"] / "nn_work" / uname(u)
+-            base = dict(u=u, fp=fp)
+-            hps = nn_call("tune", base, wd)["hps"]
+-            cv = nn_call("cv", dict(base, hps=hps), wd)
+-            fit = nn_call("fit", dict(base, hps=hps), wd)
+-            gte, gtr, anti, scl = np.asarray(fit["g_test"]), np.asarray(fit["g_train"]), fit["antisym"], fit["scale"]
+-            info.update(best_params=hps, inner_cv_mae=cv["val_mae"], inner_fold_mae=cv["cv_fold_mae"])
+-        else:
+-            cells, mean, pf = tune_grid(u, tr)
+-            b = int(np.argmin(mean))
+-            best = cells[b]
+-            gte, gtr, anti, scl = fit_final(u, tr, te, best)
+-            edge = {}
+-            for k, v in best.items():
+-                vals = sorted({c[k] for c in cells})
+-                edge[k] = bool(len(vals) > 1 and v in (vals[0], vals[-1]))
+-            info.update(best_params=best, inner_cv_mae=float(mean[b]), inner_fold_mae=pf[:, b].tolist(), edge_hits=edge,
+-                        grid_mae=[round(float(v), 6) for v in mean])
+-        info.update(antisym=anti, scale=scl)
+-        if not (anti["max_sum"] <= C.ANTISYM_TOL and anti["max_zero"] <= C.ANTISYM_TOL):
+-            info["gate_M1"] = False
+-        pte, ptr = base_te + gte, base_tr + gtr
++        cells, mean, pf = tune_grid(u, tr)
++        b = int(np.argmin(mean))
++        best = cells[b]
++        gte, gtr, anti, scl = fit_final(u, tr, te, best)
++        edge = {}
++        for k, v in best.items():
++            vals = sorted({c[k] for c in cells})
++            edge[k] = bool(len(vals) > 1 and v in (vals[0], vals[-1]))
++        info.update(best_params=best, inner_cv_mae=float(mean[b]), inner_fold_mae=pf[:, b].tolist(), edge_hits=edge,
++                    grid_mae=[round(float(v), 6) for v in mean], n_cells=len(cells))
++    info.update(antisym=anti, scale=scl)
++    if not (anti["max_sum"] <= C.ANTISYM_TOL and anti["max_zero"] <= C.ANTISYM_TOL):
++        info["gate_M1"] = False
++    finite = bool(np.isfinite(gte).all() and np.isfinite(info["inner_fold_mae"]).all()
++                  and all(np.isfinite(v).all() for v in seed_cols.values()))
++    seeds_ok = (not u["model"].startswith("NN")) or len(seed_cols) == len(C.NN_FINAL_SEEDS)
+     pred = pd.DataFrame(dict(pair_id=S.loc[te, "pair_id"].to_numpy(), ref_kind=S.loc[te, "ref_kind"].to_numpy(),
+-                             fold=u["fold"], split=u["split"], arm=u["arm"], model=u["model"], target=u["target"],
+-                             y=y_te, yhat=pte))
+-    rec = dict(u, fingerprint=fp, **info, train_mae=float(np.mean(np.abs(ptr - y_tr))),
+-               test_mae_P_main=float(np.mean(np.abs(pte - y_te)[S.loc[te, "in_P_main"].to_numpy()])),
++                             fold=u["fold"], arm=u["arm"], model=u["model"], target=u["target"], y=y_te, yhat=gte,
++                             **seed_cols))
++    rec = dict(u, fingerprint=fp, **info, gate_B2_finite=finite, gate_B4_seeds=seeds_ok,
++               train_mae=float(np.mean(np.abs(gtr - y_tr))),
++               test_mae_P_main=float(np.mean(np.abs(gte - y_te)[S.loc[te, "in_P_main"].to_numpy(bool)])),
+                train_pair_sha256=C.list_sha([(i,) for i in S.loc[tr, "pair_id"]]), seconds=time.time() - t0,
+                host=os.uname().nodename, versions=versions())
+     rec.setdefault("gate_M1", True)
+-    d = UNITS / u["group"]
+-    C.write_atomic(d / f"{uname(u)}.parquet", lambda t: pred.to_parquet(t, index=False))
+-    C.write_json_safe(d / f"{uname(u)}.json", rec)
++    C.write_atomic(UNITS / f"{uname(u)}.parquet", lambda t: pred.to_parquet(t, index=False))
++    C.write_json_safe(UNITS / f"{uname(u)}.json", rec)
+     if not rec["gate_M1"]:
+         raise SystemExit(f"STOP: gate M-1 {uname(u)}: {rec.get('antisym')}")
++    if not finite:
++        raise SystemExit(f"STOP (B-2): {uname(u)} has NaN / inf predictions or inner MAE")
++    if not seeds_ok:
++        raise SystemExit(f"STOP (B-4): {uname(u)} misses a seed prediction")
+     return f"done {rec['test_mae_P_main']:.3f}"
+ 
+ 
+ def _worker(u):
+-    if u["group"] in skipped():                          # FU1 K-1: queued units of a skipped group never start
+-        return uname(u), "skipped", 0.0
+     t0 = time.time()
+     try:
+         return uname(u), run_unit(u), time.time() - t0
+@@ -586,21 +503,16 @@ def _worker(u):
+         return uname(u), f"STOP {e.code}", time.time() - t0
+ 
+ 
+-def cmd_run(group, i, n):
+-    if group in skipped():
+-        print(f"[M {group}] skipped (SKIP_GROUPS, user 2026-10-20)", flush=True)
+-        return 0
+-    import d1_split as SP
+-    SP.gate_prereg()
++def cmd_run(i, n):
++    import prereg
++    prereg.gate()
+     import multiprocessing as mp
+     from concurrent.futures import ProcessPoolExecutor
+-    us = unit_list(group)[i::n]
+-    if os.environ.get("D1PAIR_ORDER") == "reverse":       # helper job: same slice from the other end (cache skips done units)
++    us = unit_list()[i::n]
++    if os.environ.get("ESPB_ORDER") == "reverse":         # helper job: same slice from the other end (cache skips done units)
+         us = us[::-1]
+-    elif os.environ.get("D1PAIR_ORDER") == "middle":      # 3rd helper: start mid-slice, wrap (ordering only; fingerprint unchanged)
+-        us = us[len(us) // 2:] + us[:len(us) // 2]
+-    workers = int(os.environ.get("D1PAIR_WORKERS", "1"))
+-    print(f"[M {group} {i}/{n}] {len(us)} units, {workers} workers x n_jobs {N_JOBS}; {versions()}", flush=True)
++    workers = int(os.environ.get("ESPB_WORKERS", "1"))
++    print(f"[EB {i}/{n}] {len(us)} units, {workers} workers x n_jobs {N_JOBS}; {versions()}", flush=True)
+     stop = []
+     if workers == 1:
+         res = (_worker(u) for u in us)
+@@ -622,54 +534,6 @@ def cmd_run(group, i, n):
+     return 3 if stop else 0
+ 
+ 
+-def cmd_collect():
+-    S = data()[0]
+-    skip = skipped()                                     # FU1 K-3: skipped groups are neither expected nor collected
+-    if skip - ALLOWED_SKIP:
+-        print(f"STOP: SKIP_GROUPS lists {sorted(skip - ALLOWED_SKIP)} (only T2 may be skipped, FU1 D-1)", file=sys.stderr)
+-        return 3
+-    import d1_split as SP
+-    SP.gate_add1()                                       # FU1 Phase A: the addendum is committed before LODO / LOSO scores are pooled
+-    recs, parts, missing = [], [], []
+-    for g in GROUPS:
+-        if g in skip:
+-            continue
+-        for u in unit_list(g):
+-            f = UNITS / g / f"{uname(u)}.json"
+-            if not f.is_file():
+-                missing.append(uname(u)); continue
+-            rec = json.loads(f.read_text())
+-            recs.append({k: (json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in rec.items() if k != "grid_mae"})
+-            parts.append(pd.read_parquet(f.with_suffix(".parquet")))
+-    n_skip_disk = {g: len(list((UNITS / g).glob("*.json"))) for g in sorted(skip)}
+-    U = pd.DataFrame(recs)
+-    Pm = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+-    # tuning-cache audit (§9): no test pair_id inside any unit's training pairs
+-    leak = []
+-    for r in recs:
+-        u = {k: r[k] for k in ("group", "split", "arm", "model", "target", "fold")}
+-        tr, te = masks(u)
+-        if C.list_sha([(i,) for i in S.loc[tr, "pair_id"]]) != r["train_pair_sha256"]:
+-            leak.append(f"{uname(u)}: training pairs differ from the recorded ones")
+-        if set(S.loc[tr, "pair_id"]) & set(S.loc[te, "pair_id"]):
+-            leak.append(f"{uname(u)}: test pair in training")
+-    # NN stages recompute their masks from the unit spec (masks()), so their tuning data are the audited training pairs
+-    C.write_atomic(C.RES / "M_units.csv", lambda t: U.to_csv(t, index=False))
+-    C.write_atomic(C.RES / "M_predictions.parquet", lambda t: Pm.to_parquet(t, index=False))
+-    rep = dict(n_units=len(U), missing=missing[:50], n_missing=len(missing), m1_fail=U.loc[~U.gate_M1.astype(bool), "split"].count()
+-               if len(U) else 0, leak=leak[:20], n_leak=len(leak), predictions=dict(n=len(Pm), sha256=C.sha256(C.RES / "M_predictions.parquet")),
+-               units=dict(n=len(U), sha256=C.sha256(C.RES / "M_units.csv")),
+-               antisym_max=float(max((json.loads(a)["max_sum"] for a in U.antisym.dropna()), default=0.0)) if len(U) else None,
+-               antisym_zero_max=float(max((json.loads(a)["max_zero"] for a in U.antisym.dropna()), default=0.0)) if len(U) else None,
+-               skipped_groups=sorted(skip),
+-               skipped_reason="user decision 2026-10-20 (D1PAIR_FU1 F1): T2 stopped, finished units kept but not analysed"
+-               if skip else None, n_skipped_units_on_disk=n_skip_disk)
+-    rep["stop"] = bool(rep["n_leak"] or rep["m1_fail"])
+-    C.write_json_safe(C.RES / "M_report.json", rep)
+-    print(json.dumps(rep, indent=1, default=str))
+-    return 3 if rep["stop"] else (2 if missing else 0)
+-
+-
+ if __name__ == "__main__":
+     a = sys.argv[1:]
+     cmd = a[0] if a else ""
+@@ -677,11 +541,9 @@ if __name__ == "__main__":
+         print(json.dumps(nn_stage(a[1], json.loads(Path(a[2]).read_text()))))
+         sys.exit(0)
+     if cmd == "list":
+-        for u in unit_list(a[1]):
++        for u in unit_list():
+             print(uname(u))
+         sys.exit(0)
+     if cmd == "run":
+-        sys.exit(cmd_run(a[1], int(a[2]), int(a[3])))
+-    if cmd == "collect":
+-        sys.exit(cmd_collect())
++        sys.exit(cmd_run(int(a[1]), int(a[2])))
+     raise SystemExit(__doc__)
+diff --git a/analysis/d1_pair/jobs/env.sh b/analysis/espb/jobs/env.sh
+index f4921162..e8c353fb 100644
+--- a/analysis/d1_pair/jobs/env.sh
++++ b/analysis/espb/jobs/env.sh
+@@ -5,7 +5,7 @@
+ #   espley   env_espley (TF 2.16.1 / keras 3.3.3 / keras_tuner 1.4.7 / sklearn 1.3.1 / xgboost 3.2.0; F0, M, E: as r6_train)
+ source /home1/yeseo1ee/miniconda3/etc/profile.d/conda.sh
+ conda activate reactot
+-export D1PAIR_SCRATCH=${D1PAIR_SCRATCH:-/gpfs/tmp_cpu2/yeseo1ee/d1_pair}
++export ESPB_SCRATCH=${ESPB_SCRATCH:-/gpfs/tmp_cpu2/yeseo1ee/espb}           # ESPB copy: scratch variable (spec 2-2)
+ export CODE=${D1PAIR_CODE:-$SLURM_SUBMIT_DIR}
+ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONWARNINGS=ignore
+ case "${PYENV:-reactot}" in
+diff --git a/analysis/d1_pair/jobs/py.slurm b/analysis/espb/jobs/py.slurm
+index f8e0abfd..284a20ec 100755
+--- a/analysis/d1_pair/jobs/py.slurm
++++ b/analysis/espb/jobs/py.slurm
+@@ -3,7 +3,7 @@
+ #SBATCH --time=48:00:00
+ #SBATCH --cpus-per-task=4
+ #SBATCH --mem=16G
+-#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/d1_pair/logs/%x_%j.out
++#SBATCH --output=/gpfs/tmp_cpu2/yeseo1ee/espb/logs/%x_%j.out
+ # py.slurm — run one D1PAIR python command on a compute node:  sbatch [--export=ALL,PYENV=...] jobs/py.slurm <script.py> <args...>
+ # Several commands: separate them with ' ::: ' (each runs only if the previous one exited 0).
+ # Array use: an argument "@I" is replaced by $SLURM_ARRAY_TASK_ID.
+diff --git a/analysis/gnn3r2/gr_common.py b/analysis/espb/eb_common.py
+index b57a0d42..c72cbeb7 100644
+--- a/analysis/gnn3r2/gr_common.py
++++ b/analysis/espb/eb_common.py
+@@ -1,91 +1,111 @@
+-"""GNN3R2 (docs/specs/GNN3R2.md; copied from analysis/gnn3r, rules of docs/specs/GNN3R.md): paths, decisions and small
+-I/O helpers shared by the analysis/gnn3r2 scripts.
++"""ESPB (docs/specs/ESPB.md): paths, constants, grids and small I/O helpers shared by the analysis/espb scripts.
+ 
+-Every step reads its paths from here (spec 2). Standard library only: imported in reactot (A, B), env_espley (S) and
+-env_d1fu2 (D, K, E, W). ``dataset()`` is the one place that builds the GNN3 training data (spec 6).
++Every step reads its paths here. Imported in env_espley (P, A, B, C), env_d1fu2 (E) and reactot (F, R): standard library
++only at import time. The sha256 / write_atomic / write_json / read_json helpers are copied from analysis/gnn3r2/gr_common.py
++(write_atomic also takes a callable(tmp_path), as rev5_common.write_atomic, for the copied training code). The D1PAIR
++constants below are written again with the same values; s0_start.py checks them against d1pair_common by import.
+ """
+ from __future__ import annotations
+ 
+ import hashlib
+ import json
+ import os
+-import shutil
+ import sys
+ import tempfile
+ from pathlib import Path
+ 
+-HERE = Path(__file__).resolve().parent                  # analysis/gnn3r2
++HERE = Path(__file__).resolve().parent                   # analysis/espb
+ REPO = HERE.parents[1]                                   # $WT
+ RES = HERE / "results"
+ 
+-# ---------------------------------------------------------------- roots (spec header, 2)
+-GR = Path(os.environ.get("GNN3R2_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/gnn3r2"))      # GNN3R2 2-3 ($GR2)
+-GR_GNN3R = Path("/gpfs/tmp_cpu2/yeseo1ee/gnn3r")         # the previous GNN3R scratch ($GR; read only until Phase X)
+-REF_GNN3R = HERE / "ref_gnn3r"                           # copies of the GNN3R result files (2-2)
+-ROWATTR_GNN3R = GR / "ref_gnn3r" / "rowattr_r_gnn3r.pkl"
++# ---------------------------------------------------------------- roots (spec header)
++EB = Path(os.environ.get("ESPB_SCRATCH", "/gpfs/tmp_cpu2/yeseo1ee/espb"))
+ G2R = Path("/gpfs/tmp_cpu2/yeseo1ee/g2r")
+ LAD = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_ladder")
+-D1PAIR_SCRATCH = Path("/gpfs/tmp_cpu2/yeseo1ee/d1_pair")
+-D1_RUN = Path("/gpfs/tmp_cpu2/yeseo1ee/d1/d1_run")
+-
+-# ---------------------------------------------------------------- inputs (read only, spec 2 table)
+-TOKENS = G2R / "lf" / "fu2_lf" / "tokens"
+-TOKEN_REPORTS = REPO / "analysis" / "g2r" / "results" / "lf" / "fu2_lf"     # T_report.json, T_manifest.csv, Q_report.json
++ESP_DIR = REPO / "analysis" / "espley_xtb_repro"         # r6_nn, train_ml_single (read only)
++D1PAIR_DIR = REPO / "analysis" / "d1_pair"               # d1pair_common (read only; checked in S0)
++GNN3_PACKAGE = REPO / "gnn3"                             # gnn3.metrics / gnn3.channels (read only)
++
++# ---------------------------------------------------------------- GNN3R2 inputs (read only)
++GR2_RES = REPO / "analysis" / "gnn3r2" / "results"
++PAIRS = GR2_RES / "F_pairs_r.csv"
++S_FOLDS = GR2_RES / "S_folds_r.csv"
++S_SPLITS = GR2_RES / "S_splits_r.json"
++SPLIT_DIR = GR2_RES / "splits"
++LABEL_REPORT = GR2_RES / "B_label_report.json"
++GNN3_CV = GR2_RES / "cv"                                 # gnn3_fold<k>.parquet (GNN3R2 CV predictions, committed)
++GNN3_METRICS = GR2_RES / "eval" / "metrics.csv"
+ X182 = G2R / "lf" / "X182_lf.parquet"
+-LABELS_LF = G2R / "lf" / "labels_lf.json"
+-INPUT_META_LF = G2R / "lf" / "input_meta_lf.csv"
+-USABLE = REPO / "analysis" / "g2r" / "results" / "U_usable.csv"
+-TARGETS = REPO / "analysis" / "g2r" / "results" / "X_targets.csv"
+-G2R_MANIFEST = REPO / "analysis" / "g2r" / "results" / "g2r.json"
+ LABELS_CR2 = LAD / "labels_d1_cr2.json"
+-F_PAIRS_CR2 = LAD / "F_pairs_cr2.csv"
+-V_REPORT = REPO / "analysis" / "d1_ladder" / "results" / "V_report.json"
+-ROWATTR_ALL = D1PAIR_SCRATCH / "P" / "rowattr.pkl.all.pkl"
+-ROWATTR_KEPT = D1PAIR_SCRATCH / "P" / "rowattr.pkl"
+-D1_JOBS = D1PAIR_SCRATCH / "d1_jobs"
+-D1PAIR_CODE = REPO / "analysis" / "d1_pair"
+-D1PAIR_RES = D1PAIR_CODE / "results"
+-SIGMA = D1PAIR_CODE / "sigma_hansch1991.csv"
+-PAIRS_D1 = D1PAIR_RES / "pairs_d1.csv"
+-ANCHOR_D1 = D1PAIR_RES / "pairs_d1_anchor.csv"
+-P4_STEREO = D1PAIR_RES / "P4_stereo.csv"
+-P4_DROP = D1PAIR_RES / "P4_drop.csv"
+-S_FOLDS = D1PAIR_RES / "S_folds.csv"
+-REF_REACTIONS = REPO / "docs" / "specs" / "gnn3r_ref" / "ref_reactions_est.csv"
+-REF_PAIRS = REPO / "docs" / "specs" / "gnn3r_ref" / "ref_pairs_est.csv"
+-GNN3_PACKAGE = REPO / "gnn3"                             # import root of the gnn3 package (gnn3/gnn3)
+ 
+ # ---------------------------------------------------------------- outputs
+-ROWATTR_R = GR / "A" / "rowattr_r.pkl"
+-P4_CACHE = GR / "B" / "p4_cache.pkl"
+-B_RERUN = GR / "B" / "rerun"
+-CV = GR / "cv"
+-FINAL = GR / "final"
+-PAIRS_R = RES / "F_pairs_r.csv"
+-S_FOLDS_R = RES / "S_folds_r.csv"
+-SPLIT_DIR = RES / "splits"
+-S_SPLITS_R = RES / "S_splits_r.json"
+-LABEL_REPORT = RES / "B_label_report.json"
+-B_OUTPUT_NAMES = ("F_pairs_r.csv", "B_reactions.csv", "B_row_status.csv")      # compared by B-R
+-
+-# ---------------------------------------------------------------- decisions and expected values (spec 0-2, 0-3, 1)
+-N_TARGETS = 9252                                         # D-1
+-N_USABLE = 8617                                          # D-2
+-N_NOT_USABLE = N_TARGETS - N_USABLE                      # 635 (B-7)
+-F = ["dipole", "skeleton", "series", "cfg", "orient", "face", "c3"]      # family key (D-6, = d1_pairs.F)
+-NEED_DIPOLES = ("nitrone", "azomethine ylide", "carbonyl ylide")         # c3 rows (build_rowattr.py `need`)
+-NEED_SKELETONS = ("AppE", "AppZ", "B", "Bp")
+-XB_RANK = {"Me": 0, "CO2Me": 1, "tBu": 2, "CHO": 3, "Ts": 4, "NMe2": 5}   # D-7 anchor b order; anything else 6
+-XB_RANK_OTHER = 6
+-POS_RANK = {"p": 0, "m": 1, "o": 2, "direct": 3}
+-EXPECT_REACTIONS, EXPECT_PAIRS = 8594, 8344              # GNN3R2 0-4 (all 6 new pairs pass P-4)
+-RANGE_REACTIONS, RANGE_PAIRS = (8422, 8766), (8177, 8511)   # B-6 (+-2 %, GNN3R2 2-3)
+-EXPECT_TEST = {-1: 169, 0: 1682, 1: 1705, 2: 1414, 3: 1344, 4: 2030}     # GNN3R2 5 (reported only)
+-# ---------------------------------------------------------------- GNN3R2: the c3 rule D-12 (0-3) and its expected effect
+-CORE_SEEDS = (7, 11, 23, 42, 97)                         # c3_core: 5 embeddings of the CH3 core must agree
+-EXPECT_C3_CHANGED = {"T10104": ("cis", "trans"), "T10116": ("cis", "trans")}   # A-5: (GNN3R c3, new c3)
+-N_FOLD_CORES = 50                                        # S_folds.csv cores (spec 5-1)
+-N_INNER = 4                                              # GroupKFold(4), group = core (D-9)
++P_DIR = EB / "P"
++X46 = P_DIR / "X46.parquet"
++P_REACTIONS = RES / "P_reactions.csv"
++P_INNER = RES / "P_inner_folds.csv"
++P_REPORT = RES / "P_report.json"
++UNITS_EA = EB / "units" / "EA"
++UNITS_EB = EB / "units" / "EB"
++NN_WORK = EB / "nn"
++PREREG_MD = RES / "PREREG_ESPB.md"
++PREREG_JSON = RES / "prereg_espb.json"
++
++# ---------------------------------------------------------------- data expectations (P gates)
++N_PAIRS, N_REACTIONS, N_TEST = 8344, 8594, 8175
++TEST_SIZES = {-1: 169, 0: 1682, 1: 1705, 2: 1414, 3: 1344, 4: 2030}
++N_FOLDS = 5
++# 10 per-reaction labels (= d1pair_common.D1_TCOL, LABEL_CHANNELS order of gnn3.constants)
++D1_TCOL = {"d1": "d1_kcal", "d2": "d2_kcal", "elst": "elst_dft", "pauli": "pauli_dft", "oi": "oi_dft",
++           "disp": "disp_dft", "cpcm": "cpcm_dft", "cds": "cds_dft", "c_ghost": "bsse_shift_kcal",
++           "barrier": "barrier_kcal"}
++CHANNELS = ["strain", "inter", "solv", "barrier"]       # pair targets (= gnn3.constants.TARGETS)
++TARGETS_EA = ["d1", "d2", "inter", "solv", "barrier"]   # E-A per-reaction targets (5-1)
++TARGETS_EB = list(CHANNELS)                              # E-B pair targets (5-2)
++MODELS = ["Ridge", "KRR", "SVR", "NN2", "NN4"]           # Espley models (no XGB, 0-3)
++ARMS = ["EA", "EB"]
++
++# ---------------------------------------------------------------- seeds and D1PAIR constants (same values, S0-checked)
++SEED = 20261019                                          # = d1pair_common.SEED (bootstraps, M-1 sample, P-9 sample)
++CV_SEED = 22                                             # = d1pair_common.CV_SEED (NN cv stage)
++TUNE_SEED = 23                                           # = d1pair_common.TUNE_SEED = r6_nn.TUNE_SEED
++NN_FINAL_SEEDS = (22, 23, 14, 1, 2)                      # X-10 (= train_ml_single.SEEDS)
++N_INNER = 4                                              # = d1pair_common.N_INNER
++SCALE_EPS = 1e-12                                        # = d1pair_common.SCALE_EPS
++ANTISYM_TOL = 1e-6                                       # = d1pair_common.ANTISYM_TOL (gate M-1, kcal/mol)
++ANTISYM_N = 200                                          # = d1pair_common.ANTISYM_N
++GAMMAS = [3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1]   # = d1pair_common.GAMMAS (E-B kernels)
++SVR_C = [1, 10, 100, 1000]                               # = d1pair_common.SVR_C
++SVR_EPS = [0.05, 0.1, 0.5]                               # = d1pair_common.SVR_EPS
++NN_SIZE = {"NN2": 2, "NN4": 4}                           # = d1pair_common.NN_SIZE
++EB_RIDGE_ALPHA = [1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000]   # = d1pair_common.grid_values("Ridge")["alpha"]
++EB_KRR_ALPHA = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1]               # = d1pair_common.grid_values("KRR_rbf")["alpha"]
++
++# ---------------------------------------------------------------- E-A grids (5-1: Espley ESI Table S3 U train_ml_single.GRIDS)
++_TENTHS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
++EA_GRIDS = {
++    "Ridge": {"regressor__ridge__alpha": [1e-4, 1e-3, 0.01] + _TENTHS + [1, 10, 100, 1000]},
++    "KRR": {"regressor__kernelridge__alpha": [1e-5, 1e-4, 1e-3, 0.01] + _TENTHS + [1],
++            "regressor__kernelridge__gamma": [None, 3e-4, 1e-3, 3e-3, 0.01, 0.03, 0.1, 0.3, 0.5, 0.9, 1]},
++    "SVR": {"regressor__svr__C": [1, 10, 30, 50, 100, 1000],
++            "regressor__svr__gamma": ["scale", "auto", 1e-3, 1e-2, 1e-1],
++            "regressor__svr__epsilon": [0.001, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1]},
++}
++EA_GRID_CELLS = {"Ridge": 16, "KRR": 154, "SVR": 240}
++
++# ---------------------------------------------------------------- evaluation (8-2)
++BOOT_N, BOOT_SEED = 2000, 20261019
++
++
++def model_name(arm: str, model: str) -> str:
++    """'EA-Ridge' ... 'EB-NN4' (the model keys of the comparison tables)"""
++    return f"{arm}-{model}"
++
++
++def path_setup():
++    """r6_nn / train_ml_single (analysis/espley_xtb_repro) and the gnn3 package (gnn3/gnn3) on sys.path."""
++    for p in (str(ESP_DIR), str(GNN3_PACKAGE)):
++        if p not in sys.path:
++            sys.path.insert(0, p)
+ 
+ 
+ def sha256(path: Path | str, chunk: int = 1 << 20) -> str:
+@@ -96,12 +116,17 @@ def sha256(path: Path | str, chunk: int = 1 << 20) -> str:
+     return digest.hexdigest()
+ 
+ 
+-def write_atomic(path: Path | str, data: bytes | str) -> None:
++def write_atomic(path: Path | str, data) -> None:
++    """str / bytes, or a callable(tmp_path) that writes the file; tmp file then os.replace."""
+     path = Path(path)
+     path.parent.mkdir(parents=True, exist_ok=True)
+     handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+-    with os.fdopen(handle, "wb") as out:
+-        out.write(data.encode() if isinstance(data, str) else data)
++    if callable(data):
++        os.close(handle)
++        data(temporary)
++    else:
++        with os.fdopen(handle, "wb") as out:
++            out.write(data.encode() if isinstance(data, str) else data)
+     os.replace(temporary, path)
+ 
+ 
+@@ -109,35 +134,18 @@ def write_json(path: Path | str, obj) -> None:
+     write_atomic(path, json.dumps(obj, indent=1, default=str, allow_nan=True) + "\n")
+ 
+ 
+-def read_json(path: Path | str):
+-    return json.loads(Path(path).read_text())
+-
++write_json_safe = write_json                             # name used by the copied D1PAIR code
+ 
+-def copy_atomic(source: Path | str, target: Path | str) -> None:
+-    target = Path(target)
+-    target.parent.mkdir(parents=True, exist_ok=True)
+-    handle, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.")
+-    os.close(handle)
+-    shutil.copyfile(source, temporary)
+-    os.replace(temporary, target)
+ 
+-
+-def import_gnn3():
+-    """Put the gnn3 package (gnn3/gnn3) on sys.path, as gnn3/scripts/*.py do."""
+-    if str(GNN3_PACKAGE) not in sys.path:
+-        sys.path.insert(0, str(GNN3_PACKAGE))
++def read_json(path: Path | str):
++    return json.loads(Path(path).read_text())
+ 
+ 
+-def import_d1pair():
+-    """Put analysis/d1_pair on sys.path (d1pair_common adds analysis/espley_xtb_repro for fragmenter)."""
+-    if str(D1PAIR_CODE) not in sys.path:
+-        sys.path.insert(0, str(D1PAIR_CODE))
++def list_sha(rows) -> str:
++    """sha256 of a list of tuples, one comma-joined line each (= d1pair_common.list_sha)."""
++    return hashlib.sha256(("\n".join(",".join(map(str, r)) for r in rows) + "\n").encode()).hexdigest()
+ 
+ 
+-def dataset():
+-    """The GNN3R training data (spec 6): gnn3.data.PairDataset on the g2r inputs and the GNN3R pairs / splits."""
+-    import_gnn3()
+-    from gnn3.data import PairDataset
+-    return PairDataset(token_dir=TOKENS, report_dir=TOKEN_REPORTS, global_table=X182,
+-                       pair_labels=RES / "F_pairs_r.csv", split_dir=RES / "splits", split_report=RES / "S_splits_r.json",
+-                       pair_attributes=RES / "S_folds_r.csv", label_report=RES / "B_label_report.json")
++def split_unit(k: int) -> dict:
++    """GNN3R2 T1__f<k>.json: train / test / inner_train / inner_val pair ids"""
++    return read_json(SPLIT_DIR / f"T1__f{k}.json")
